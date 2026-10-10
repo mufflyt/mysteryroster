@@ -31,6 +31,33 @@ own disposition codebook.
 remotes::install_github("mufflyt/mysteryroster")
 ```
 
+## How the pieces fit
+
+```mermaid
+flowchart TD
+    R1[("NPPES<br/>(frame registry)")] --> OV
+    R2[("Certifying board")] --> OV
+    R3[("Professional society")] --> OV
+    OV["registry_overlap()<br/>one row per NPI, membership flags, overlap_zone"] --> ZC["overlap_zone_counts()<br/>plot_registry_overlap()"]
+    OV --> FS["frame_strata()<br/>frame rows only; stratum = overlap zone"]
+    FS --> SM["stratified_listing_sample()<br/>allocation per stratum; weight = N / n"]
+    SM --> CALLS[/"telephone audit<br/>disposition, reached, phone_valid"/]
+    CALLS --> CL["classify_listing_status()<br/>confirmed_valid | confirmed_invalid | unresolved | not_attempted"]
+    CL --> DS["listing_validity_design()<br/>survey::svydesign, strata + weights"]
+    DS --> VE["validity_estimates()<br/>weighted % valid, by stratum, complete-case"]
+    DS --> VM["validity_model()<br/>survey-weighted logistic regression"]
+    CL --> SB["validity_sensitivity_bounds()<br/>observed, best case, worst case"]
+    CL --> FC["listing_flow_counts()<br/>sampled, attempted, reached, definitive"]
+    classDef fn fill:#1F2A33,color:#F6F3E7,stroke:#1F2A33;
+    classDef data fill:#F6F3E7,color:#1F2A33,stroke:#1F2A33;
+    class OV,ZC,FS,SM,CL,DS,VE,VM,SB,FC fn;
+    class R1,R2,R3,CALLS data;
+```
+
+Dark boxes are package functions; light shapes are your inputs. Every arrow
+is a data frame handed from one call to the next, so the study is a straight
+line from registries to tables.
+
 ## The study in six calls
 
 ```r
