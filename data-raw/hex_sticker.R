@@ -1,5 +1,5 @@
 # Hex sticker for mysteryroster: dark hexagon on cream, flat cream icon, no text
-# (same family style as mysterycall's logo). Re-run to regenerate man/figures/logo.{png,svg}.
+# (same family style as mysterycall's logo). Re-run to regenerate man/figures/logo.png.
 library(ggplot2)
 navy  <- "#1F2A33"; cream <- "#F6F3E7"; shade <- "#D9D5C6"; mark <- "#F6F3E7"
 hex <- function(cx, cy, r) { a <- seq(30, 390, by = 60) * pi / 180; data.frame(x = cx + r * cos(a), y = cy + r * sin(a)) }
@@ -37,5 +37,4 @@ p <- ggplot() +
   coord_equal(xlim = c(-1.15, 1.15), ylim = c(-1.15, 1.15), expand = FALSE) +
   theme_void() + theme(plot.background = element_rect(fill = cream, colour = NA))
 ragg::agg_png("man/figures/logo.png", width = 1024, height = 1024, res = 300, background = cream); print(p); dev.off()
-svglite::svglite("man/figures/logo.svg", width = 4, height = 4); print(p); dev.off()
-cat("wrote man/figures/logo.png and logo.svg\n")
+cat("wrote man/figures/logo.png\n")

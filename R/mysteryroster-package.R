@@ -13,6 +13,5 @@
 #' @keywords internal
 "_PACKAGE"
 
-#' @importFrom rlang .data %||%
-#' @importFrom stats as.formula quasibinomial setNames
+#' @importFrom stats as.formula coef quasibinomial setNames
 NULL

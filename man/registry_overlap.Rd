@@ -15,7 +15,7 @@ must be unique, non-empty and free of \code{+}.}
 }
 \value{
 A tibble with columns \code{id}, \verb{in_<registry>} (logical, one per
-registry), \code{n_registries} and \code{overlap_zone} (registry names joined by \code{+}).
+registry) and \code{overlap_zone} (registry names joined by \code{+}).
 Attribute \code{registries} holds the registry names in order and attribute
 \code{dropped} the count of missing or empty identifiers dropped per registry.
 }

@@ -93,9 +93,6 @@ validity_model(design, ~ stratum + rural)
 listing_flow_counts(calls, by = "stratum")
 ```
 
-The vignette runs this end to end on synthetic data:
-`vignette("registry-validity-workflow", package = "mysteryroster")`.
-
 ## From protocol to function
 
 | Protocol step | Function |

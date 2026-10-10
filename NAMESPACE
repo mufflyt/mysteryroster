@@ -16,12 +16,9 @@ export(validation_cascade)
 export(validity_estimates)
 export(validity_model)
 export(validity_sensitivity_bounds)
-importFrom(rlang,
-  "%||%",
-  .data
-)
 importFrom(stats,
   as.formula,
+  coef,
   quasibinomial,
   setNames
 )

@@ -17,9 +17,8 @@ must be a level of \code{stratum}; strata not named are not sampled.}
 \item{seed}{Integer seed, required so the draw is reproducible.}
 }
 \value{
-The sampled rows with the four design columns added. Attribute
-\code{allocation} holds the per-stratum table (\code{stratum}, \code{pop_N},
-\code{n_sampled}, \code{samp_frac}, \code{weight}).
+The sampled rows with the four design columns added by
+\code{\link[=listing_weights]{listing_weights()}}; attribute \code{allocation} holds the per-stratum table.
 }
 \description{
 Samples without replacement within each stratum and records, on every

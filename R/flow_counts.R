@@ -37,10 +37,14 @@ listing_flow_counts <- function(df, status = "listing_status", reached = "reache
     }
     out
   }
+  by_group(df, by, one)
+}
+
+# `one(d, label)` summarises one subset; the result is the whole sample ("all")
+# followed by each `by` group in sorted order.
+by_group <- function(df, by, one) {
   res <- one(df, "all")
-  if (!is.null(by)) {
-    groups <- split(df, as.character(df[[by]]))
-    res <- dplyr::bind_rows(res, dplyr::bind_rows(lapply(names(groups), function(g) one(groups[[g]], g))))
-  }
-  res
+  if (is.null(by)) return(res)
+  g <- as.character(df[[by]])
+  dplyr::bind_rows(res, lapply(sort(unique(g)), function(k) one(df[g == k, , drop = FALSE], k)))
 }

@@ -1,6 +1,6 @@
 Package: mysteryroster
 Title: Registry Overlap Strata and Listing-Validity Analysis for Physician Directory Audits
-Version: 0.2.0
+Version: 0.3.0
 Authors@R:
     person("Tyler", "Muffly", email = "tyler.muffly@dhha.org", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-2044-1693"))
@@ -23,19 +23,13 @@ BugReports: https://github.com/mufflyt/mysteryroster/issues
 Depends:
     R (>= 4.5.2)
 Imports:
-    broom,
     checkmate,
     dplyr,
-    rlang,
     stats,
     survey,
-    tibble,
-    withr
+    tibble
 Suggests:
     eulerr,
-    knitr,
-    rmarkdown,
     testthat (>= 3.0.0)
-VignetteBuilder: knitr
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.1.0

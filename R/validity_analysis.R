@@ -64,11 +64,10 @@ validity_estimates <- function(design, status = "listing_status", level = "confi
     }
     design$variables$.y <- as.integer(vars[[status]] == level)
   }
-  z <- stats::qnorm(1 - (1 - level_ci) / 2)
   if (is.null(by)) {
     m <- survey::svymean(~.y, design, na.rm = TRUE)
-    est <- as.numeric(m); se <- as.numeric(survey::SE(m))
-    out <- tibble::tibble(estimate = est, se = se, n = nrow(design$variables))
+    out <- tibble::tibble(estimate = as.numeric(m), se = as.numeric(survey::SE(m)),
+                          n = nrow(design$variables))
   } else {
     if (!by %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", by), call. = FALSE)
     m <- survey::svyby(~.y, as.formula(paste0("~", by)), design, survey::svymean, na.rm = TRUE)
@@ -77,8 +76,9 @@ validity_estimates <- function(design, status = "listing_status", level = "confi
     names(out)[1] <- by
     out$n <- as.integer(table(design$variables[[by]])[out[[by]]])
   }
-  out$ci_low  <- pmax(0, out$estimate - z * out$se)
-  out$ci_high <- pmin(1, out$estimate + z * out$se)
+  ci <- stats::confint(m, level = level_ci)
+  out$ci_low  <- pmax(0, ci[, 1])
+  out$ci_high <- pmin(1, ci[, 2])
   out
 }
 
@@ -128,7 +128,7 @@ validity_sensitivity_bounds <- function(df, status = "listing_status") {
 #' @param formula Right-hand side as a formula, for example
 #'   `~ stratum + rural + record_age_years`.
 #' @param status,level As in [validity_estimates()].
-#' @return A tibble from `broom::tidy()` with exponentiated estimates.
+#' @return A tibble with `term`, `estimate` (odds ratio), `conf.low`, `conf.high`.
 #' @export
 validity_model <- function(design, formula, status = "listing_status", level = "confirmed_valid") {
   checkmate::assert_class(design, "survey.design")
@@ -139,5 +139,7 @@ validity_model <- function(design, formula, status = "listing_status", level = "
   design$variables$.y <- as.integer(design$variables[[status]] == level)
   f <- stats::update(formula, .y ~ .)
   fit <- survey::svyglm(f, design = design, family = quasibinomial(link = "logit"))
-  tibble::as_tibble(broom::tidy(fit, conf.int = TRUE, exponentiate = TRUE))
+  ci <- exp(stats::confint(fit))
+  tibble::tibble(term = names(coef(fit)), estimate = unname(exp(coef(fit))),
+                 conf.low = unname(ci[, 1]), conf.high = unname(ci[, 2]))
 }

@@ -20,7 +20,7 @@ validity_model(
 \item{status, level}{As in \code{\link[=validity_estimates]{validity_estimates()}}.}
 }
 \value{
-A tibble from \code{broom::tidy()} with exponentiated estimates.
+A tibble with \code{term}, \code{estimate} (odds ratio), \code{conf.low}, \code{conf.high}.
 }
 \description{
 Fits \code{survey::svyglm()} with a quasibinomial logit link on the definitive

@@ -13,7 +13,7 @@
 #'   must be unique, non-empty and free of `+`.
 #' @param id Name of the identifier column in data-frame sources. Default `"npi"`.
 #' @return A tibble with columns `id`, `in_<registry>` (logical, one per
-#'   registry), `n_registries` and `overlap_zone` (registry names joined by `+`).
+#'   registry) and `overlap_zone` (registry names joined by `+`).
 #'   Attribute `registries` holds the registry names in order and attribute
 #'   `dropped` the count of missing or empty identifiers dropped per registry.
 #' @examples
@@ -50,7 +50,6 @@ registry_overlap <- function(sources, id = "npi") {
   out <- tibble::tibble(id = all_ids)
   for (s in nm) out[[paste0("in_", s)]] <- out$id %in% members[[s]]
   flags <- as.matrix(out[, paste0("in_", nm), drop = FALSE])
-  out$n_registries <- as.integer(rowSums(flags))
   out$overlap_zone <- apply(flags, 1, function(r) paste(nm[r], collapse = "+"))
   attr(out, "registries") <- nm
   attr(out, "dropped") <- dropped
@@ -68,10 +67,10 @@ registry_overlap <- function(sources, id = "npi") {
 overlap_zone_counts <- function(overlap) {
   nm <- attr(overlap, "registries")
   checkmate::assert_character(nm, min.len = 1)
-  counts <- dplyr::count(overlap, .data$overlap_zone, name = "n")
-  counts$n_registries <- lengths(strsplit(counts$overlap_zone, "+", fixed = TRUE))
-  counts <- counts[order(counts$n_registries, counts$overlap_zone), ]
-  names(counts)[1] <- "zone"
+  tab <- table(overlap$overlap_zone)
+  counts <- tibble::tibble(zone = names(tab), n = as.integer(tab))
+  counts$n_registries <- lengths(strsplit(counts$zone, "+", fixed = TRUE))
+  counts <- counts[order(counts$n_registries, counts$zone), ]
   if (sum(counts$n) != nrow(overlap)) {
     stop("overlap_zone_counts: zone counts do not close on the identifier total", call. = FALSE)
   }
@@ -103,7 +102,6 @@ frame_strata <- function(overlap, frame = attr(overlap, "registries")[1]) {
   lv <- overlap_zone_counts(out)$zone
   out$stratum <- factor(out$overlap_zone, levels = lv)
   attr(out, "registries") <- nm
-  attr(out, "frame") <- frame
   out
 }
 

@@ -12,9 +12,8 @@
 #'   must be a level of `stratum`; strata not named are not sampled.
 #' @param stratum Name of the stratum column. Default `"stratum"`.
 #' @param seed Integer seed, required so the draw is reproducible.
-#' @return The sampled rows with the four design columns added. Attribute
-#'   `allocation` holds the per-stratum table (`stratum`, `pop_N`,
-#'   `n_sampled`, `samp_frac`, `weight`).
+#' @return The sampled rows with the four design columns added by
+#'   [listing_weights()]; attribute `allocation` holds the per-stratum table.
 #' @export
 stratified_listing_sample <- function(frame, allocation, stratum = "stratum", seed) {
   checkmate::assert_data_frame(frame, min.rows = 1)
@@ -35,26 +34,16 @@ stratified_listing_sample <- function(frame, allocation, stratum = "stratum", se
                  paste(sprintf("%s (%d > %d)", over, allocation[over], pop[over]), collapse = ", ")),
          call. = FALSE)
   }
-  alloc <- tibble::tibble(
-    stratum   = names(allocation),
-    pop_N     = as.integer(pop[names(allocation)]),
-    n_sampled = as.integer(allocation)
-  )
-  alloc$samp_frac <- alloc$n_sampled / alloc$pop_N
-  alloc$weight    <- alloc$pop_N / alloc$n_sampled
-  rows <- withr::with_seed(seed, {
-    unlist(lapply(seq_len(nrow(alloc)), function(i) {
-      idx <- which(strata == alloc$stratum[i])
-      idx[sample.int(length(idx), alloc$n_sampled[i])]
+  rows <- local({
+    old <- if (exists(".Random.seed", globalenv())) get(".Random.seed", globalenv()) else NULL
+    on.exit(if (is.null(old)) rm(".Random.seed", envir = globalenv()) else assign(".Random.seed", old, globalenv()))
+    set.seed(seed)
+    unlist(lapply(names(allocation), function(s) {
+      idx <- which(strata == s)
+      idx[sample.int(length(idx), allocation[[s]])]
     }), use.names = FALSE)
   })
-  out <- frame[rows, , drop = FALSE]
-  key <- match(as.character(out[[stratum]]), alloc$stratum)
-  out$pop_N     <- alloc$pop_N[key]
-  out$n_sampled <- alloc$n_sampled[key]
-  out$samp_frac <- alloc$samp_frac[key]
-  out$weight    <- alloc$weight[key]
-  attr(out, "allocation") <- alloc
-  attr(out, "seed") <- seed
-  tibble::as_tibble(out)
+  listing_weights(frame[rows, , drop = FALSE],
+                  pop_N = setNames(as.integer(pop[names(allocation)]), names(allocation)),
+                  stratum = stratum)
 }
