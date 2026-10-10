@@ -22,6 +22,33 @@ ent_disposition_map <- function() {
   )
 }
 
+#' Draft disposition codebook for the OB/GYN subspecialty registry-validity study
+#'
+#' Written from the protocol's outcome definitions (COMIRB draft, 2026-10-09,
+#' Section 7) before the call scripts and REDCap codebook exist, so the strings
+#' are placeholders to be replaced one-for-one once the disposition field is
+#' finalised. The four categories are the same as [ent_disposition_map()]:
+#' `at_location` is "practice-confirmed" (sees patients in the indexed
+#' subspecialty at this site, whether or not accepting new patients);
+#' `relocated` is "workforce-confirmed elsewhere"; `retired` covers
+#' retirement, death, leaving medicine and no longer providing the indexed
+#' care; `not_specified` is a "no" with no reason. New-patient acceptance is a
+#' separate measure and is not a disposition category.
+#'
+#' @return A disposition map (named list of character vectors).
+#' @export
+obgyn_disposition_map <- function() {
+  list(
+    at_location = c("Sees patients here-accepting new patients",
+                    "Sees patients here-not accepting new patients",
+                    "Sees patients here-on leave"),
+    relocated = "Moved to another practice location",
+    retired = c("Retired or no longer practicing",
+                "No longer provides this subspecialty care"),
+    not_specified = "No-reason not given"
+  )
+}
+
 #' Turn call dispositions into four exhaustive, mutually exclusive listing statuses
 #'
 #' Physician presence is never inferred from a non-missing new-patient answer

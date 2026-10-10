@@ -45,3 +45,16 @@ test_that("an overlapping or malformed map fails closed", {
   expect_error(classify_listing_status(calls, map = bad), "overlap")
   expect_error(classify_listing_status(calls, map = m[1:3]), "exactly the categories")
 })
+
+test_that("the draft OB/GYN map has the same four disjoint categories and classifies like the ENT map", {
+  om <- obgyn_disposition_map()
+  expect_setequal(names(om), names(ent_disposition_map()))
+  expect_false(anyDuplicated(unlist(om)) > 0)
+  d <- data.frame(disposition = c("Sees patients here-not accepting new patients", "Moved to another practice location",
+                                  "No longer provides this subspecialty care", "No-reason not given", NA),
+                  reached = c(TRUE, TRUE, TRUE, TRUE, NA))
+  out <- classify_listing_status(d, map = om)
+  expect_equal(as.character(out$listing_status),
+               c("confirmed_valid", "confirmed_invalid", "confirmed_invalid", "unresolved", "not_attempted"))
+  expect_equal(out$physician_active[2:3], c("confirmed_yes", "confirmed_no"))
+})

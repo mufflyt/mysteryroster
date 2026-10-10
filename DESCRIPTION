@@ -21,7 +21,7 @@ Roxygen: list(markdown = TRUE)
 URL: https://github.com/mufflyt/mysteryroster
 BugReports: https://github.com/mufflyt/mysteryroster/issues
 Depends:
-    R (>= 4.1.0)
+    R (>= 4.5.2)
 Imports:
     broom,
     checkmate,
