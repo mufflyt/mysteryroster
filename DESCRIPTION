@@ -1,0 +1,41 @@
+Package: mysteryregistry
+Title: Registry Overlap Strata and Listing-Validity Analysis for Physician Directory Audits
+Version: 0.1.0
+Authors@R:
+    person("Tyler", "Muffly", email = "tyler.muffly@dhha.org", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0002-2044-1693"))
+Description: Tools for studies that test whether physician listings in national
+    directories are valid. Cross-links any number of registries (for example NPPES,
+    a certifying board, a professional society) by a common identifier into mutually
+    exclusive overlap zones, draws a stratified listing sample that preserves sampling
+    probabilities, turns telephone-audit dispositions into four exhaustive listing
+    statuses (confirmed valid, confirmed invalid, unresolved, not attempted), and
+    produces design-weighted validity estimates, extreme-case sensitivity bounds,
+    survey-weighted regression, and study-flow counts. Specialty-agnostic: the ENT
+    registry-validity study and the OB/GYN subspecialty study use the same functions
+    with different registries and disposition codebooks.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Language: en-US
+Roxygen: list(markdown = TRUE)
+URL: https://github.com/mufflyt/mysteryregistry
+BugReports: https://github.com/mufflyt/mysteryregistry/issues
+Depends:
+    R (>= 4.1.0)
+Imports:
+    broom,
+    checkmate,
+    dplyr,
+    rlang,
+    stats,
+    survey,
+    tibble,
+    withr
+Suggests:
+    eulerr,
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.1.0

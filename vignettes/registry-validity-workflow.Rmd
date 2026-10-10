@@ -1,0 +1,86 @@
+---
+title: "From protocol to analysis: a registry-validity study in six calls"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{From protocol to analysis: a registry-validity study in six calls}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(mysteryregistry)
+```
+
+A registry-validity study asks one question of each physician-location
+listing: is the named physician still practising the indexed specialty at the
+listed address? This vignette walks the protocol in order with synthetic data.
+Section numbers refer to the OB/GYN subspecialty registry-validity protocol
+(COMIRB draft, October 2026); the same steps reproduce the ENT study.
+
+## Section 4 and 5: registries, overlap zones, strata
+
+Each registry is a vector or data frame of identifiers. The first registry is
+the sampling frame (NPPES in both studies).
+
+```{r overlap}
+set.seed(2026)
+nppes   <- sprintf("%010d", 1:1200)
+board   <- sample(nppes, 700)                       # certified subset
+society <- c(sample(board, 300), sample(setdiff(nppes, board), 60))
+ov <- registry_overlap(list(nppes = nppes, board = board, society = society))
+overlap_zone_counts(ov)
+```
+
+Protocol strata A, B, C and D are the frame registry's overlap zones:
+
+```{r strata}
+frame <- frame_strata(ov, frame = "nppes")
+table(frame$stratum)
+```
+
+## Section 5: a stratified sample that keeps its sampling probabilities
+
+Rare zones are oversampled on purpose; the weights make the estimates
+representative again.
+
+```{r sample}
+listings <- stratified_listing_sample(
+  frame,
+  allocation = c("nppes" = 60, "nppes+society" = 40, "nppes+board" = 60, "nppes+board+society" = 60),
+  seed = 20261009)
+attr(listings, "allocation")
+```
+
+## Section 7: dispositions become four exhaustive statuses
+
+The disposition map is the study codebook. `ent_disposition_map()` is the ENT
+study's REDCap vocabulary; an OB/GYN study passes its own strings in the same
+four categories. An unmapped disposition stops the call, so codebook drift
+cannot silently become "unresolved".
+
+```{r status}
+calls <- listings
+calls$reached <- sample(c(TRUE, FALSE, NA), nrow(calls), TRUE, prob = c(0.7, 0.2, 0.1))
+calls$disposition <- ifelse(calls$reached %in% TRUE,
+  sample(unlist(ent_disposition_map()), nrow(calls), TRUE, prob = c(0.6, 0.1, 0.05, 0.1, 0.1, 0.05)),
+  NA)
+calls <- classify_listing_status(calls, phone_valid = NULL)
+table(calls$listing_status)
+```
+
+## Section 9: design-weighted estimates, bounds, model, flow
+
+```{r analysis}
+design <- listing_validity_design(calls)
+validity_estimates(design)
+validity_estimates(design, by = "stratum")
+validity_sensitivity_bounds(calls)
+validity_model(design, ~ stratum)
+listing_flow_counts(calls, by = "stratum")
+```
+
+The weighted estimate is the primary estimand (all sampled listings in the
+denominator, unresolved reported explicitly). `definitive_only = TRUE` gives
+the complete-case estimate, and the bounds table gives the two extreme-case
+scenarios the protocol requires alongside it.
