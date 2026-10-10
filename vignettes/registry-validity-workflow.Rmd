@@ -9,7 +9,7 @@ vignette: >
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
-library(mysteryregistry)
+library(mysteryroster)
 ```
 
 A registry-validity study asks one question of each physician-location

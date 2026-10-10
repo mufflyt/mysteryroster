@@ -1,4 +1,4 @@
-#' mysteryregistry: registry overlap strata and listing-validity analysis
+#' mysteryroster: registry overlap strata and listing-validity analysis
 #'
 #' The analytic unit throughout is one physician-location listing. The
 #' functions follow the order of a registry-validity protocol: cross-link

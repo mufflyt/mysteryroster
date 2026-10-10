@@ -1,4 +1,4 @@
-# mysteryregistry
+# mysteryroster
 
 Registry overlap strata and listing-validity analysis for mystery-caller
 audits of physician directories.
@@ -24,8 +24,8 @@ input; a disposition outside the codebook stops rather than becoming
 "unresolved" by default.
 
 ```r
-remotes::install_github("mufflyt/mysteryregistry")
-vignette("registry-validity-workflow", package = "mysteryregistry")
+remotes::install_github("mufflyt/mysteryroster")
+vignette("registry-validity-workflow", package = "mysteryroster")
 ```
 
 Sibling packages: `mysterynpi` (name keys and NPI linkage), `mysterycall`

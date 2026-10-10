@@ -1,4 +1,4 @@
-Package: mysteryregistry
+Package: mysteryroster
 Title: Registry Overlap Strata and Listing-Validity Analysis for Physician Directory Audits
 Version: 0.1.0
 Authors@R:
@@ -18,8 +18,8 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Language: en-US
 Roxygen: list(markdown = TRUE)
-URL: https://github.com/mufflyt/mysteryregistry
-BugReports: https://github.com/mufflyt/mysteryregistry/issues
+URL: https://github.com/mufflyt/mysteryroster
+BugReports: https://github.com/mufflyt/mysteryroster/issues
 Depends:
     R (>= 4.1.0)
 Imports:

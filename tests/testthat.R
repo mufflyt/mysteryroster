@@ -1,4 +1,4 @@
 library(testthat)
-library(mysteryregistry)
+library(mysteryroster)
 
-test_check("mysteryregistry")
+test_check("mysteryroster")
