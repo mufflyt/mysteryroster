@@ -10,7 +10,8 @@ validity_estimates(
   level = "confirmed_valid",
   by = NULL,
   definitive_only = FALSE,
-  level_ci = 0.95
+  level_ci = 0.95,
+  outcome = NULL
 )
 }
 \arguments{
@@ -28,6 +29,12 @@ status is \code{confirmed_valid} or \code{confirmed_invalid} (the complete-case
 estimand); otherwise all sampled listings form the denominator.}
 
 \item{level_ci}{Confidence level. Default 0.95.}
+
+\item{outcome}{Optional logical column naming a different estimand, for
+example \code{"location_valid"} (practises at the listed location) or
+\code{"workforce_valid"} (active in the specialty somewhere). When given,
+\code{status}/\code{level} are ignored and rows where the outcome is \code{NA} are
+dropped from the design.}
 }
 \value{
 A tibble with \code{estimate}, \code{se}, \code{ci_low}, \code{ci_high} and the

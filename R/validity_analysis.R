@@ -36,20 +36,34 @@ listing_validity_design <- function(df, strata = "stratum", weights = "weight", 
 #'   status is `confirmed_valid` or `confirmed_invalid` (the complete-case
 #'   estimand); otherwise all sampled listings form the denominator.
 #' @param level_ci Confidence level. Default 0.95.
+#' @param outcome Optional logical column naming a different estimand, for
+#'   example `"location_valid"` (practises at the listed location) or
+#'   `"workforce_valid"` (active in the specialty somewhere). When given,
+#'   `status`/`level` are ignored and rows where the outcome is `NA` are
+#'   dropped from the design.
 #' @return A tibble with `estimate`, `se`, `ci_low`, `ci_high` and the
 #'   unweighted `n`, one row overall or per `by` group.
 #' @export
 validity_estimates <- function(design, status = "listing_status", level = "confirmed_valid",
-                               by = NULL, definitive_only = FALSE, level_ci = 0.95) {
+                               by = NULL, definitive_only = FALSE, level_ci = 0.95,
+                               outcome = NULL) {
   checkmate::assert_class(design, "survey.design")
   vars <- design$variables
-  if (!status %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", status), call. = FALSE)
-  if (definitive_only) {
-    keep <- vars[[status]] %in% c("confirmed_valid", "confirmed_invalid")
-    design <- subset(design, keep)
+  if (!is.null(outcome)) {
+    if (!outcome %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", outcome), call. = FALSE)
+    if (!is.logical(vars[[outcome]])) stop(sprintf("validity_estimates: '%s' is not logical", outcome), call. = FALSE)
+    design <- subset(design, !is.na(vars[[outcome]]))
     vars <- design$variables
+    design$variables$.y <- as.integer(vars[[outcome]])
+  } else {
+    if (!status %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", status), call. = FALSE)
+    if (definitive_only) {
+      keep <- vars[[status]] %in% c("confirmed_valid", "confirmed_invalid")
+      design <- subset(design, keep)
+      vars <- design$variables
+    }
+    design$variables$.y <- as.integer(vars[[status]] == level)
   }
-  design$variables$.y <- as.integer(vars[[status]] == level)
   z <- stats::qnorm(1 - (1 - level_ci) / 2)
   if (is.null(by)) {
     m <- survey::svymean(~.y, design, na.rm = TRUE)

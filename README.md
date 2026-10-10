@@ -41,16 +41,19 @@ flowchart TD
     OV["registry_overlap()<br/>one row per NPI, membership flags, overlap_zone"] --> ZC["overlap_zone_counts()<br/>plot_registry_overlap()"]
     OV --> FS["frame_strata()<br/>frame rows only; stratum = overlap zone"]
     FS --> SM["stratified_listing_sample()<br/>allocation per stratum; weight = N / n"]
+    CALLS --> LW["listing_weights()<br/>weight = N / n for an existing call log"]
+    LW --> DS
     SM --> CALLS[/"telephone audit<br/>disposition, reached, phone_valid"/]
     CALLS --> CL["classify_listing_status()<br/>confirmed_valid | confirmed_invalid | unresolved | not_attempted"]
     CL --> DS["listing_validity_design()<br/>survey::svydesign, strata + weights"]
-    DS --> VE["validity_estimates()<br/>weighted % valid, by stratum, complete-case"]
+    DS --> VE["validity_estimates()<br/>weighted % valid, by stratum; outcome = location or workforce"]
     DS --> VM["validity_model()<br/>survey-weighted logistic regression"]
     CL --> SB["validity_sensitivity_bounds()<br/>observed, best case, worst case"]
     CL --> FC["listing_flow_counts()<br/>sampled, attempted, reached, definitive"]
+    CL --> VC["validation_cascade()<br/>each stage % of attempted and % of prior stage"]
     classDef fn fill:#1F2A33,color:#F6F3E7,stroke:#1F2A33;
     classDef data fill:#F6F3E7,color:#1F2A33,stroke:#1F2A33;
-    class OV,ZC,FS,SM,CL,DS,VE,VM,SB,FC fn;
+    class OV,ZC,FS,SM,LW,CL,DS,VE,VM,SB,FC,VC fn;
     class R1,R2,R3,CALLS data;
 ```
 
@@ -100,11 +103,13 @@ The vignette runs this end to end on synthetic data:
 | Cross-link registries into mutually exclusive overlap zones | `registry_overlap()`, `overlap_zone_counts()`, `plot_registry_overlap()` |
 | Restrict to the frame registry; define strata | `frame_strata()` |
 | Stratified sample with preserved sampling probabilities | `stratified_listing_sample()` |
+| Design weights for a call log sampled elsewhere (N / n from a population table) | `listing_weights()` |
 | Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `listing_status_levels()` |
-| Design-weighted validity, overall and by stratum; complete-case estimate | `listing_validity_design()`, `validity_estimates()` |
+| Design-weighted validity, overall and by stratum; complete-case estimate; location-valid or workforce-valid outcome | `listing_validity_design()`, `validity_estimates()` |
 | Extreme-case bounds for unresolved listings | `validity_sensitivity_bounds()` |
 | Survey-weighted logistic regression | `validity_model()` |
 | Study-flow counts | `listing_flow_counts()` |
+| Cascade stages with both denominators (of attempted, of prior stage), weighted or not | `validation_cascade()` |
 
 ## Design rules
 
