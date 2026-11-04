@@ -11,9 +11,14 @@ Description: Tools for studies that test whether physician listings in national
     probabilities, turns telephone-audit dispositions into four exhaustive listing
     statuses (confirmed valid, confirmed invalid, unresolved, not attempted), and
     produces design-weighted validity estimates, extreme-case sensitivity bounds,
-    survey-weighted regression, and study-flow counts. Specialty-agnostic: the ENT
-    registry-validity study and the OB/GYN subspecialty study use the same functions
-    with different registries and disposition codebooks.
+    survey-weighted regression, and study-flow counts. Also compares a shared
+    attribute (such as practice state) pairwise across sources with no gold
+    standard, freshness-tuned by each source's own last-updated or vintage date,
+    and offers three longitudinal lead-lag approaches (panel convergence, spell-age
+    stratified agreement, and administrative enrollment timing) for determining
+    which of two equally fallible sources is leading versus lagging. Specialty-
+    agnostic: the ENT registry-validity study and the OB/GYN subspecialty study
+    use the same functions with different registries and disposition codebooks.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Language: en-US
@@ -27,9 +32,13 @@ Imports:
     dplyr,
     stats,
     survey,
-    tibble
+    tibble,
+    utils
 Suggests:
     eulerr,
+    knitr,
+    rmarkdown,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.1.0
+VignetteBuilder: knitr

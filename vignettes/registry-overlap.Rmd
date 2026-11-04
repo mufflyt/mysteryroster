@@ -1,0 +1,164 @@
+---
+title: "Cross-Linking Registries with registry_overlap()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Cross-Linking Registries with registry_overlap()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+## The problem this solves
+
+A registry-validity study usually starts from more than one source of
+physicians for the same specialty: NPPES, a certifying board's
+directory, a professional society's member list, a subspecialty
+society's patient-facing "find a doctor" page. None of these is a gold
+standard -- each one can be incomplete, stale, or scoped differently
+(a board certifies people who may not currently practice; a
+patient-facing website only lists members who opted in). What you
+*can* say without assuming any one of them is correct is simpler:
+which identifiers appear in which combination of sources.
+
+`registry_overlap()` does exactly that cross-linking, for any number
+of named sources, and nothing more -- it never infers presence from
+anything other than literal membership in a list.
+
+## A worked example: an ENT board, a patient-facing website, and NPPES
+
+Suppose you have NPI lists from three sources for an ENT
+registry-validity study: the certifying board's diplomate list, a
+subspecialty society's patient-facing directory, and an NPPES extract
+restricted to the right taxonomy code.
+
+```{r sources}
+ent_board <- c("1111111111", "2222222222", "3333333333", "4444444444", "5555555555")
+patient_facing_site <- c("3333333333", "4444444444", "5555555555", "6666666666")
+nppes <- c("1111111111", "2222222222", "4444444444", "5555555555", "6666666666", "7777777777")
+```
+
+`registry_overlap()` takes these as a named list -- a character vector
+of identifiers, or a data frame with an `npi` column (see `?registry_overlap`
+for the data-frame form). The names become the labels used everywhere
+downstream, so they must be unique and contain no `+`:
+
+```{r overlap}
+ov <- registry_overlap(list(
+  ent_board = ent_board,
+  patient_facing_site = patient_facing_site,
+  nppes = nppes
+))
+ov
+```
+
+Every row is one identifier that appeared in *at least one* source.
+`overlap_zone` names exactly which sources: `"1111111111"` is
+`ent_board+nppes` (on the board, in NPPES, but never made it onto the
+patient-facing site); `"6666666666"` is `patient_facing_site+nppes`
+(listed publicly and in NPPES, but not board-certified, which could be
+a lapsed certification or simply a data-entry gap -- `registry_overlap()`
+does not and cannot tell you which).
+
+## Counts that are guaranteed to add up
+
+`overlap_zone_counts()` tabulates every zone and, before returning
+anything, checks two things: the zone counts sum to the total number
+of identifiers, and each registry's own total equals the sum of every
+zone containing it. A merge bug that silently dropped or duplicated a
+row would fail this check rather than quietly producing a diagram that
+disagrees with its own numbers:
+
+```{r zone-counts}
+overlap_zone_counts(ov)
+```
+
+That guarantee is enforced, not just documented -- corrupting one
+membership flag by hand makes it fail loudly:
+
+```{r zone-counts-fail, error = TRUE}
+broken <- ov
+broken$in_nppes[broken$id == "6666666666"] <- FALSE
+overlap_zone_counts(broken)
+```
+
+## Missing and malformed identifiers are counted, not silently dropped
+
+Identifiers are trimmed, coerced to character, and deduplicated within
+each source; blank or missing ones are dropped and counted rather than
+just vanishing:
+
+```{r dropped}
+messy <- registry_overlap(list(
+  ent_board = c(" 1111111111", "1111111111", NA, ""),
+  nppes = c("1111111111", "2222222222")
+))
+messy$id
+attr(messy, "dropped")
+```
+
+## Restricting to a frame registry for sampling
+
+A listing-validity study samples from one registry at a time -- usually
+NPPES, since it is the most complete and every other source's
+identifier already links through it. `frame_strata()` keeps only the
+rows present in that frame registry and turns the overlap zone into a
+`stratum` factor, ordered by how many registries each zone touches:
+
+```{r frame-strata}
+frame <- frame_strata(ov, frame = "nppes")
+frame[, c("id", "overlap_zone", "stratum")]
+levels(frame$stratum)
+```
+
+From here, `stratified_listing_sample()` draws a sample that preserves
+each stratum's known sampling probability -- see that function's own
+documentation, and the README's "study in six calls" walkthrough, for
+the rest of the pipeline from sample to validity estimate.
+
+## An area-proportional picture
+
+`plot_registry_overlap()` draws the same, already-checked zone counts
+as an `eulerr` Euler diagram, so the figure can never show something
+the table doesn't:
+
+```{r euler, eval = requireNamespace("eulerr", quietly = TRUE), fig.alt = "Euler diagram of three-registry overlap"}
+fit <- plot_registry_overlap(ov, shape = "ellipse")
+plot(fit, quantities = TRUE)
+```
+
+## What this does not tell you
+
+Three sources, three registries worth of membership flags -- and still
+no claim about which physicians are *actually* practicing. Design
+rules worth repeating here: the frame registry is a sampling-efficiency
+choice, not a correctness claim; a zone like `ent_board+nppes` is a
+fact about identifier co-occurrence, not a disposition; and nothing
+here compares an *attribute* (a name, a practice state) across the
+sources that share an identifier -- only whether the identifier itself
+is shared. If you also want to know whether sources that share an NPI
+agree on, say, practice state, that is a separate question answered by
+`attribute_agreement()`:
+
+```{r attribute-agreement}
+board_state <- data.frame(npi = c("1111111111", "4444444444"), state = c("CO", "CO"),
+                           stringsAsFactors = FALSE)
+nppes_state <- data.frame(npi = c("1111111111", "4444444444"), state = c("CO", "NM"),
+                           stringsAsFactors = FALSE)
+attribute_agreement(list(ent_board = board_state, nppes = nppes_state),
+                     attribute = "state", year = NULL)
+```
+
+See `?attribute_agreement` for the freshness-tuned, pairwise version of
+this comparison -- it is deliberately a different function from
+`registry_overlap()`, because membership and attribute agreement are
+different claims that should never be conflated into one.

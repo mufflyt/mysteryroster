@@ -31,6 +31,19 @@ own disposition codebook.
 remotes::install_github("mufflyt/mysteryroster")
 ```
 
+## Vignettes
+
+- `vignette("registry-overlap")` -- cross-linking registries into Euler
+  zones, the closure guarantee `overlap_zone_counts()` enforces, `frame_strata()`,
+  the area-proportional diagram, and a bridge to `attribute_agreement()`.
+- `vignette("listing-validity-study")` -- the rest of the pipeline, end to
+  end: sampling, call dispositions, design-weighted estimates, sensitivity
+  bounds, the survey-weighted model, and the flow/cascade counts, all
+  reconciled against one synthetic call log.
+- `vignette("lead-lag-staleness")` -- the three longitudinal approaches
+  below, worked through on real (synthetic) multi-year panels, including
+  the full manuscript-paragraph output of `format_no_gold_standard_prose()`.
+
 ## How the pieces fit
 
 ```mermaid
@@ -93,6 +106,62 @@ validity_model(design, ~ stratum + rural)
 listing_flow_counts(calls, by = "stratum")
 ```
 
+## Beyond membership: does a shared attribute agree?
+
+`registry_overlap()` only asks whether an NPI is *present* in each source.
+`attribute_agreement()` takes that a step further: for every pair of sources
+that share an identifier, does a common attribute (practice state, say)
+actually agree? There is still no gold standard here -- the comparison is
+always pairwise, never against an assumed truth -- and every source's own
+freshness date (its record's last-updated date or snapshot/vintage date,
+never the date it was downloaded) is carried through so a disagreement
+between a 2015 record and a 2024 one reads differently from one between two
+current records.
+
+```r
+# Coverage/agreement audit across sources that don't share a gold standard,
+# with each source's own freshness date -- not download date -- tuning which
+# year a row is actually evidence for.
+ag <- attribute_agreement(
+  list(nppes = nppes_df, pecos = pecos_df, dac = dac_df, open_payments = op_df),
+  attribute = "state", year = "year", observed_at = "last_updated")
+attribute_agreement_summary(ag)   # n_compared, n_agree, pct_agree per source pair per year
+```
+
+`record_age_years()`/`record_age_band()`/`classify_record_staleness()` are
+the same freshness-tuning primitives `mysterymedicaid::mm_record_staleness.R`
+ports from isochrones, so a disagreement is never read as "one source is
+wrong" -- only as "this side provably cannot reflect information the other
+side already had."
+
+## When there's no gold standard, but there is time
+
+A single cross-section can only say two sources disagree, not which one
+is stale. With repeated annual snapshots, three further approaches (see
+`vignette("lead-lag-staleness")`) use timing itself to break that symmetry:
+
+```r
+# Approach 1: does Source A or Source B move first, and does the other
+# eventually adopt its value, or revert back?
+ll <- attribute_lead_lag_matrix(nppes_panel, open_payments_panel,
+                                 attributes = c("state", "city", "zip5", "street"),
+                                 cross_section = dac_current, cross_section_year = 2026L)
+
+# Approach 2: does agreement decay with how long a source's value has sat unchanged?
+panel_b <- attribute_spell_age(nppes_panel, attribute = "street")
+attribute_agreement_by_spell_age(dac_current, panel_b, attributes = c("state", "street"))
+
+# Approach 3: do administrative enrollment dates arrive before or after a panel move?
+enrollment_move_lead_lag(nppes_panel, medicaid_enrollment_intervals)
+
+# All three, as manuscript-ready paragraphs:
+format_no_gold_standard_prose(ll, freshness_strata, enrollment_timing)
+```
+
+None of the three claims a source is correct -- only that it moved first,
+that disagreement tracks a measurable staleness clock, or that an
+administrative date landed before or after a panel caught up.
+
 ## From protocol to function
 
 | Protocol step | Function |
@@ -107,6 +176,12 @@ listing_flow_counts(calls, by = "stratum")
 | Survey-weighted logistic regression | `validity_model()` |
 | Study-flow counts | `listing_flow_counts()` |
 | Cascade stages with both denominators (of attempted, of prior stage), weighted or not | `validation_cascade()` |
+| Pairwise cross-source agreement on a shared attribute, no gold standard, freshness-tuned by each source's own date | `attribute_agreement()`, `attribute_agreement_summary()`, `record_age_years()`, `record_age_band()`, `classify_record_staleness()` |
+| Empirical staleness (consecutive-year spell age) from a multi-year panel alone | `attribute_spell_age()` |
+| Longitudinal lead-lag: which source moves first, adopts, or reverts, with an optional cross-sectional back-check | `attribute_lead_lag_matrix()` |
+| Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |
+| Administrative enrollment arrival/departure timing around a panel move | `enrollment_move_lead_lag()` |
+| Manuscript-ready paragraphs from the three lead-lag approaches above | `format_no_gold_standard_prose()` |
 
 ## Design rules
 
@@ -122,6 +197,11 @@ listing_flow_counts(calls, by = "stratum")
   categories sum to the input, and registry totals must close on their zones.
 - **Codebook drift stops the run.** A disposition string outside the map is an
   error unless you ask for `unmapped = "unresolved"`.
+- **Attribute agreement is pairwise, never against an assumed truth.**
+  `attribute_agreement()` compares every pair of sources that cover the same
+  identifier-year; it never picks a "correct" value. A disagreement is read
+  against each side's own freshness date only to say one side provably
+  predates the other, not to say which is right.
 
 ## Disposition maps
 
@@ -145,11 +225,15 @@ classify_listing_status(call_log, map = obgyn_map)
 - [`mysterycall`](https://github.com/mufflyt/mysterycall): appointment-access
   outcomes, wait-time models, power, and study tooling.
 - [`mysterymaps`](https://github.com/mufflyt/mysterymaps): maps for access studies.
+- [`mysterymedicaid`](https://github.com/mufflyt/mysterymedicaid): Medicaid MCO
+  provider-directory acquisition and audit; the source of the
+  `record_age_years()`/`record_age_band()`/`classify_record_staleness()`
+  freshness primitives this package ports and makes symmetric.
 
 ## Citation
 
 Muffly TM. mysteryroster: registry overlap strata and listing-validity analysis
-for mystery-caller audits of physician directories. R package version 0.1.0.
+for mystery-caller audits of physician directories. R package version 0.3.0.
 https://github.com/mufflyt/mysteryroster
 
 ## License

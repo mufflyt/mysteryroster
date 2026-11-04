@@ -1,0 +1,272 @@
+---
+title: "Who's Stale When There's No Gold Standard: Lead-Lag Approaches"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Who's Stale When There's No Gold Standard: Lead-Lag Approaches}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+`attribute_agreement()` (see `vignette("registry-overlap")`) answers a
+single-year question: do two sources agree on an attribute right now?
+It is deliberately silent on *why* they disagree. This vignette covers
+three complementary approaches that use **time itself** -- repeated
+annual snapshots, not a single cross-section -- to say which source is
+leading and which is lagging, still without ever assuming either one
+is a gold standard.
+
+The motivating case throughout: a certifying-board roster carries no
+address at all, so two external, equally fallible sources (a
+self-reported panel like NPPES, and a longitudinal transactional
+source like CMS Open Payments) are the only way to say anything about
+where a provider practices -- and a single year of disagreement
+between them is symmetric. Only repeated observation over time breaks
+that symmetry.
+
+## Approach 1: does Source A or Source B move first?
+
+The core move is comparing year `t` to year `t + 1` across two
+longitudinal sources. Three NPIs tell three different stories:
+
+```{r lead-lag-setup}
+source_a <- data.frame(
+  npi = c("1", "1", "1", "2", "2", "2", "3", "3", "3"),
+  year = c(2022, 2023, 2024, 2022, 2023, 2024, 2022, 2023, 2024),
+  state = c("CO", "NM", "NM", "NY", "NY", "NY", "TX", "CO", "CO"),
+  city = c("DENVER", "SANTA FE", "SANTA FE", "NYC", "NYC", "NYC", "AUSTIN", "DENVER", "DENVER"),
+  zip5 = c("80202", "87501", "87501", "10001", "10001", "10001", "78701", "80202", "80202"),
+  street = c("1 A", "2 B", "2 B", "3 C", "3 C", "3 C", "4 D", "1 A", "1 A"),
+  stringsAsFactors = FALSE
+)
+source_b <- data.frame(
+  npi = c("1", "1", "1", "2", "2", "2", "3", "3", "3"),
+  year = c(2022, 2023, 2024, 2022, 2023, 2024, 2022, 2023, 2024),
+  state = c("CO", "CO", "NM", "NJ", "NY", "NY", "CO", "CO", "CO"),
+  city = c("DENVER", "DENVER", "SANTA FE", "NEWARK", "NYC", "NYC", "DENVER", "DENVER", "DENVER"),
+  zip5 = c("80202", "80202", "87501", "07102", "10001", "10001", "80202", "80202", "80202"),
+  street = c("1 A", "1 A", "2 B", "9 Z", "3 C", "3 C", "1 A", "1 A", "1 A"),
+  stringsAsFactors = FALSE
+)
+```
+
+- **NPI 1**: sources agree in 2022 (both `CO`/`DENVER`); Source A moves
+  to New Mexico in 2023, Source B does not catch up until 2024 --
+  Source A broke concordance first.
+- **NPI 2**: sources already disagree in 2022 (`NY` vs `NJ`); Source B
+  adopts Source A's 2022 value (`NY`) the very next year.
+- **NPI 3**: disagree in 2022 (`TX` vs `CO`); here it is Source A that
+  reverts to Source B's 2022 value (`CO`) the next year.
+
+A third, optional input -- a cross-sectional source like CMS
+DAC/PECOS, dated to one year -- lets a fourth check run: when the
+cross-section disagrees with Source B, did Source B's history already
+carry that value at some earlier date?
+
+```{r lead-lag-run}
+cross_sec <- data.frame(
+  npi = c("1", "2", "3"),
+  state = c("NM", "PA", "CO"),
+  city = c("SANTA FE", "PHILA", "DENVER"),
+  zip5 = c("87501", "19104", "80202"),
+  street = c("2 B", "8 Y", "1 A"),
+  stringsAsFactors = FALSE
+)
+
+ll <- attribute_lead_lag_matrix(
+  source_a, source_b,
+  attributes = c("state", "city", "zip5", "street"),
+  base_year = 2022L,
+  cross_section = cross_sec,
+  cross_section_year = 2024L
+)
+ll[, c("attribute", "a_breaks_concordance_first", "b_breaks_concordance_first",
+       "b_adopts_a_multi_n", "a_reverts_b_multi_n", "cross_section_in_prior_b_n")]
+```
+
+At the state level: Source A broke concordance first once (NPI 1),
+Source B never did; tracking the 2022 base-year disagreements forward,
+Source B eventually adopted Source A's value once (NPI 2) and Source A
+reverted to Source B's value once (NPI 3); and the cross-section's one
+disagreement (NPI 2, `PA` vs. Source B's `NY`) never appeared anywhere
+in Source B's own prior history -- it is a genuinely new value, not
+something Source B already had and reverted away from.
+
+## How stale is a record, empirically?
+
+Not every source carries a `last_updated` timestamp -- but a
+multi-year panel lets you measure staleness empirically: how many
+consecutive years has an attribute's value sat unchanged?
+`attribute_spell_age()` resets the count the moment a calendar-year
+gap appears in the panel, so a provider missing from the panel for a
+year is never mistaken for one whose address simply never changed:
+
+```{r spell-age}
+panel_b <- data.frame(
+  npi = c("1", "1", "2", "2", "2"),
+  year = c(2023, 2024, 2022, 2023, 2024),
+  state = c("CO", "CO", "NY", "NY", "NY"),
+  city = c("DENVER", "DENVER", "NYC", "NYC", "NYC"),
+  zip5 = c("80202", "80202", "10001", "10001", "10001"),
+  street = c("1 A", "2 B", "2 B", "2 B", "2 B"),
+  stringsAsFactors = FALSE
+)
+panel_b <- attribute_spell_age(panel_b, attribute = "street")
+panel_b[, c("npi", "year", "street", "spell_start_year", "spell_age_years")]
+```
+
+NPI 1's street address changed between 2023 and 2024, so its 2024
+`spell_age_years` resets to `0`; NPI 2's has sat unchanged since 2022,
+so by 2024 it carries a 2-year spell age.
+
+## Approach 2: does agreement decay with spell age?
+
+If disagreement with an external source is really about Source B
+going stale, agreement should be highest right after Source B updates
+and decay as the unchanged spell gets older. `attribute_agreement_by_spell_age()`
+stratifies exactly that:
+
+```{r agreement-by-spell-age}
+source_a2 <- data.frame(
+  npi = c("1", "2"), state = c("CO", "NY"), city = c("DENVER", "ALBANY"),
+  zip5 = c("80202", "12207"), street = c("2 B", "9 Z"),
+  stringsAsFactors = FALSE
+)
+attribute_agreement_by_spell_age(
+  source_a2, panel_b,
+  attributes = c("state", "city", "zip5", "street"),
+  target_year = 2024L,
+  comparison_label = "Source A (2024) vs Source B (2024)",
+  stratification_label = "source_b_street_spell_age"
+)
+```
+
+NPI 1 (street unchanged 0 years -- it just updated) agrees with Source
+A on street; NPI 2 (street unchanged 1-2 years) does not. Two
+identifiers is not evidence of a real decay curve, but the shape is
+exactly what a real, much larger panel's output looks like -- see
+`format_no_gold_standard_prose()` below for what that looks like at
+scale.
+
+## Approach 3: administrative enrollment timing around a panel move
+
+A third, independent kind of evidence: date-stamped administrative
+enrollment intervals (for example a state Medicaid enrollment
+segment), compared against the exact year a longitudinal panel
+recorded a state change. `enrollment_move_lead_lag()` asks two
+separate questions -- did the *destination* state's enrollment start
+before or after the panel caught up, and did the *origin* state's
+enrollment actually end on schedule:
+
+```{r enrollment-move}
+panel <- data.frame(
+  npi = c("1", "1", "2", "2"),
+  year = c(2023, 2024, 2023, 2024),
+  state = c("CO", "NM", "TX", "CA"),
+  stringsAsFactors = FALSE
+)
+intervals <- data.frame(
+  npi = c("1", "1", "2", "2"),
+  state = c("NM", "CO", "CA", "TX"),
+  interval_start = as.Date(c("2023-05-01", "2020-01-01", "2024-03-01", "2019-01-01")),
+  interval_end = as.Date(c("2099-12-31", "2099-12-31", "2099-12-31", "2024-06-01")),
+  stringsAsFactors = FALSE
+)
+enr <- enrollment_move_lead_lag(panel, intervals)
+enr[, c("direction_type", "category", "n", "pct_of_matched")]
+```
+
+NPI 1's panel move to New Mexico in 2024 is preceded by a New Mexico
+enrollment interval that already started in 2023 -- enrollment led the
+panel by a year. NPI 2's panel shows a move to California in 2024, but
+that enrollment interval does not start until March 2024 -- the same
+calendar year, not ahead of it. `interval_end` dates at or past
+`open_end_cutoff` (default `2099-01-01`) are treated as still active,
+never as a real termination date.
+
+## Turning all three into manuscript text
+
+`format_no_gold_standard_prose()` exists because this analysis is
+normally reported in a paper, not just a table. It takes the output of
+all three approaches above and writes three publication-ready
+paragraphs plus a combined block -- using a larger, realistic set of
+numbers than the tiny examples above, since the prose is meant to read
+like a real result:
+
+```{r prose-inputs}
+ll_mock <- tibble::tibble(
+  attribute = c("state", "city", "zip5", "street"),
+  n_paired_transitions = 9047L,
+  n_concordant_at_t = c(8726L, 7804L, 7513L, 7234L),
+  a_breaks_concordance_first = c(245L, 831L, 1007L, 1124L),
+  b_breaks_concordance_first = c(15L, 34L, 32L, 32L),
+  both_move_together_at_t1 = c(85L, 182L, 217L, 235L),
+  n_discordant_at_t = c(321L, 1243L, 1534L, 1813L),
+  b_adopts_a_at_t1_n = c(126L, 325L, 376L, 409L),
+  b_adopts_a_at_t1_pct = c(39.3, 26.1, 24.5, 22.6),
+  a_reverts_to_b_at_t1_n = c(155L, 599L, 725L, 851L),
+  a_reverts_to_b_at_t1_pct = c(48.3, 48.2, 47.3, 46.9),
+  persistent_discordant_at_t1_pct = c(12.5, 13.7, 13.0, 12.0),
+  base_year = 2022L,
+  disc_base_n = c(152L, 511L, 600L, 681L),
+  b_adopts_a_multi_n = c(96L, 232L, 263L, 271L),
+  b_adopts_a_multi_pct = c(63.2, 45.4, 43.8, 39.8),
+  a_reverts_b_multi_n = c(52L, 181L, 205L, 225L),
+  a_reverts_b_multi_pct = c(45.6, 47.1, 45.5, 43.4),
+  cross_section_disc_n = c(567L, 2476L, 2952L, 3708L),
+  cross_section_in_prior_b_n = c(64L, 190L, 173L, 121L),
+  cross_section_in_prior_b_pct = c(11.3, 7.7, 5.9, 3.3)
+)
+fr_mock <- tibble::tibble(
+  comparison = rep("DAC (2026) vs NPPES (2026)", 3),
+  stratification = rep("nppes_street_spell_age", 3),
+  stratum = c("0 yrs (updated in snapshot yr)", "1-2 yrs", "11+ yrs (un-updated >=11 yrs)"),
+  n = c(700L, 1529L, 1011L),
+  state_agree_pct = c(87.6, 91.8, 89.1),
+  city_agree_pct = c(51.9, 62.7, 47.7),
+  zip5_agree_pct = c(43.4, 57.8, 36.3),
+  street_agree_pct = c(34.0, 43.7, 20.4)
+)
+
+prose <- format_no_gold_standard_prose(ll_mock, fr_mock, enr)
+names(prose)
+```
+
+The first paragraph, in full:
+
+```{r prose-output, results = "asis"}
+cat(prose$paragraph_1_lead_lag)
+```
+
+Every numeric placeholder in that paragraph -- the transition counts,
+the break ratios, the adoption percentages -- is read straight out of
+`ll_mock` above; nothing is computed inside the prose generator beyond
+formatting and the two lead/lag ratios. `format_no_gold_standard_prose()`
+fails closed (rather than emitting `"NA"` or `"NaN"` into a sentence)
+if a required row or metric is missing -- see the labeled `S22`-`S50`
+adversarial tests in `tests/testthat/test-lead-lag-saboteurs.R` for the
+exact failure modes this is checked against.
+
+## What these three approaches do and don't establish
+
+None of the three claims to know which source is *correct* -- only
+which one moved first, whether disagreement tracks a measurable
+staleness clock, and whether administrative enrollment dates land
+before or after a panel catches up. A source that always leads is
+informative; a source that never leads could mean it is current, or
+it could mean nothing in the comparison ever actually re-observes it
+independently (see `vignette("registry-overlap")`'s closing note on
+`attribute_agreement()` for the same caution applied to a single
+cross-section). As with every other function in this package, the
+registries themselves are never assumed to be a gold standard --
+only their timing relative to each other is.

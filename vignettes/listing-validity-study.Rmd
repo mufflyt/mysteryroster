@@ -1,0 +1,206 @@
+---
+title: "A Listing-Validity Study, End to End"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{A Listing-Validity Study, End to End}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+This vignette runs one synthetic registry-validity study end to end:
+cross-link registries, draw a stratified sample, turn a telephone call
+log into exhaustive listing statuses, and produce design-weighted
+estimates, sensitivity bounds, a survey-weighted model, and study-flow
+counts that are guaranteed to reconcile with each other. See
+`vignette("registry-overlap")` for a deeper look at the cross-linking
+step itself; this vignette starts from its output and goes the rest of
+the way to an estimate.
+
+## Building the sampling frame
+
+Thirty NPIs, three registries. `board` and `society` are only partial
+subsets of `nppes`, the frame registry everything is sampled from:
+
+```{r frame}
+ids <- sprintf("10000000%02d", 1:30)
+ov <- registry_overlap(list(
+  nppes   = ids,
+  board   = ids[1:18],
+  society = ids[10:30]
+))
+overlap_zone_counts(ov)
+
+frame <- frame_strata(ov, frame = "nppes")
+table(frame$stratum)
+```
+
+Three strata, not seven -- every id is in `nppes` by construction, so
+the `nppes`-only zone is empty and never appears.
+
+## Drawing a stratified sample
+
+`stratified_listing_sample()` draws without replacement inside each
+stratum and writes four design columns (`pop_N`, `n_sampled`,
+`samp_frac`, `weight`) that `listing_validity_design()` needs later.
+The allocation is checked against the frame before anything is drawn --
+asking for more than a stratum's population stops the call rather than
+drawing a smaller sample silently:
+
+```{r sample}
+sampled <- stratified_listing_sample(
+  frame,
+  allocation = c("nppes+board" = 5, "nppes+board+society" = 5, "nppes+society" = 6),
+  seed = 20261104
+)
+sampled[, c("id", "stratum", "pop_N", "n_sampled", "weight")]
+```
+
+(If this sample had instead arrived as an already-completed call log
+with a `stratum` column but no design columns, [listing_weights()]
+attaches the same four columns from a population table directly,
+without drawing anything.)
+
+## From a call log to four exhaustive statuses
+
+A telephone audit does not report "valid" or "invalid" -- it reports a
+disposition string, which `classify_listing_status()` turns into
+`physician_at_location`/`physician_active`/`invalid_reason` and one of
+four exhaustive, mutually exclusive `listing_status` values. Here is a
+synthetic call log for the 16 sampled listings, grouped by stratum
+(`stratified_listing_sample()` appends strata in allocation order, so
+the first 5 rows are `nppes+board`, the next 5 are
+`nppes+board+society`, and the last 6 are `nppes+society`):
+
+```{r calls}
+sampled$disposition <- c(
+  "Yes", "Yes", "Yes", "No-changed practices", "No-retired or no longer practicing medicine",
+  "Yes", "Yes", "Yes", "No-changed practices", "No-not specified why",
+  "Yes", "Yes", "Yes", "No-changed practices", NA, NA
+)
+sampled$reached <- c(
+  rep(TRUE, 5),
+  rep(TRUE, 5),
+  TRUE, TRUE, TRUE, TRUE, FALSE, NA
+)
+
+calls <- classify_listing_status(sampled, map = ent_disposition_map())
+calls[, c("stratum", "disposition", "reached", "listing_status", "invalid_reason")]
+table(calls$listing_status)
+```
+
+A few more columns, added now so every one of them is already on
+`calls` by the time `listing_validity_design()` captures it below: a
+location-valid outcome derived independently of `listing_status` (for
+the `outcome` example), a `rural` covariate (for the model example),
+and the nested logical stages a validation cascade needs:
+
+```{r extra-columns}
+calls$location_valid <- dplyr::case_when(
+  calls$listing_status == "confirmed_valid"   ~ TRUE,
+  calls$listing_status == "confirmed_invalid" ~ FALSE,
+  TRUE                                         ~ NA
+)
+calls$rural <- rep(c(TRUE, FALSE), 8)
+calls$attempted_stage    <- !is.na(calls$reached)
+calls$reached_stage      <- calls$reached %in% TRUE
+calls$location_confirmed <- calls$physician_at_location == "confirmed_yes"
+```
+
+Two rows at the end are worth naming explicitly: `reached = FALSE`
+with no disposition is an attempted-but-not-answered call -- a real
+attempt, not a missing one -- and `reached = NA` with no disposition
+is a listing that was never attempted at all. `classify_listing_status()`
+tells these apart; a disposition string outside `ent_disposition_map()`
+would stop the call entirely rather than silently falling into one of
+the four statuses (`unmapped = "unresolved"` opts into the softer
+behavior instead).
+
+## Design-weighted estimates
+
+`listing_validity_design()` wraps `survey::svydesign()` with the
+`stratum`/`weight` columns already on `calls`:
+
+```{r design}
+design <- listing_validity_design(calls)
+validity_estimates(design)
+validity_estimates(design, by = "stratum")
+```
+
+A different outcome than the disposition-derived status -- for
+example a location-valid flag from a separate survey item -- can be
+estimated the same way via `outcome`, bypassing `status`/`level`
+entirely:
+
+```{r outcome}
+validity_estimates(design, outcome = "location_valid")
+```
+
+## How much the unresolved listings could move the estimate
+
+Two listings above are `unresolved` -- not reached, or reached with no
+clean disposition. `validity_sensitivity_bounds()` reports what the
+estimate would be if every one of them were valid, and separately if
+every one of them were invalid, alongside the observed,
+complete-case-only number -- and asserts the three are correctly
+ordered before returning anything:
+
+```{r bounds}
+validity_sensitivity_bounds(calls)
+```
+
+## A survey-weighted model
+
+`validity_model()` fits the definitive listings only (unresolved and
+not-attempted are excluded, the same complete-case estimand as
+`validity_estimates()`'s default) and returns odds ratios, not log-odds:
+
+```{r model}
+validity_model(design, ~ stratum + rural)
+```
+
+## Study-flow and cascade counts that are guaranteed to add up
+
+`listing_flow_counts()` recomputes sampled/attempted/reached/definitive
+counts from `calls` directly -- it does not trust `validity_estimates()`'s
+numbers, so the two independently reconcile:
+
+```{r flow}
+listing_flow_counts(calls, by = "stratum")
+```
+
+`validation_cascade()` reports the same kind of staged counts, but for
+any ordered sequence of nested logical columns, each expressed two
+ways: as a share of the first stage, and conditional on the stage
+immediately before it. Stages must actually nest -- a listing
+confirmed at its location but never recorded as reached would stop the
+call, since that is a data error, not a valid cascade:
+
+```{r cascade}
+validation_cascade(calls, stages = c("attempted_stage", "reached_stage", "location_confirmed"),
+                    by = "stratum", weights = "weight")
+```
+
+## What this does and doesn't let you say
+
+The estimate above is a design-weighted share of listings this
+particular sample could confirm valid, with honest bounds on what the
+unresolved listings could have done to it -- not a claim about every
+physician in every registry, and not a claim that `board` or `society`
+membership itself means anything about accuracy (see
+`vignette("registry-overlap")`'s design-rules discussion for why that
+is a deliberately separate question). A different study -- the
+OB/GYN subspecialty study, say -- runs through exactly the same six
+functions with a different disposition codebook
+(`obgyn_disposition_map()`) and different registries; nothing above is
+specific to ENT.
