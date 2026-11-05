@@ -139,19 +139,28 @@ Same pattern, same caveat: `score_type = "uncalibrated_belief"`, not a
 probability, and not validated against anything -- see
 `vignette("truth-fusion-truthdiscovery")`.
 
-## A second real example: three genuinely independent sources
+## A second real example: three sources, and a sharper question than "does it work"
 
 The panel above only ever has two sources, and both are ultimately
 NPPES-derived -- not a limitation of real data in general, just of that
 particular panel. A separate, unrelated piece of the same `midwifery`
-project independently needed to fuse **three** genuinely independent
-federal sources -- NPPES, a combined DAC/PECOS source, and CMS Open
-Payments -- for a cohort of 1,806 adjudicated physician/midwife
-relocations, and wrote its own one-coin Dawid-Skene EM from scratch to do
-it (`diagnose_truth_discovery_migration_states.R`, a prototype, not yet
-using this package). NPPES, PECOS-derived data, and CMS Open Payments are
-all federal transparency datasets, explicitly public by design -- the NPIs
-below are real, not placeholders.
+project independently needed to fuse three real federal sources -- NPPES,
+a combined DAC/PECOS source, and CMS Open Payments -- for a cohort of
+1,806 NPI-years where NPPES itself reported a state change, and wrote its
+own one-coin Dawid-Skene EM from scratch to do it
+(`diagnose_truth_discovery_migration_states.R`, a prototype, not yet
+using this package).
+
+**Read this before the results below.** That cohort is defined entirely by
+NPPES: a "mover" is an NPI whose NPPES-reported state differs between two
+snapshot years. Calling these "1,806 adjudicated relocations," as an
+earlier draft of this vignette did, overstated it -- it is 1,806 apparent
+NPPES relocations, not an independently-established set of real moves.
+Every result below inherits that anchor; see
+`docs/midwifery-ablation-findings.md` for the full investigation this
+section summarizes. NPPES, PECOS-derived data, and CMS Open Payments are
+all public federal transparency datasets by design -- the NPIs below are
+real, not placeholders.
 
 ```{r real-multisource}
 claims3 <- data.frame(
@@ -199,60 +208,80 @@ mean(ds_result3$predictions$abstained)
 unique(ds_result3$source_diagnostics[, c("source_id", "reliability_score")])
 ```
 
+```{r real-multisource-tf, eval = truthdiscovery_available}
+tf_result3 <- suppressWarnings(attribute_truth_fusion(claims3, method = "truthfinder"))
+mean(tf_result3$predictions$abstained)
+unique(tf_result3$source_diagnostics[, c("source_id", "reliability_score")])
+```
+
 `dawid_skene` resolves most, not all, of the 8 ties on this small excerpt,
 and its learned reliability ranking here is visibly noisy -- 14 NPIs is not
 enough to separate three sources' reliability cleanly. Fit the identical
 model on the real, full cohort behind this excerpt (3,556 NPI-years across
 1,631 real midwives) and the ranking stabilizes: `nppes` 0.881,
-`open_payments` 0.712, `dac_pecos_combined` 0.644 -- consistently `nppes`
-first, in both the small excerpt and the full cohort, just noisier at n=14.
-At full scale, `dawid_skene` resolves 695 of the NPI-years majority could
-only tie on, and in this cohort it **never** overturns a majority that
-already had a decisive answer (0 cases) -- a more modest value-add than
-the engineered example below, and the honest one: real data, at real
-scale, mostly helps by resolving genuine ties, not by reversing confident
-wrong answers.
+`open_payments` 0.712, `dac_pecos_combined` 0.644. `truthfinder`, on this
+same small excerpt, ranks `nppes` and `dac_pecos_combined` as *tied* (both
+0.645) and abstains on every one of the 8 originally-tied NPI-years as a
+result -- a different, equally real behavior on the identical excerpt, and
+a preview of the full-cohort finding below: these methods do not treat
+the same evidence the same way.
 
-### An external signal, still not a validated benchmark
+### A sharper question: resolved by which algorithm, and does it survive removing a source?
 
-This cohort comes with one thing the panel above doesn't: an *independent*
-corroboration flag (`confirmed`), built from a same-direction-twice
-stability rule over a separate adjudication script, not from anything
-`attribute_truth_fusion()` sees. It is not phone-verified ground truth --
-see `docs/validation-protocol.md` for why nothing in this package claims
-that -- but it is evidence that doesn't come from the fusion model itself,
-which is more than the simulated example below can offer. On the 941
-contested NPI-years with a `confirmed`/not-`confirmed` label, `dawid_skene`'s
-posterior confidence in NPPES's own claim averages **0.923** for
-independently-confirmed moves versus **0.888** for unconfirmed ones; plain
-majority's analogous vote share shows the same direction but a smaller
-gap (0.837 vs. 0.819). A real, if modest, sign that weighting by learned
-reliability tracks independent corroboration slightly better than
-unweighted counting -- not dramatic, and still not an accuracy benchmark.
+`truthfinder`, fit on the exact same full real claims, also resolves all
+695 of the NPI-years plain majority ties on -- but learns the **opposite**
+ranking (`nppes` 0.597, lowest of the three; `open_payments` 0.657,
+highest). Checked directly: `dawid_skene` and `truthfinder` agree on the
+predicted state for only **46 of those 695 (6.6%)**. The other 649 get two
+different, both fully-converged, both zero-abstention answers depending
+which algorithm was asked -- and this is not unique to comparing across
+backends: refitting with `truthdiscovery`'s own `sums`, `average_log`,
+`investment`, and `pooled_investment` on the same claims gives four more
+mutually-contradicting reliability rankings, two agreeing with
+`dawid_skene`'s direction and two agreeing with `truthfinder`'s. See
+`docs/midwifery-ablation-findings.md` §2-3 for the full table.
 
-One more real, independently-discovered parallel: DAC and PECOS share a
-documented upstream dependency (DAC's address field is CMS-derived from
-PECOS enrollment directly) -- the same "shared upstream feed" setup as
-`vignette("truth-fusion-crowdkit")`'s copied-source example. Despite that
-shared lineage, they still disagree 121 of the 454 NPI-years where both
-are observed (26.6%). The prototype script's response was to treat
-agreement as one combined vote and disagreement as *no* vote at all, never
-picking one arbitrarily -- independently arriving at exactly
+Removing a source and refitting sharpens this further. Of `dawid_skene`'s
+695 resolved NPI-years, only **7.2% keep the same predicted value** once
+`nppes` is removed -- because **678 of the 695 (97.6%) only had one other
+source left** once `nppes` was gone, making "resolving the tie" a
+restatement of "trust `nppes` over the one source that disagreed with it,"
+not a three-source synthesis. Of the 17 NPI-years that genuinely had all
+three sources, removing `nppes` flips the prediction in **all 17**.
+Removing `dac_pecos_combined` instead barely moves anything (92.5%
+unchanged), because `nppes` is still there to dominate. `truthfinder`,
+having already learned to discount `nppes`, is unaffected by removing it
+(100% unchanged) -- consistent with never having relied on it for these
+cases in the first place.
+
+None of this says which source, or which method, is actually right for
+any of these real NPIs -- it says the opposite: on this real cohort, which
+source to trust is not a question any one of these methods settles on its
+own, and "majority ties, truth discovery resolves it" does not mean the
+same thing twice if you change which algorithm resolves it.
+
+One real, independently-discovered parallel that *does* generalize: DAC
+and PECOS share a documented upstream dependency (DAC's address field is
+CMS-derived from PECOS enrollment directly) -- the same "shared upstream
+feed" setup as `vignette("truth-fusion-crowdkit")`'s copied-source
+example. Despite that shared lineage, they still disagree 121 of the 454
+NPI-years where both are observed (26.6%). The prototype script's response
+was to treat agreement as one combined vote and disagreement as *no* vote
+at all, never picking one arbitrarily -- independently arriving at exactly
 `attribute_truth_fusion()`'s own `on_source_conflict = "single_value"`
 policy, in unrelated code written for an unrelated reason.
 
 ## A complicated case, with a known answer
 
-Even three real, independent sources and an independent corroboration
-signal are not the same as a *known* answer -- `confirmed` is itself a
-heuristic, not verified truth, and there is still no reference table to
-check any method against (`docs/validation-protocol.md` is why). To see
-what it looks like when weighted inference provably outperforms majority
-vote, with no ambiguity about which one actually won, this section uses a
-constructed scenario instead: 16 physician-years, 5 sources with
-deliberately different, realistic reliability profiles, and a ground
-truth the sources are measured against -- impossible with real data,
-which is exactly why this part is simulated, not real.
+The real cohort above shows methods disagreeing with each other, not a
+clean win for weighted inference -- because there is no known answer to
+settle the disagreement against. To see what it looks like when weighted
+inference *provably* outperforms majority vote, with no ambiguity about
+which one actually won, this section uses a constructed scenario instead:
+16 physician-years, 5 sources with deliberately different, realistic
+reliability profiles, and a ground truth the sources are measured against
+-- impossible with real data, which is exactly why this part is
+simulated, not real.
 
 ```{r complicated-setup}
 states <- c("CO", "NM", "TX", "AZ", "UT", "NV", "OR", "WA", "ID", "MT", "WY", "KS", "NE", "SD", "ND", "OK")
@@ -367,19 +396,22 @@ source reliability at all.
 It shows real disagreement rates on two real pipelines -- 10.75% at the
 state level across nine years on the two-source NPPES panel, 26.6% between
 DAC and PECOS despite a shared upstream dependency on the three-source
-cohort -- and real, verified output from all three method families on
-both. It shows a real limitation (majority's two-source ceiling: agree or
-tie, never actually resolve) and a real caveat that persists even with
-three sources and an independent corroboration signal (`dawid_skene`
-cannot distinguish "this source is less reliable" from "this source is
-simply older," and `confirmed` is a stability heuristic, not verified
-truth). It does **not** show which method, or which source, is actually
-correct for any of these real NPIs -- no phone-verified or board-verified
-reference location exists for either real cohort (see
+cohort -- and real, verified output from every available method on both.
+It shows a real limitation (majority's two-source ceiling: agree or tie,
+never actually resolve) and, on the three-source cohort, something more
+pointed: `dawid_skene` and `truthfinder`, fit on identical real claims,
+agree on the resolved value for majority's ties only 6.6% of the time, and
+`dawid_skene`'s own "resolutions" turn out to be almost entirely a
+restatement of trusting NPPES over one other source, not a genuine
+three-source synthesis (`docs/midwifery-ablation-findings.md` has the full
+investigation). It does **not** show which method, or which source, is
+actually correct for any of these real NPIs -- no phone-verified or
+board-verified reference location exists for either real cohort (see
 `docs/validation-protocol.md`), and nothing in this vignette should be
-read as a benchmark accuracy result. Adding a third independent source
-(done above, with real data) sharpened the comparison -- majority now
-abstains less and can be meaningfully resolved rather than only tied -- but
-it did not supply a verified answer; only a genuinely independent
-reference standard can do that, and building one is exactly what that
-protocol is for.
+read as a benchmark accuracy result. Adding a third source and checking
+what survives removing each one did not supply a verified answer, and on
+this cohort it surfaced a more sobering finding than a reassuring one:
+which administrative source to trust, for a real historical practice
+location, is not a question any single one of these methods settles on
+its own. Only a genuinely independent reference standard can settle it,
+and building one is exactly what that protocol is for.

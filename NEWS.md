@@ -1,29 +1,34 @@
 # mysteryroster (development version)
 
 * Strengthened `vignette("truth-fusion-case-study-midwifery")` with a
-  second real example: three genuinely independent federal sources
-  (NPPES, a combined DAC/PECOS source, CMS Open Payments -- all public
-  transparency data by design, so real NPIs are shown, not placeholders)
-  for a real cohort of 1,806 adjudicated physician/midwife relocations
-  from an unrelated `midwifery` project prototype
+  second real example (NPPES, a combined DAC/PECOS source, and CMS Open
+  Payments -- public transparency data by design, so real NPIs are shown,
+  not placeholders) drawn from an unrelated `midwifery` project prototype
   (`diagnose_truth_discovery_migration_states.R`) that independently
   wrote its own one-coin Dawid-Skene EM to solve the same problem this
-  package already implements. Real findings reported directly, not
-  cherry-picked: `dawid_skene` resolves 695 of the real NPI-years plain
-  majority could only tie on, and across the whole real cohort never
-  overturns a majority that was already decisive (0 cases) -- a more
-  modest value-add than the engineered example below it, and the honest
-  one. An independent (not phone-verified, but not derived from the
-  fusion model either) corroboration signal shows `dawid_skene`'s
-  posterior confidence in NPPES's own claim tracks it slightly better
-  than plain majority's vote share does (a 0.035 gap vs. a 0.018 gap
-  between confirmed and unconfirmed moves) -- real, modest, explicitly
-  not presented as a validated benchmark. DAC and PECOS, despite a
-  documented shared upstream dependency, still disagree 26.6% of the time
-  both are observed -- the same "shared upstream feed" phenomenon as the
-  Crowd-Kit vignette's copied-source example, found independently in
-  unrelated real code, which already handles it by excluding
-  disagreements rather than picking one, independently arriving at this
+  package already implements, for a cohort of 1,806 NPI-years where
+  NPPES itself reported a state change. A first pass through this
+  example overclaimed what it showed; corrected after actually reading
+  the cohort-construction code (full account in the new
+  `docs/midwifery-ablation-findings.md`): these are NPPES-anchored
+  apparent relocations, not independently-established moves, and the
+  `confirmed` flag used as "external validation" turned out to be built
+  entirely from NPPES's own adjacent years -- not independent of the
+  source being validated. The corrected, more rigorous finding that
+  replaced it: `dawid_skene` and `truthfinder`, fit on identical real
+  claims, resolve the same 695 majority-tied NPI-years but agree on the
+  resolved value only 6.6% of the time, and `dawid_skene`'s resolutions
+  turn out to be 97.6% attributable to simply trusting NPPES over one
+  disagreeing source (confirmed by removing NPPES and refitting: only
+  7.2% of its resolutions survive, versus 92.5% surviving removal of
+  DAC/PECOS instead). `truthdiscovery`'s other four methods each learn a
+  different reliability ranking for the same three sources, not
+  clustering by backend family. DAC and PECOS, despite a documented
+  shared upstream dependency, still disagree 26.6% of the time both are
+  observed -- the one finding from this example that held up unchanged --
+  the same "shared upstream feed" phenomenon as the Crowd-Kit vignette's
+  copied-source example, independently handled in unrelated real code by
+  excluding disagreements rather than picking one, arriving at this
   package's own `on_source_conflict = "single_value"` policy.
 * Added `docs/validation-protocol.md`, a design specification for a
   held-out benchmark comparing `attribute_truth_fusion()`'s methods
