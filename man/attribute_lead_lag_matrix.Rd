@@ -22,7 +22,7 @@ with \code{id}, \code{year}, and one or more \code{attributes} columns.}
 \item{source_b}{Data frame for longitudinal Source B (e.g. NPPES panel),
 with \code{id}, \code{year}, and the same \code{attributes} columns.}
 
-\item{attributes}{Character vector of attribute column names to evaluate
+\item{attributes}{Character vector of unique attribute column names to evaluate
 (e.g. \code{c("state", "city", "zip5", "street")}).}
 
 \item{id}{Name of the identifier column. Default \code{"npi"}.}
@@ -42,17 +42,37 @@ prior to \code{cross_section_year}.}
 Default is \code{max(source_b[[year]])}.}
 }
 \value{
-A tibble with one row per attribute in \code{attributes}:
-\code{attribute}, \code{n_paired_transitions}, \code{n_concordant_at_t},
-\code{a_breaks_concordance_first}, \code{b_breaks_concordance_first},
-\code{both_move_together_at_t1}, \code{n_discordant_at_t},
-\code{b_adopts_a_at_t1_n}, \code{b_adopts_a_at_t1_pct},
-\code{a_reverts_to_b_at_t1_n}, \code{a_reverts_to_b_at_t1_pct},
-\code{persistent_discordant_at_t1_pct}, \code{base_year}, \code{disc_base_n},
-\code{b_adopts_a_multi_n}, \code{b_adopts_a_multi_pct},
-\code{a_reverts_b_multi_n}, \code{a_reverts_b_multi_pct},
-\code{cross_section_disc_n}, \code{cross_section_in_prior_b_n},
-\code{cross_section_in_prior_b_pct}.
+A tibble with one row per attribute in \code{attributes}. Counts are
+integers and \verb{_pct} columns are percentages rounded to one decimal:
+\describe{
+\item{\code{attribute}}{Attribute name.}
+\item{\code{n_paired_transitions}}{Consecutive-year transitions with all
+four values (\code{A_t}, \code{B_t}, \verb{A_\{t+1\}}, \verb{B_\{t+1\}}) present.}
+\item{\code{n_concordant_at_t}, \code{n_discordant_at_t}}{Of those, transitions
+with \code{A_t == B_t} and \code{A_t != B_t}.}
+\item{\code{a_breaks_concordance_first}, \code{b_breaks_concordance_first}}{
+Concordant at \code{t}; only A (or only B) changed at \code{t + 1}.}
+\item{\code{both_move_together_at_t1}}{Concordant at \code{t}; both moved to the
+same new value at \code{t + 1}.}
+\item{\code{b_adopts_a_at_t1_n}, \code{b_adopts_a_at_t1_pct}}{Discordant at \code{t};
+\verb{B_\{t+1\} == A_t}, swaps excluded. Percent of \code{n_discordant_at_t}.}
+\item{\code{a_reverts_to_b_at_t1_n}, \code{a_reverts_to_b_at_t1_pct}}{
+Discordant at \code{t}; \verb{A_\{t+1\} == B_t}, swaps excluded.}
+\item{\code{persistent_discordant_at_t1_pct}}{Discordant at \code{t}; neither
+source changed.}
+\item{\code{base_year}}{Year used for multi-year tracking.}
+\item{\code{disc_base_n}}{Identifiers discordant in \code{base_year}.}
+\item{\code{b_adopts_a_multi_n}, \code{b_adopts_a_multi_pct}}{Of those, B equals
+\verb{A_\{base_year\}} in any later year. \code{NA} if \code{disc_base_n == 0}.}
+\item{\code{a_reverts_b_multi_n}, \code{a_reverts_b_multi_pct}}{Of those, A
+equals \verb{B_\{base_year\}} in any later year. The percent's denominator
+is the identifiers A observes after \code{base_year}, not \code{disc_base_n}.}
+\item{\code{cross_section_disc_n}}{Identifiers where \code{cross_section}
+disagrees with B in \code{cross_section_year}. \code{NA} without
+\code{cross_section}.}
+\item{\code{cross_section_in_prior_b_n}, \code{cross_section_in_prior_b_pct}}{Of
+those, the cross-section's value appears in B in an earlier year.}
+}
 }
 \description{
 Without a gold-standard registry, a single-year disagreement between Source A
@@ -66,15 +86,61 @@ source leads and which source lags:
 which source changes first at \code{t + 1}?
 \item \strong{1-year directional convergence (\code{t -> t + 1}):} Among records where
 \code{A_t != B_t}, how often does Source B update at \code{t + 1} to adopt \code{A_t}
-(Source B lagged Source A) versus Source A reverting at \code{t + 1} to match
-\code{B_t} (transient or multi-site switching in Source A)?
+without a cross-over swap (\verb{B_\{t+1\} == A_t} and \verb{A_\{t+1\} != B_t}) versus
+Source A reverting at \code{t + 1} to match \code{B_t} (\verb{A_\{t+1\} == B_t} and
+\verb{B_\{t+1\} != A_t})?
 \item \strong{Multi-year forward convergence (\code{base_year -> follow-up}):} Among
 disagreements in \code{base_year}, what share does Source B eventually adopt
 in any subsequent year (\code{year > base_year}) versus Source A reverting to
 \verb{B_\{base_year\}}?
-\item \strong{Historical back-check (\code{cross_section_source} vs. prior \code{panel_b}):}
-Optionally, when a third cross-sectional source (e.g. DAC at \code{dac_year})
-disagrees with Source B at \code{dac_year}, how often did the cross-sectional
-source's value already appear in Source B in an earlier year (\code{year < dac_year})?
+\item \strong{Historical back-check (\code{cross_section} vs. prior \code{source_b}):}
+Optionally, when a third cross-sectional source (e.g. DAC at
+\code{cross_section_year}) disagrees with Source B at \code{cross_section_year}, how
+often did the cross-sectional source's value already appear in Source B in
+an earlier year (\code{year < cross_section_year})?
 }
+
+Values are trimmed and upper-cased, ids trimmed. A transition \code{t -> t + 1}
+counts only when \emph{both} sources report the identifier in both years with
+non-missing values for that attribute, so \code{n_paired_transitions} can
+differ by attribute. Each source must have one row per \verb{(id, year)}.
+
+The concordance-breaking counts are not exhaustive: among concordant
+pairs, \code{a_breaks_concordance_first} (A changes, B holds),
+\code{b_breaks_concordance_first} (B changes, A holds), and
+\code{both_move_together_at_t1} (both change to the same new value) leave out
+pairs that stay concordant and pairs where both change to different
+values. Likewise the 1-year discordant outcomes (\code{b_adopts_a},
+\code{a_reverts_to_b}, \code{persistent_discordant}) need not sum to 100\%: mutual
+swaps (\verb{B_\{t+1\} == A_t} and \verb{A_\{t+1\} == B_t}) and moves to a third value
+are in none of them.
+
+Multi-year convergence counts an identifier once: B "adopts" if \emph{any}
+later B year equals \verb{A_\{base_year\}}, A "reverts" if \emph{any} later A year
+equals \verb{B_\{base_year\}}. The two are not mutually exclusive.
+
+A source that leads is informative; a source that never leads is not
+thereby correct -- it may simply never be re-observed independently.
 }
+\examples{
+a <- data.frame(npi = rep(c("1", "2"), each = 3), year = rep(2022:2024, 2),
+                state = c("CO", "NM", "NM", "NY", "NY", "NY"))
+b <- data.frame(npi = rep(c("1", "2"), each = 3), year = rep(2022:2024, 2),
+                state = c("CO", "CO", "NM", "NJ", "NY", "NY"))
+attribute_lead_lag_matrix(a, b, attributes = "state")
+}
+\seealso{
+\code{vignette("lead-lag-staleness")} for worked examples and figures.
+
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

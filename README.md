@@ -36,13 +36,16 @@ remotes::install_github("mufflyt/mysteryroster")
 - `vignette("registry-overlap")` -- cross-linking registries into Euler
   zones, the closure guarantee `overlap_zone_counts()` enforces, `frame_strata()`,
   the area-proportional diagram, and a bridge to `attribute_agreement()`.
+- `vignette("attribute-agreement")` -- pairwise attribute agreement and
+  record freshness across four simulated sources, with three figures.
 - `vignette("listing-validity-study")` -- the rest of the pipeline, end to
   end: sampling, call dispositions, design-weighted estimates, sensitivity
   bounds, the survey-weighted model, and the flow/cascade counts, all
   reconciled against one synthetic call log.
 - `vignette("lead-lag-staleness")` -- the three longitudinal approaches
-  below, worked through on real (synthetic) multi-year panels, including
-  the full manuscript-paragraph output of `format_no_gold_standard_prose()`.
+  below, first on a three-NPI toy example and then on a simulated
+  1,500-clinician panel with five figures, including the full
+  manuscript-paragraph output of `format_no_gold_standard_prose()`.
 
 ## How the pieces fit
 
@@ -134,6 +137,15 @@ ports from isochrones, so a disagreement is never read as "one source is
 wrong" -- only as "this side provably cannot reflect information the other
 side already had."
 
+<p>
+<img src="man/figures/attribute-agreement-fig-pair-agreement-1.png" width="49%" alt="Dot plot of pairwise state agreement by audit year for six simulated source pairs; pairs that include NPPES agree least." />
+<img src="man/figures/attribute-agreement-fig-staleness-breakdown-1.png" width="49%" alt="Stacked bars of 2024 disagreements per source pair, split by which side's record is provably older; pairs with an undated source are all no temporal basis." />
+</p>
+
+*Simulated sources from `vignette("attribute-agreement")`. Left: agreement
+per pair, with no source taken as truth. Right: for each disagreement,
+which side's own record date is provably older.*
+
 ## When there's no gold standard, but there is time
 
 A single cross-section can only say two sources disagree, not which one
@@ -158,9 +170,23 @@ enrollment_move_lead_lag(nppes_panel, medicaid_enrollment_intervals)
 format_no_gold_standard_prose(ll, freshness_strata, enrollment_timing)
 ```
 
+<p>
+<img src="man/figures/lead-lag-staleness-fig-concordance-breaks-1.png" width="49%" alt="Grouped bars: among concordant provider-years, Source A changes first far more often than Source B at state, city, ZIP, and street level." />
+<img src="man/figures/lead-lag-staleness-fig-spell-age-decay-1.png" width="49%" alt="Lines of percent agreement with a 2026 cross-section by Source B's street spell-age stratum, dropping sharply at 11 or more years." />
+</p>
+
+*Simulated 1,500-clinician panel from `vignette("lead-lag-staleness")`.
+Left (Approach 1): which source breaks concordance first. Right (Approach 2):
+agreement by how long Source B's value has sat unchanged.*
+
 None of the three claims a source is correct -- only that it moved first,
 that disagreement tracks a measurable staleness clock, or that an
 administrative date landed before or after a panel caught up.
+
+`format_no_gold_standard_prose()` fills in numbers, but its wording (study
+years, source-specific mechanisms, verbs like "confirming") is fixed to the
+OB/GYN midwifery study. Treat its output as a first draft; see
+`?format_no_gold_standard_prose` for what it requires and what it fixes.
 
 ## From protocol to function
 

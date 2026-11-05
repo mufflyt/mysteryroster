@@ -10,7 +10,9 @@ vignette: >
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
 )
 ```
 
@@ -67,6 +69,32 @@ source_b <- data.frame(
   adopts Source A's 2022 value (`NY`) the very next year.
 - **NPI 3**: disagree in 2022 (`TX` vs `CO`); here it is Source A that
   reverts to Source B's 2022 value (`CO`) the next year.
+
+Plotted as two parallel timelines per NPI, a lead shows up as Source A
+changing colour one column before Source B does:
+
+```{r fig-toy-timeline, fig.height = 3.2, fig.alt = "Three pairs of timelines, one per NPI, showing the state each source reports in 2022, 2023, and 2024. For NPI 1 Source A switches to NM in 2023 and Source B follows in 2024; for NPI 2 Source B switches from NJ to NY in 2023; for NPI 3 Source A switches from TX to CO in 2023."}
+state_cols <- c(CO = "#1F2A33", NM = "#C8553D", NY = "#8AA29E", NJ = "#F2C14E", TX = "#D9D5C6")
+yrs <- sort(unique(source_a$year))
+ids <- unique(source_a$npi)
+op <- par(mar = c(3, 9, 2, 1))
+plot(NA, xlim = c(min(yrs) - 0.5, max(yrs) + 0.5), ylim = c(0.4, 3 * length(ids)),
+     xaxt = "n", yaxt = "n", xlab = "", ylab = "", bty = "n",
+     main = "Who moves first? State reported by each source", cex.main = 1)
+axis(1, at = yrs, tick = FALSE)
+for (j in seq_along(ids)) {
+  base <- 3 * (length(ids) - j) + 1
+  for (src in c("A", "B")) {
+    d <- if (src == "A") source_a else source_b
+    d <- d[d$npi == ids[j], ]
+    y <- base + if (src == "A") 1 else 0
+    rect(d$year - 0.45, y - 0.4, d$year + 0.45, y + 0.4, col = state_cols[d$state], border = "white")
+    text(d$year, y, d$state, col = ifelse(d$state %in% c("CO", "NM"), "white", "#1F2A33"), cex = 0.8)
+    axis(2, at = y, labels = sprintf("NPI %s, Source %s", ids[j], src), las = 1, tick = FALSE, cex.axis = 0.8)
+  }
+}
+par(op)
+```
 
 A third, optional input -- a cross-sectional source like CMS
 DAC/PECOS, dated to one year -- lets a fourth check run: when the
@@ -194,6 +222,203 @@ calendar year, not ahead of it. `interval_end` dates at or past
 `open_end_cutoff` (default `2099-01-01`) are treated as still active,
 never as a real termination date.
 
+## At scale: a simulated panel, in four figures
+
+Three NPIs show the mechanics but not the patterns. The simulation below
+builds a panel large enough for the patterns to show, with the answer
+known in advance. There are 1,500 clinicians from 2010 to 2026 and 120
+practice sites across five states. Each year, a clinician moves with
+probability 0.10, and 30% of those moves cross state lines.
+
+- **Source B** (a self-reported panel, NPPES-like) reports each
+  clinician's location after a personal lag of zero to eight years, and
+  12% of clinicians never update after 2010.
+- **Source A** (a transactional source, Open Payments-like, 2018 to
+  2026) is current in 85% of years and one year behind otherwise. In 5%
+  of rows it reports a sibling site in the same city instead.
+- **The cross-section** (DAC-like, 2026) is current for 80% of
+  clinicians and one year behind for the rest.
+- **Enrollment intervals** follow each true state spell. Each starts
+  between 14 months before and 18 months after the true move, and 35%
+  never close.
+
+So Source A should lead, Source B should lag, and B's lag should be
+visible both in spell age and in enrollment timing.
+
+```{r simulate-panel}
+set.seed(20261105)
+n_npi <- 1500L
+years <- 2010:2026
+st <- c("CO", "NM", "TX", "NY", "CA")
+sites <- expand.grid(street_n = 1:4, zip_n = 1:2, city_n = 1:3, state = st,
+                     stringsAsFactors = FALSE)
+sites$city   <- paste0(sites$state, "-CITY", sites$city_n)
+sites$zip5   <- sprintf("%05d", match(sites$state, st) * 10000 + sites$city_n * 100 + sites$zip_n)
+sites$street <- paste(sites$street_n * 100, "MAIN ST", sites$zip5)
+n_sites <- nrow(sites)
+move_site <- function(s) {
+  if (runif(1) < 0.3) return(sample(n_sites, 1))
+  local <- which(sites$city == sites$city[s] & seq_len(n_sites) != s)
+  local[sample(length(local), 1)]
+}
+truth <- t(vapply(seq_len(n_npi), function(i) {
+  s <- integer(length(years)); s[1] <- sample(n_sites, 1)
+  for (k in 2:length(years)) s[k] <- if (runif(1) < 0.10) move_site(s[k - 1]) else s[k - 1]
+  s
+}, integer(length(years))))
+yr_idx <- function(y) y - min(years) + 1L
+npis <- sprintf("%010d", seq_len(n_npi))
+as_panel <- function(site_mat, yrs) {
+  data.frame(npi = rep(npis, times = length(yrs)), year = rep(yrs, each = n_npi),
+             sites[as.vector(site_mat), c("state", "city", "zip5", "street")], row.names = NULL)
+}
+
+lag_b <- sample(0:8, n_npi, replace = TRUE,
+                prob = c(.30, .22, .14, .09, .07, .05, .05, .04, .04))
+stuck <- runif(n_npi) < 0.12
+b_site <- sapply(years, function(y) {
+  k <- pmax(1L, yr_idx(y) - lag_b); k[stuck] <- 1L
+  truth[cbind(seq_len(n_npi), k)]
+})
+a_years <- 2018:2026
+a_site <- sapply(a_years, function(y) {
+  s <- truth[cbind(seq_len(n_npi), yr_idx(y) - (runif(n_npi) < 0.15))]
+  noisy <- runif(n_npi) < 0.05
+  s[noisy] <- vapply(s[noisy], move_site, integer(1))
+  s
+})
+sim_a <- as_panel(a_site, a_years)
+sim_b <- as_panel(b_site, years)
+sim_dac <- as_panel(matrix(truth[cbind(seq_len(n_npi), yr_idx(2026) - (runif(n_npi) < 0.2))]), 2026)
+sim_dac$year <- NULL
+
+sim_iv <- do.call(rbind, lapply(seq_len(n_npi), function(i) {
+  r <- rle(sites$state[truth[i, ]])
+  ends <- cumsum(r$lengths); starts <- ends - r$lengths + 1L
+  start <- as.Date(sprintf("%d-01-01", years[starts])) - round(runif(length(starts), -540, 420))
+  end <- as.Date(sprintf("%d-12-31", years[ends])) + round(runif(length(ends), 0, 900))
+  end[ends == length(years) | runif(length(ends)) < 0.35] <- as.Date("2099-12-31")
+  data.frame(npi = npis[i], state = r$values, interval_start = start, interval_end = end)
+}))
+c(source_a_rows = nrow(sim_a), source_b_rows = nrow(sim_b), intervals = nrow(sim_iv))
+```
+
+The three approaches, run on the simulated panel:
+
+```{r simulate-run}
+attrs <- c("state", "city", "zip5", "street")
+sim_ll <- attribute_lead_lag_matrix(sim_a, sim_b, attributes = attrs, base_year = 2021L,
+                                    cross_section = sim_dac, cross_section_year = 2026L)
+sim_fr <- attribute_agreement_by_spell_age(
+  sim_dac, attribute_spell_age(sim_b, attribute = "street"), attributes = attrs,
+  target_year = 2026L, comparison_label = "DAC (2026) vs NPPES (2026)",
+  stratification_label = "nppes_street_spell_age")
+sim_enr <- enrollment_move_lead_lag(sim_b[, c("npi", "year", "state")], sim_iv)
+```
+
+### Figure: who breaks concordance first
+
+Among provider-years where the two sources agree in year `t`, count which
+one changes alone in `t + 1`:
+
+```{r fig-concordance-breaks, fig.alt = "Grouped bar chart of concordance-breaking transitions by attribute. Source A breaks concordance first far more often than Source B at every level from state to street."}
+brk <- rbind("Source A changes first" = sim_ll$a_breaks_concordance_first,
+             "Source B changes first" = sim_ll$b_breaks_concordance_first,
+             "Both move together"     = sim_ll$both_move_together_at_t1)
+colnames(brk) <- sim_ll$attribute
+op <- par(mar = c(4, 4, 3, 1))
+mid <- barplot(brk, beside = TRUE, col = c("#C8553D", "#1F2A33", "#8AA29E"), border = NA,
+               ylim = c(0, max(brk) * 1.2), las = 1, ylab = "Transitions (t to t + 1)",
+               main = "Concordant at t: which source changes first?", cex.main = 1,
+               legend.text = rownames(brk), args.legend = list(x = "topleft", bty = "n"))
+text(mid, brk, brk, pos = 3, cex = 0.7)
+par(op)
+```
+
+The ratio of the first two bars is the "-fold" figure that
+`format_no_gold_standard_prose()` reports. It grows from state to street
+because a local move stays in the same city: it changes the street and
+often the ZIP, but never the city or state.
+
+### Figure: what happens to a disagreement one year later
+
+Among provider-years where the sources *disagree* in year `t`, look at
+year `t + 1`: did B adopt A's value, did A revert to B's, or did both
+hold? Mutual swaps and moves to a third value are in none of these
+outcomes, so the gap to 100% is labelled "other":
+
+```{r fig-discordance-outcomes, fig.alt = "Stacked horizontal bar chart, one bar per attribute, of the share of year-t disagreements in which Source B adopts Source A's value, Source A reverts to Source B's value, both persist, or something else happens by year t plus one."}
+out <- rbind("B adopts A" = sim_ll$b_adopts_a_at_t1_pct,
+             "A reverts to B" = sim_ll$a_reverts_to_b_at_t1_pct,
+             "Both persist" = sim_ll$persistent_discordant_at_t1_pct)
+out <- rbind(out, Other = 100 - colSums(out))
+colnames(out) <- paste0(sim_ll$attribute, "\n(n=", sim_ll$n_discordant_at_t, ")")
+op <- par(mar = c(7, 7, 3, 1))
+barplot(out, horiz = TRUE, las = 1, border = NA, xlim = c(0, 100),
+        col = c("#C8553D", "#1F2A33", "#D9D5C6", "#F2C14E"), cex.names = 0.8,
+        main = "Discordant at t: outcome at t + 1", cex.main = 1)
+legend("bottom", legend = rownames(out), fill = c("#C8553D", "#1F2A33", "#D9D5C6", "#F2C14E"),
+       border = NA, horiz = TRUE, bty = "n", cex = 0.8, inset = c(0, -0.42), xpd = TRUE)
+title(xlab = "% of disagreements at t", line = 2.5)
+par(op)
+```
+
+In this simulation B adopts A and A reverts to B at similar 1-year
+rates, because Source A's sibling-site noise also reverts. The
+concordance-breaking counts above separate the two sources much more
+sharply than this 1-year view does.
+
+### Figure: agreement by how long Source B's value has sat unchanged
+
+```{r fig-spell-age-decay, fig.alt = "Line chart of percent agreement between the 2026 cross-section and Source B, by Source B's street spell-age stratum, with one line each for state, city, ZIP, and street. Agreement is roughly flat through 10 years and drops in the 11-plus-year stratum, most for street."}
+agree <- as.matrix(sim_fr[, paste0(attrs, "_agree_pct")])
+strata_lab <- sub(" \\(.*", "", sim_fr$stratum)
+line_cols <- c("#D9D5C6", "#8AA29E", "#C8553D", "#1F2A33")
+op <- par(mar = c(5, 4, 3, 1))
+matplot(seq_len(nrow(agree)), agree, type = "b", pch = 19, lty = 1, lwd = 2, col = line_cols,
+        xaxt = "n", ylim = c(min(agree) - 5, 100), las = 1,
+        xlab = "Source B street spell age in 2026", ylab = "% agree with cross-section",
+        main = "Agreement by empirical staleness of Source B", cex.main = 1)
+axis(1, at = seq_len(nrow(agree)), labels = paste0(strata_lab, "\nn=", sim_fr$n),
+     padj = 0.5, cex.axis = 0.8)
+legend("bottomleft", legend = attrs, col = line_cols, lwd = 2, pch = 19, bty = "n", horiz = TRUE)
+par(op)
+```
+
+Agreement falls in the 11+ year stratum, where the 12% of never-updated
+records end up. Before that it is roughly flat, apart from a small dip
+at 0 years, because a long spell
+also describes a clinician who simply never moved. A real panel often
+shows a dip at 0 years as well, while slower downstream sources catch up
+with a fresh update.
+
+### Figure: enrollment timing around a panel move
+
+```{r fig-enrollment-timing, fig.height = 5, fig.alt = "Two horizontal bar charts. Top: for destination-state enrollment, the share of matched panel moves in each lead or lag category, mostly enrollment leading the panel. Bottom: for origin-state enrollment, the share terminating before, in, or after the panel move year, mostly after or still open."}
+arr <- sim_enr[sim_enr$direction_type == "destination_arrival_timing", ]
+dep <- sim_enr[sim_enr$direction_type == "origin_departure_termination_timing", ]
+short <- function(x) sub(" \\(.*", "", x)
+op <- par(mfrow = c(2, 1), mar = c(3, 15, 2.5, 3))
+mid <- barplot(rev(arr$pct_of_matched), names.arg = rev(short(arr$category)), horiz = TRUE,
+               las = 1, border = NA, col = rev(c(rep("#1F2A33", 3), "#8AA29E", rep("#C8553D", 2))),
+               xlim = c(0, 100), cex.names = 0.75,
+               main = sprintf("Arrival: destination enrollment vs. panel move (n=%d)",
+                              arr$total_matched_moves[1]), cex.main = 0.9)
+text(rev(arr$pct_of_matched), mid, paste0(rev(arr$pct_of_matched), "%"), pos = 4, cex = 0.7, xpd = TRUE)
+dep_lab <- c("Terminated before move year", "Terminated in move year", "After move year / still open")
+mid <- barplot(rev(dep$pct_of_matched), names.arg = rev(dep_lab), horiz = TRUE, las = 1,
+               border = NA, col = rev(c("#1F2A33", "#8AA29E", "#C8553D")), xlim = c(0, 100),
+               cex.names = 0.75,
+               main = sprintf("Departure: origin enrollment end vs. panel move (n=%d)",
+                              dep$total_matched_moves[1]), cex.main = 0.9)
+text(rev(dep$pct_of_matched), mid, paste0(rev(dep$pct_of_matched), "%"), pos = 4, cex = 0.7, xpd = TRUE)
+par(op)
+```
+
+Because Source B lags the true move, destination enrollment usually
+starts *before* the panel records the move. Because many intervals never
+close, origin enrollment usually outlives it.
+
 ## Turning all three into manuscript text
 
 `format_no_gold_standard_prose()` exists because this analysis is
@@ -247,6 +472,17 @@ The first paragraph, in full:
 ```{r prose-output, results = "asis"}
 cat(prose$paragraph_1_lead_lag)
 ```
+
+The same call works directly on real output, for example
+`format_no_gold_standard_prose(sim_ll, sim_fr, sim_enr)` on the simulated
+panel above. **Read the result as a first draft.** Only the five
+`*_label` arguments change the wording. The study years ("2021--2025",
+"2007--2026", ...), the source-specific mechanisms (manufacturer CRM
+systems, Medicare PECOS reassignment, the Medicaid `ENRL_START_DT`
+field), and verbs such as "confirming" and "decayed steadily" come from
+the OB/GYN midwifery study and do not follow the inputs. See the
+Details section of `?format_no_gold_standard_prose` for the full list,
+and for the input rows and columns it requires.
 
 Every numeric placeholder in that paragraph -- the transition counts,
 the break ratios, the adoption percentages -- is read straight out of

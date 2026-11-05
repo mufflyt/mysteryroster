@@ -1,0 +1,247 @@
+---
+title: "Cross-Source Attribute Agreement and Record Freshness"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Cross-Source Attribute Agreement and Record Freshness}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
+)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+`registry_overlap()` asks whether an identifier is *present* in each
+source. This vignette asks the next question: when two sources both list
+an NPI, do they agree on an attribute such as practice state? It also
+asks how old each side's record is.
+
+There is no gold standard here. Every comparison is between two sources,
+and neither one is assumed correct. A record's own date can show only
+that one side *cannot* reflect information the other side already had.
+
+## The five functions
+
+| Function | Input | Answers |
+|---|---|---|
+| `record_age_years()` | one record's last-updated date | how old is this record, as of a given date? |
+| `record_age_band()` | same | the same age in isochrones' bands: `<1 yr`, `1-3 yr`, `3-5 yr`, `5+ yr` |
+| `classify_record_staleness()` | two records' dates | which of the two is provably the older information? |
+| `attribute_agreement()` | a named list of sources | for every pair of sources and shared identifier-year, do the values agree? |
+| `attribute_agreement_summary()` | `attribute_agreement()` output | coverage and agreement rate per pair per year |
+
+## Freshness primitives on their own
+
+A record's freshness date is its own last-updated date, or the source's
+snapshot (vintage) date. It is never the date you downloaded the file.
+Age is measured against `as_of`. For a historical audit, pass the audit
+year's reference date instead of today:
+
+```{r age}
+updated <- c("2024-11-01", "2023-02-15", "2020-07-01", "2012-01-01", NA)
+record_age_years(updated, as_of = "2024-12-31")
+record_age_band(updated, as_of = "2024-12-31")
+```
+
+Bands are right-closed, so a record exactly one year old is still
+`"<1 yr"`.
+
+`classify_record_staleness()` compares two dates and names the side that
+is provably older. It never says which value is right:
+
+```{r staleness}
+classify_record_staleness(
+  updated_a = c("2015-03-01", "2024-05-01", "2024-05-01", NA),
+  updated_b = c("2024-05-01", "2015-03-01", "2024-05-01", "2024-05-01")
+)
+```
+
+## Four simulated sources
+
+The rest of this vignette uses one simulated study with 800 clinicians
+followed from 2016 to 2024. Each clinician has a true practice state that
+changes in about 6% of years. Four sources report that state with
+different delays:
+
+- **`nppes`**: self-reported, so updates lag. About half of providers
+  are current; the rest lag one to five years. The `last_updated` date
+  is the year of the provider's last edit, which can be older still.
+- **`pecos`**: usually current, sometimes one year behind; `last_updated`
+  follows the reported year.
+- **`dac`**: an annual snapshot, so its date is the vintage date
+  (1 June of each year).
+- **`open_payments`**: usually current, but it has *no* freshness column,
+  as with many scraped rosters or static extracts.
+
+Each source covers a random 75-90% of clinicians in each year.
+
+```{r simulate}
+set.seed(20261105)
+n_npi <- 800L
+years <- 2016:2024
+states <- c("CO", "NM", "TX", "NY", "CA", "PA")
+npis <- sprintf("%010d", seq_len(n_npi))
+
+truth <- matrix(NA_character_, n_npi, length(years), dimnames = list(npis, years))
+truth[, 1] <- sample(states, n_npi, replace = TRUE)
+for (k in 2:length(years)) {
+  moves <- runif(n_npi) < 0.06
+  truth[, k] <- truth[, k - 1]
+  truth[moves, k] <- vapply(truth[moves, k - 1],
+                            function(s) sample(setdiff(states, s), 1), character(1))
+}
+
+report <- function(lag, audit_years = 2022:2024, coverage = 0.85, dated = TRUE,
+                   date_fn = function(y, lag) sprintf("%d-07-01", y - lag)) {
+  rows <- lapply(audit_years, function(y) {
+    k <- match(y - lag, years)
+    keep <- runif(n_npi) < coverage
+    out <- data.frame(npi = npis, year = y, state = truth[cbind(seq_len(n_npi), k)])
+    if (dated) out$last_updated <- date_fn(y, lag)
+    out[keep, ]
+  })
+  do.call(rbind, rows)
+}
+
+nppes_lag <- sample(0:5, n_npi, replace = TRUE, prob = c(.50, .15, .10, .10, .08, .07))
+nppes_extra <- sample(0:3, n_npi, replace = TRUE)
+sources <- list(
+  nppes = report(nppes_lag, coverage = 0.90,
+                 date_fn = function(y, lag) sprintf("%d-%02d-15", y - lag - nppes_extra,
+                                                    sample(1:12, n_npi, TRUE))),
+  pecos = report(sample(0:1, n_npi, TRUE, prob = c(.85, .15)), coverage = 0.80),
+  dac = report(sample(0:1, n_npi, TRUE, prob = c(.80, .20)), coverage = 0.85,
+               date_fn = function(y, lag) sprintf("%d-06-01", y)),
+  open_payments = report(sample(0:1, n_npi, TRUE, prob = c(.85, .15)),
+                         coverage = 0.75, dated = FALSE)
+)
+vapply(sources, nrow, integer(1))
+```
+
+## Pairwise agreement, one audit year at a time
+
+`attribute_agreement()` uses one `as_of` date for the whole call. In a
+multi-year audit, call it once per year with that year's reference date
+so each record's age is measured against the year it is used for, then
+bind the results:
+
+```{r agreement}
+ag <- do.call(rbind, lapply(2022:2024, function(y) {
+  in_year <- lapply(sources, function(s) s[s$year == y, ])
+  attribute_agreement(in_year, attribute = "state", observed_at = "last_updated",
+                      as_of = sprintf("%d-12-31", y))
+}))
+nrow(ag)
+head(ag[, c("id", "year", "source_a", "source_b", "value_a", "value_b",
+            "agree", "staleness", "age_band_a", "age_band_b")])
+```
+
+Four sources give `choose(4, 2) = 6` pairs. `source_a` is always the
+source listed first in `sources`, so `"a_predates_b"` in the `nppes`
+vs. `pecos` pair means the NPPES record is the older one.
+
+```{r summary}
+summ <- attribute_agreement_summary(ag)
+summ[summ$year == 2024, ]
+```
+
+## Figure 1: agreement rate by source pair
+
+```{r fig-pair-agreement, fig.alt = "Dot plot of the percent of shared NPIs on which each pair of sources agrees about practice state, for audit years 2022 to 2024. The three pairs that include NPPES agree least, near 92 percent; the other pairs agree about 98 to 99 percent."}
+summ$pair <- paste(summ$source_a, "vs", summ$source_b)
+pct <- tapply(100 * summ$pct_agree, list(summ$pair, summ$year), identity)
+pct <- pct[order(pct[, "2024"]), , drop = FALSE]
+year_cols <- c("2022" = "#D9D5C6", "2023" = "#8AA29E", "2024" = "#1F2A33")
+op <- par(mar = c(4, 12, 3, 1))
+plot(NA, xlim = c(min(pct) - 2, 100), ylim = c(0.5, nrow(pct) + 0.5), yaxt = "n",
+     xlab = "% of shared NPIs that agree on state", ylab = "",
+     main = "Pairwise state agreement by audit year", cex.main = 1)
+axis(2, at = seq_len(nrow(pct)), labels = rownames(pct), las = 1, tick = FALSE)
+abline(h = seq_len(nrow(pct)), col = "#00000014")
+for (y in colnames(pct)) {
+  points(pct[, y], seq_len(nrow(pct)), pch = 21, cex = 1.6, bg = year_cols[y], col = "#1F2A33")
+}
+legend("bottomright", legend = colnames(pct), pt.bg = year_cols, pch = 21, pt.cex = 1.4,
+       bty = "n", title = "Audit year")
+par(op)
+```
+
+The four sources are compared only with each other. The pairs that
+include `nppes` agree least, but that alone does not say NPPES is the
+stale one. Two sources can agree on the same out-of-date value, and a
+low rate is symmetric between the two sides.
+
+## Figure 2: what the record dates say about each disagreement
+
+Each disagreement gets one of four staleness classes. Recoding
+`a_predates_b`/`b_predates_a` into the source's name makes the figure
+read directly:
+
+```{r fig-staleness-breakdown, fig.alt = "Stacked horizontal bar chart of 2024 disagreements for each source pair, split by which side's record is provably older. Pairs with open_payments are entirely no temporal basis because that source carries no date."}
+dis <- ag[!ag$agree & ag$year == 2024, ]
+dis$reading <- ifelse(dis$staleness == "a_predates_b", "first source older",
+               ifelse(dis$staleness == "b_predates_a", "second source older",
+               ifelse(dis$staleness == "same_date", "same date", "no temporal basis")))
+dis$pair <- paste(dis$source_a, "vs", dis$source_b)
+lv <- c("first source older", "second source older", "same date", "no temporal basis")
+tab <- table(factor(dis$reading, levels = lv), dis$pair)
+tab <- tab[, order(colSums(tab)), drop = FALSE]
+cls_cols <- c("#C8553D", "#F2C14E", "#8AA29E", "#D9D5C6")
+op <- par(mar = c(4, 13, 2, 1))
+barplot(tab, horiz = TRUE, las = 1, col = cls_cols, border = NA,
+        xlab = "Disagreements in 2024 (count)",
+        main = "Which side of each 2024 disagreement is provably older?", cex.main = 1,
+        legend.text = lv, args.legend = list(x = "bottomright", bty = "n"))
+par(op)
+```
+
+Read "first source older" for `nppes vs pecos` as: the NPPES record was
+last touched before the PECOS one, so NPPES cannot reflect whatever
+changed in between. Every disagreement involving `open_payments` is
+`"no temporal basis"`. That source is still compared, but its records
+have no date to order them by.
+
+## Figure 3: agreement by the age of the older record
+
+When both sides carry a date, the age of the *older* record works as a
+staleness clock. If agreement falls as that age grows, the disagreements
+are tracking time, not random error:
+
+```{r fig-age-band, fig.alt = "Bar chart of percent agreement in 2024 by the age band of the older of the two records, for pairs where both sources carry a date. Agreement falls from the under-one-year band to the five-plus-year band."}
+dated <- ag[ag$year == 2024 & ag$staleness != "no_temporal_basis", ]
+older <- pmin(as.Date(dated$observed_at_a), as.Date(dated$observed_at_b))
+dated$older_band <- record_age_band(older, as_of = "2024-12-31")
+by_band <- tapply(dated$agree, dated$older_band, mean) * 100
+n_band <- table(dated$older_band)
+op <- par(mar = c(4, 4, 2, 1))
+mid <- barplot(by_band, col = "#1F2A33", border = NA, ylim = c(0, 125), las = 1, yaxt = "n",
+               xlab = "Age of the older record on 2024-12-31",
+               ylab = "% agree on state",
+               main = "Agreement by the older record's age (dated pairs, 2024)", cex.main = 1)
+axis(2, at = seq(0, 100, 20), las = 1)
+text(mid, by_band, labels = paste0(round(by_band), "%\nn=", n_band), pos = 3, cex = 0.8)
+par(op)
+```
+
+This is the cross-sectional version of a staleness check. With repeated
+annual snapshots, `vignette("lead-lag-staleness")` goes further and asks
+which source moves first.
+
+## What this does not establish
+
+`agree == TRUE` is not evidence that the value is true. In particular,
+sources that copy from one another will agree on the same stale value.
+`"a_predates_b"` is an exclusion, not a verdict: A is ruled out as
+current for whatever changed after its date, and B is not thereby
+confirmed. The numbers above come from a simulation whose delays were
+chosen to make the patterns visible. Real sources will be noisier, and
+their delays have to be estimated, not assumed.

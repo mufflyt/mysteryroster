@@ -12,7 +12,9 @@ attribute_agreement_summary(agreement)
 \value{
 A tibble: \code{source_a}, \code{source_b}, \code{year}, \code{n_compared}, \code{n_agree},
 \code{pct_agree}, \code{n_disagree}, \code{n_disagree_no_temporal_basis}, ordered by
-\code{year}, \code{source_a}, \code{source_b}.
+\code{year}, \code{source_a}, \code{source_b}. \code{pct_agree} is a proportion in \verb{[0, 1]},
+not a percentage. Pairs that share no identifier-year are absent rather
+than shown with \code{n_compared = 0}.
 }
 \description{
 Aggregates \code{\link[=attribute_agreement]{attribute_agreement()}}'s row-level output the way a
@@ -21,3 +23,24 @@ how many identifiers both sources covered, how many agreed, and how many
 disagreements had no temporal basis to classify (because at least one
 source carries no freshness date).
 }
+\examples{
+s <- list(
+  nppes = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "CO", "TX")),
+  pecos = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "NM", "TX")),
+  op    = data.frame(npi = c("1", "3"), year = 2024, state = c("CO", "OK"))
+)
+attribute_agreement_summary(attribute_agreement(s, attribute = "state"))
+}
+\seealso{
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

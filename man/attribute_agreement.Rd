@@ -62,6 +62,35 @@ touched in 2015 and one from 2024 is not the same finding as one between
 two records both touched in 2024. A source with no such field (common for
 a scraped roster or a static extract) is still compared; its staleness
 classification is simply \code{"no_temporal_basis"} for every row.
+
+\strong{Pairs.} With \code{k} sources there are \code{choose(k, 2)} pairs, taken in the
+order the sources are listed: \code{source_a} is always the earlier name in
+\code{sources}, so \code{staleness == "a_predates_b"} means the earlier-listed
+source's record is the older one. A pair that shares no identifier-year
+contributes no rows (it is skipped, not an error); the call errors only if
+no pair overlaps at all.
+
+\strong{Normalization.} Identifiers are trimmed; attribute values are trimmed
+and upper-cased, so \code{" co"} and \code{"CO"} agree. Rows with a missing or empty
+identifier or attribute value are dropped before pairing, so \code{n_compared}
+in \code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}} counts only identifier-years both
+sources actually report.
+
+\strong{Years.} Rows pair on \verb{(id, year)}. A source that lacks the \code{year}
+column gets \code{year = NA} and therefore pairs only with other sources that
+also lack it; pass \code{year = NULL} for a pure cross-section.
+
+\strong{Freshness.} \code{staleness} compares the two records' own dates;
+\verb{age_years_*}/\verb{age_band_*} measure each record against one \code{as_of} date.
+\code{as_of} is a single date for the whole call, so for a multi-year panel
+call once per year with that year's reference date and bind the results
+(see \code{vignette("attribute-agreement")}).
+
+\strong{Reading a disagreement.} \code{"a_predates_b"} says only that A's record
+was last touched before B's, so A cannot reflect whatever changed in
+between. It does not say B is correct, and an \code{agree == TRUE} row is not
+evidence that either value is true -- two sources can agree on a stale
+value, especially when one copies the other.
 }
 \examples{
 s <- list(
@@ -70,5 +99,24 @@ s <- list(
   board = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"),
                       last_updated = c("2024-05-01", "2019-01-01"))
 )
-attribute_agreement(s, attribute = "state", observed_at = "last_updated")
+ag <- attribute_agreement(s, attribute = "state", observed_at = "last_updated",
+                          as_of = "2024-12-31")
+ag[, c("id", "value_a", "value_b", "agree", "staleness", "age_band_a", "age_band_b")]
+attribute_agreement_summary(ag)
 }
+\seealso{
+\code{\link[=registry_overlap]{registry_overlap()}} for membership-only cross-linking, and
+\code{vignette("attribute-agreement")} for a worked example with figures.
+
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}
