@@ -48,7 +48,10 @@ counted separately in the report as \code{multi_value_source_years} and
 retained rather than collapsed to one row. \code{on_duplicate = "error"}
 stops the call if any duplicate key exists at all, without
 distinguishing the two cases; use the report (see \verb{@return}) to inspect
-which kind you actually have before choosing that.
+which kind you actually have before choosing that. (Whether a multi-value
+source's claims actually vote for more than one value in
+\code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}} depends on \emph{that} function's own
+\code{on_source_conflict} argument, not on this one.)
 
 \strong{Dates.} If \code{valid_from}/\code{valid_to} columns are present, rows where
 \code{valid_to} is before \code{valid_from} are flagged (\code{invalid_interval}) and,

@@ -13,7 +13,8 @@ attribute_truth_fusion(
   seed = 2026L,
   max_iterations = 100L,
   convergence_tolerance = 0.001,
-  abstain_threshold = NULL
+  abstain_threshold = NULL,
+  on_source_conflict = c("single_value", "multi_value")
 )
 }
 \arguments{
@@ -38,14 +39,20 @@ use it.}
 
 \item{abstain_threshold}{Optional minimum winning vote share (\code{0}-\code{1});
 below it, abstain even without a tie. \code{NULL} (default) disables this.}
+
+\item{on_source_conflict}{\code{"single_value"} (default) or \code{"multi_value"};
+see Details.}
 }
 \value{
 An object of class \code{mysteryroster_truth}, a list with:
 \describe{
 \item{\code{predictions}}{One row per entity-attribute-year:
 \code{entity_id}, \code{attribute}, \code{reference_year}, \code{predicted_value},
-\code{method}, \code{model_score}, \code{score_type}, \code{n_sources},
-\code{n_candidate_values}, \code{abstained}, \code{abstention_reason}.}
+\code{method}, \code{model_score}, \code{score_type}, \code{n_sources} (votes actually
+counted, after excluding conflicted sources under
+\code{"single_value"}), \code{n_sources_excluded}, \code{n_candidate_values},
+\code{abstained}, \code{abstention_reason} (also \code{"no_single_value_sources"}
+when every source for that entity-year was excluded).}
 \item{\code{candidate_scores}}{One row per candidate value per
 entity-attribute-year, ranked by \code{vote_share} descending.}
 \item{\code{source_diagnostics}}{Zero rows for \code{"majority"}, which
@@ -74,10 +81,28 @@ different algorithm than the one requested.
 \strong{Voting unit.} A vote is cast by a \emph{source}, not a \emph{row}: votes are
 counted on distinct \verb{(source_id, claimed_value)} pairs per
 entity-attribute-year, so a source that submitted the same value twice
-(a duplicate row) only votes once, and a source that legitimately
-reports two different values (see \code{\link[=attribute_claims_validate]{attribute_claims_validate()}}'s
-\code{multi_value_source_years}) contributes a vote to each rather than
-being forced to pick one.
+(a duplicate row) only votes once.
+
+\strong{A source with more than one distinct value for one entity-attribute-year
+(\code{on_source_conflict}).} \code{"single_value"} (the default) treats this as
+an internally conflicted, unresolved claim: that source is excluded
+entirely from voting for that entity-year (never arbitrarily resolved,
+never allowed to cast competing votes), and the exclusion is counted in
+\code{n_sources_excluded}. If \emph{every} source for an entity-year is excluded
+this way, the call abstains with \code{abstention_reason = "no_single_value_sources"} rather than erroring. \code{"multi_value"} instead
+keeps every distinct value as its own vote, appropriate when more than
+one true value can legitimately coexist (for example an entity with
+multiple real practice locations) -- but note that under
+\code{"multi_value"}, \code{model_score} is a share of \emph{votes cast}, not a
+probability that a single categorical value is correct, since one
+source can contribute to more than one candidate's count.
+
+\strong{Grouping.} Entity-years are grouped with \code{split(x, list(entity_id, reference_year))}, never a hand-built pasted string key -- \code{entity_id}
+and \code{reference_year} are both already guaranteed non-missing by this
+point, so there is no risk of the all-\code{NA}-key failure mode a pasted or
+\code{interaction()}-based key can hit (see \code{attribute_consensus_tier()}'s
+own fix for exactly that bug), and no risk of two different
+entity-years colliding onto the same pasted string.
 
 \strong{Abstention.} An exact tie for the largest vote share always
 abstains (\code{abstention_reason = "tied_vote"}) -- there is no principled
@@ -90,6 +115,9 @@ is below it even without a tie, the call also abstains
 distinct \code{attribute} value, \code{attribute_name} must select one; this is
 deliberate, not a missing convenience, so an "active/inactive" claim
 and a "practice state" claim are never silently pooled into one vote.
+Because \code{claims} is filtered to exactly one \code{attribute} before any
+grouping happens, votes can never mix across attributes regardless of
+how entity-years are grouped.
 
 \strong{Arguments majority doesn't use.} \code{implication_function},
 \code{max_iterations}, and \code{convergence_tolerance} exist for methods Phase 1

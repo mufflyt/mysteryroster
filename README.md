@@ -269,12 +269,20 @@ fusion_result$candidate_scores   # every candidate value's vote share, ranked
 attribute_truth_backends()       # which methods are actually implemented right now -- only "majority"
 ```
 
-Votes are counted per *source*, not per row, so a source that
-legitimately reports two values (two real practice locations, say)
-votes for both rather than being forced to pick one. An exact tie
-always abstains; `attribute_truth_fusion()` never silently substitutes
-a different method or backend than the one requested, and never claims
-a method is available before it is actually implemented.
+Votes are counted per *source*, not per row, so a source that submits
+the same value twice only counts once. Whether a source with two
+*conflicting* values (two different claimed states for the same
+entity-year, say) is excluded as unresolved or allowed to vote for both
+is governed by `on_source_conflict`: `"single_value"` (the default)
+excludes it, since one source casting competing votes for the same
+entity-attribute-year would otherwise be able to swing an ordinary
+categorical majority vote; `"multi_value"` lets it vote for both, for
+cases where more than one value can legitimately be true at once, but
+`model_score` then reports a share of votes cast, not a probability
+that one value is correct. An exact tie always abstains;
+`attribute_truth_fusion()` never silently substitutes a different
+method or backend than the one requested, and never claims a method is
+available before it is actually implemented.
 
 ## From protocol to function
 

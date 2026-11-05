@@ -106,6 +106,46 @@ Two of three sources agreeing (67%) is a real majority, but below the
 80% threshold requested here, so the call abstains anyway rather than
 reporting a prediction the caller asked to treat as too weak to trust.
 
+## One source, two conflicting claims
+
+A source can legitimately report more than one value for the same
+entity-attribute-year -- two real practice locations, say. Whether that
+source then votes for both, or is excluded as unresolved, is governed
+by `on_source_conflict`, and the two policies give different answers on
+the same data:
+
+```{r conflict-setup}
+conflicted <- data.frame(
+  entity_id = c("1", "1", "1"), attribute = "state",
+  source_id = c("multi", "multi", "other"),
+  claimed_value = c("CO", "NM", "CO"), reference_year = 2024
+)
+```
+
+```{r conflict-single}
+suppressMessages(attribute_truth_fusion(conflicted, method = "majority"))$predictions[
+  , c("predicted_value", "model_score", "n_sources", "n_sources_excluded")
+]
+```
+
+`on_source_conflict = "single_value"` is the default: `multi`'s claim is
+internally conflicted (`CO` and `NM` for the same entity-year), so it is
+excluded from voting entirely -- `n_sources_excluded = 1` -- leaving
+only `other`'s single vote. The prediction is `CO`, but because `other`
+alone, not because `multi` broke the tie in its favor.
+
+```{r conflict-multi}
+suppressMessages(
+  attribute_truth_fusion(conflicted, method = "majority", on_source_conflict = "multi_value")
+)$candidate_scores
+```
+
+`on_source_conflict = "multi_value"` instead lets `multi` vote for both
+values -- appropriate when more than one value can legitimately be true
+at once, but note that `model_score` under this policy is a share of
+*votes cast*, not a probability that one categorical value is correct,
+since `multi` contributed to two different candidates' counts.
+
 ## What's implemented, and what isn't yet
 
 `attribute_truth_backends()` is a static capability report, not a live

@@ -18,7 +18,10 @@
 #' retained rather than collapsed to one row. `on_duplicate = "error"`
 #' stops the call if any duplicate key exists at all, without
 #' distinguishing the two cases; use the report (see `@return`) to inspect
-#' which kind you actually have before choosing that.
+#' which kind you actually have before choosing that. (Whether a multi-value
+#' source's claims actually vote for more than one value in
+#' [attribute_truth_fusion()] depends on *that* function's own
+#' `on_source_conflict` argument, not on this one.)
 #'
 #' **Dates.** If `valid_from`/`valid_to` columns are present, rows where
 #' `valid_to` is before `valid_from` are flagged (`invalid_interval`) and,
@@ -86,7 +89,7 @@ attribute_claims_validate <- function(claims, on_duplicate = c("flag", "error"),
   n_missing_value <- sum(is.na(claims_valid$claimed_value) | !nzchar(claims_valid$claimed_value))
 
   key_cols <- c("entity_id", "attribute", "source_id", "reference_year")
-  key_strings <- do.call(paste, c(claims_valid[key_cols], sep = ""))
+  key_strings <- do.call(paste0, claims_valid[key_cols])
   duplicate_keys <- unique(key_strings[duplicated(key_strings)])
   n_duplicate_source_years <- length(duplicate_keys)
   n_multi_value_source_years <- 0L
@@ -188,10 +191,30 @@ attribute_truth_backends <- function() {
 #' **Voting unit.** A vote is cast by a *source*, not a *row*: votes are
 #' counted on distinct `(source_id, claimed_value)` pairs per
 #' entity-attribute-year, so a source that submitted the same value twice
-#' (a duplicate row) only votes once, and a source that legitimately
-#' reports two different values (see [attribute_claims_validate()]'s
-#' `multi_value_source_years`) contributes a vote to each rather than
-#' being forced to pick one.
+#' (a duplicate row) only votes once.
+#'
+#' **A source with more than one distinct value for one entity-attribute-year
+#' (`on_source_conflict`).** `"single_value"` (the default) treats this as
+#' an internally conflicted, unresolved claim: that source is excluded
+#' entirely from voting for that entity-year (never arbitrarily resolved,
+#' never allowed to cast competing votes), and the exclusion is counted in
+#' `n_sources_excluded`. If *every* source for an entity-year is excluded
+#' this way, the call abstains with `abstention_reason =
+#' "no_single_value_sources"` rather than erroring. `"multi_value"` instead
+#' keeps every distinct value as its own vote, appropriate when more than
+#' one true value can legitimately coexist (for example an entity with
+#' multiple real practice locations) -- but note that under
+#' `"multi_value"`, `model_score` is a share of *votes cast*, not a
+#' probability that a single categorical value is correct, since one
+#' source can contribute to more than one candidate's count.
+#'
+#' **Grouping.** Entity-years are grouped with `split(x, list(entity_id,
+#' reference_year))`, never a hand-built pasted string key -- `entity_id`
+#' and `reference_year` are both already guaranteed non-missing by this
+#' point, so there is no risk of the all-`NA`-key failure mode a pasted or
+#' `interaction()`-based key can hit (see `attribute_consensus_tier()`'s
+#' own fix for exactly that bug), and no risk of two different
+#' entity-years colliding onto the same pasted string.
 #'
 #' **Abstention.** An exact tie for the largest vote share always
 #' abstains (`abstention_reason = "tied_vote"`) -- there is no principled
@@ -204,6 +227,9 @@ attribute_truth_backends <- function() {
 #' distinct `attribute` value, `attribute_name` must select one; this is
 #' deliberate, not a missing convenience, so an "active/inactive" claim
 #' and a "practice state" claim are never silently pooled into one vote.
+#' Because `claims` is filtered to exactly one `attribute` before any
+#' grouping happens, votes can never mix across attributes regardless of
+#' how entity-years are grouped.
 #'
 #' **Arguments majority doesn't use.** `implication_function`,
 #' `max_iterations`, and `convergence_tolerance` exist for methods Phase 1
@@ -227,12 +253,17 @@ attribute_truth_backends <- function() {
 #'   use it.
 #' @param abstain_threshold Optional minimum winning vote share (`0`-`1`);
 #'   below it, abstain even without a tie. `NULL` (default) disables this.
+#' @param on_source_conflict `"single_value"` (default) or `"multi_value"`;
+#'   see Details.
 #' @return An object of class `mysteryroster_truth`, a list with:
 #'   \describe{
 #'     \item{`predictions`}{One row per entity-attribute-year:
 #'       `entity_id`, `attribute`, `reference_year`, `predicted_value`,
-#'       `method`, `model_score`, `score_type`, `n_sources`,
-#'       `n_candidate_values`, `abstained`, `abstention_reason`.}
+#'       `method`, `model_score`, `score_type`, `n_sources` (votes actually
+#'       counted, after excluding conflicted sources under
+#'       `"single_value"`), `n_sources_excluded`, `n_candidate_values`,
+#'       `abstained`, `abstention_reason` (also `"no_single_value_sources"`
+#'       when every source for that entity-year was excluded).}
 #'     \item{`candidate_scores`}{One row per candidate value per
 #'       entity-attribute-year, ranked by `vote_share` descending.}
 #'     \item{`source_diagnostics`}{Zero rows for `"majority"`, which
@@ -260,12 +291,14 @@ attribute_truth_backends <- function() {
 attribute_truth_fusion <- function(claims, method = "majority", attribute_name = NULL,
                                     backend = "auto", implication_function = NULL,
                                     seed = 2026L, max_iterations = 100L,
-                                    convergence_tolerance = 0.001, abstain_threshold = NULL) {
+                                    convergence_tolerance = 0.001, abstain_threshold = NULL,
+                                    on_source_conflict = c("single_value", "multi_value")) {
   checkmate::assert_data_frame(claims, min.rows = 1)
   checkmate::assert_string(method, min.chars = 1)
   checkmate::assert_string(backend, min.chars = 1)
   checkmate::assert_int(seed)
   if (!is.null(abstain_threshold)) checkmate::assert_number(abstain_threshold, lower = 0, upper = 1)
+  on_source_conflict <- match.arg(on_source_conflict)
 
   implemented_methods <- c(majority = "r_native")
   if (!method %in% names(implemented_methods)) {
@@ -323,11 +356,16 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
     }
   }
 
+  # Filtering to exactly one attribute HERE, before any grouping below,
+  # is what guarantees votes can never mix across attributes -- grouping
+  # by (entity_id, reference_year) alone is therefore safe, not an
+  # oversight; attribute is constant within claims_used by construction.
   claims_used <- claims_in[claims_in$attribute == attribute_name, , drop = FALSE]
   claims_used <- claims_used[
     !is.na(claims_used$claimed_value) & nzchar(claims_used$claimed_value) &
       !is.na(claims_used$entity_id) & nzchar(claims_used$entity_id) &
-      !is.na(claims_used$source_id) & nzchar(claims_used$source_id),
+      !is.na(claims_used$source_id) & nzchar(claims_used$source_id) &
+      !is.na(claims_used$reference_year),
     , drop = FALSE
   ]
   if (!nrow(claims_used)) {
@@ -337,15 +375,51 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
 
   started_at <- proc.time()[["elapsed"]]
 
+  # One vote row per distinct (entity, year, source, value) -- not per
+  # input row -- so a source repeating the same value twice (a duplicate
+  # row) only casts one vote. entity_id/reference_year are both already
+  # guaranteed non-missing above, so grouping via split(x, list(...))
+  # never hits the all-NA-key failure mode a pasted string key can, and
+  # never risks two different entity-years colliding onto one key.
   vote_cols <- c("entity_id", "reference_year", "source_id", "claimed_value")
   votes_long <- claims_used[!duplicated(claims_used[vote_cols]), vote_cols, drop = FALSE]
-  group_key <- paste(votes_long$entity_id, votes_long$reference_year, sep = "")
-  vote_groups <- split(votes_long, group_key)
+  vote_groups <- split(votes_long, list(votes_long$entity_id, votes_long$reference_year), drop = TRUE)
 
   prediction_rows <- vector("list", length(vote_groups))
   candidate_rows <- vector("list", length(vote_groups))
   for (i in seq_along(vote_groups)) {
-    group_votes <- vote_groups[[i]]
+    full_group <- vote_groups[[i]]
+    group_entity_id <- full_group$entity_id[1]
+    group_reference_year <- full_group$reference_year[1]
+
+    # on_source_conflict: a source appears more than once in full_group
+    # only by having a DIFFERENT claimed_value each time (exact-duplicate
+    # rows were already collapsed above). "single_value" excludes such a
+    # source from voting here entirely -- unresolved, not arbitrarily
+    # picked -- rather than letting it cast competing votes.
+    source_value_counts <- table(full_group$source_id)
+    conflicted_sources <- names(source_value_counts)[source_value_counts > 1L]
+    n_sources_excluded <- 0L
+    group_votes <- full_group
+    if (on_source_conflict == "single_value" && length(conflicted_sources) > 0L) {
+      n_sources_excluded <- length(conflicted_sources)
+      group_votes <- full_group[!full_group$source_id %in% conflicted_sources, , drop = FALSE]
+    }
+
+    if (!nrow(group_votes)) {
+      prediction_rows[[i]] <- tibble::tibble(
+        entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
+        predicted_value = NA_character_, method = method, model_score = NA_real_,
+        score_type = "vote_share", n_sources = 0L, n_sources_excluded = n_sources_excluded,
+        n_candidate_values = 0L, abstained = TRUE, abstention_reason = "no_single_value_sources"
+      )
+      candidate_rows[[i]] <- tibble::tibble(
+        entity_id = character(0), attribute = character(0), reference_year = integer(0),
+        candidate_value = character(0), n_votes = integer(0), vote_share = numeric(0)
+      )
+      next
+    }
+
     tally <- table(group_votes$claimed_value)
     n_sources_group <- dplyr::n_distinct(group_votes$source_id)
     winner_n <- max(tally)
@@ -361,16 +435,15 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
     }
 
     prediction_rows[[i]] <- tibble::tibble(
-      entity_id = group_votes$entity_id[1], attribute = attribute_name,
-      reference_year = group_votes$reference_year[1],
+      entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
       predicted_value = if (abstained) NA_character_ else winner_value,
       method = method, model_score = round(vote_share, 4), score_type = "vote_share",
-      n_sources = n_sources_group, n_candidate_values = length(tally),
+      n_sources = n_sources_group, n_sources_excluded = n_sources_excluded,
+      n_candidate_values = length(tally),
       abstained = abstained, abstention_reason = abstention_reason
     )
     candidate_rows[[i]] <- tibble::tibble(
-      entity_id = group_votes$entity_id[1], attribute = attribute_name,
-      reference_year = group_votes$reference_year[1],
+      entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
       candidate_value = names(tally), n_votes = as.integer(tally),
       vote_share = round(as.integer(tally) / n_sources_group, 4)
     )
@@ -379,15 +452,17 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
   predictions_tbl <- dplyr::bind_rows(prediction_rows)
   predictions_tbl <- predictions_tbl[order(predictions_tbl$entity_id, predictions_tbl$reference_year), ]
   candidate_scores_tbl <- dplyr::bind_rows(candidate_rows)
-  candidate_scores_tbl <- candidate_scores_tbl[order(
-    candidate_scores_tbl$entity_id, candidate_scores_tbl$reference_year, -candidate_scores_tbl$vote_share
-  ), ]
+  if (nrow(candidate_scores_tbl) > 0L) {
+    candidate_scores_tbl <- candidate_scores_tbl[order(
+      candidate_scores_tbl$entity_id, candidate_scores_tbl$reference_year, -candidate_scores_tbl$vote_share
+    ), ]
+  }
 
   elapsed_sec <- round(proc.time()[["elapsed"]] - started_at, 3)
   n_abstained <- sum(predictions_tbl$abstained)
   message(sprintf(
-    "attribute_truth_fusion: method = '%s', %s entity-years, %s abstained (%.1f%%), %.3fs",
-    method, format(nrow(predictions_tbl), big.mark = ","), n_abstained,
+    "attribute_truth_fusion: method = '%s', on_source_conflict = '%s', %s entity-years, %s abstained (%.1f%%), %.3fs",
+    method, on_source_conflict, format(nrow(predictions_tbl), big.mark = ","), n_abstained,
     100 * n_abstained / nrow(predictions_tbl), elapsed_sec
   ))
 
@@ -397,8 +472,8 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
       candidate_scores = tibble::as_tibble(candidate_scores_tbl),
       source_diagnostics = tibble::tibble(source_id = character(0), reliability_score = numeric(0)),
       model_diagnostics = tibble::tibble(
-        method = method, backend = resolved_backend, converged = TRUE, n_iterations = 1L,
-        runtime_sec = elapsed_sec, seed = seed, n_warnings = 0L
+        method = method, backend = resolved_backend, on_source_conflict = on_source_conflict,
+        converged = TRUE, n_iterations = 1L, runtime_sec = elapsed_sec, seed = seed, n_warnings = 0L
       ),
       claims = claims_used
     ),
@@ -410,8 +485,8 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
 print.mysteryroster_truth <- function(x, ...) {
   n_abstained <- sum(x$predictions$abstained)
   cat(sprintf(
-    "<mysteryroster_truth>\n  method: %s (backend: %s)\n  %s entity-years predicted, %s abstained (%.1f%%)\n",
-    x$model_diagnostics$method[1], x$model_diagnostics$backend[1],
+    "<mysteryroster_truth>\n  method: %s (backend: %s, on_source_conflict: %s)\n  %s entity-years predicted, %s abstained (%.1f%%)\n",
+    x$model_diagnostics$method[1], x$model_diagnostics$backend[1], x$model_diagnostics$on_source_conflict[1],
     format(nrow(x$predictions), big.mark = ","), n_abstained,
     100 * n_abstained / nrow(x$predictions)
   ))
