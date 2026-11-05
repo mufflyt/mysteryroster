@@ -12,7 +12,7 @@
   breaks concordance first, what happens to a disagreement one year
   later, agreement by spell age, and enrollment arrival and departure
   timing.
-* The README shows four of the figures. `data-raw/no_gold_standard_figures.R`
+* The README shows all eight figures. `data-raw/no_gold_standard_figures.R`
   regenerates them in `man/figures/` from the vignette chunks.
 * Rewrote the help for the ten no-gold-standard functions:
   - every output column of `attribute_lead_lag_matrix()` is defined, along

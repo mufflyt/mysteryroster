@@ -138,13 +138,15 @@ wrong" -- only as "this side provably cannot reflect information the other
 side already had."
 
 <p>
-<img src="man/figures/attribute-agreement-fig-pair-agreement-1.png" width="49%" alt="Dot plot of pairwise state agreement by audit year for six simulated source pairs; pairs that include NPPES agree least." />
-<img src="man/figures/attribute-agreement-fig-staleness-breakdown-1.png" width="49%" alt="Stacked bars of 2024 disagreements per source pair, split by which side's record is provably older; pairs with an undated source are all no temporal basis." />
+<img src="man/figures/attribute-agreement-fig-pair-agreement-1.png" width="32%" alt="Dot plot of pairwise state agreement by audit year for six simulated source pairs; pairs that include NPPES agree least." />
+<img src="man/figures/attribute-agreement-fig-staleness-breakdown-1.png" width="32%" alt="Stacked bars of 2024 disagreements per source pair, split by which side's record is provably older; pairs with an undated source are all no temporal basis." />
+<img src="man/figures/attribute-agreement-fig-age-band-1.png" width="32%" alt="Bars of 2024 state agreement by the older record's age band, falling from 99 percent under one year to 75 percent at five or more years." />
 </p>
 
 *Simulated sources from `vignette("attribute-agreement")`. Left: agreement
-per pair, with no source taken as truth. Right: for each disagreement,
-which side's own record date is provably older.*
+per pair, with no source taken as truth. Middle: for each disagreement,
+which side's own record date is provably older. Right: agreement by the
+older record's age.*
 
 ## When there's no gold standard, but there is time
 
@@ -170,14 +172,27 @@ enrollment_move_lead_lag(nppes_panel, medicaid_enrollment_intervals)
 format_no_gold_standard_prose(ll, freshness_strata, enrollment_timing)
 ```
 
+<p align="center">
+<img src="man/figures/lead-lag-staleness-fig-toy-timeline-1.png" width="70%" alt="Timeline of the state reported by Source A and Source B for three NPIs over 2022 to 2024: Source A moves first for NPI 1, Source B for NPI 2, and both agree throughout after 2022 for NPI 3." />
+</p>
+
+*The three-NPI toy example: who moves first?*
+
 <p>
 <img src="man/figures/lead-lag-staleness-fig-concordance-breaks-1.png" width="49%" alt="Grouped bars: among concordant provider-years, Source A changes first far more often than Source B at state, city, ZIP, and street level." />
+<img src="man/figures/lead-lag-staleness-fig-discordance-outcomes-1.png" width="49%" alt="Stacked bars of what happens one year after a disagreement, for each attribute: B adopts A, A reverts to B, both persist, or other." />
+</p>
+<p>
 <img src="man/figures/lead-lag-staleness-fig-spell-age-decay-1.png" width="49%" alt="Lines of percent agreement with a 2026 cross-section by Source B's street spell-age stratum, dropping sharply at 11 or more years." />
+<img src="man/figures/lead-lag-staleness-fig-enrollment-timing-1.png" width="49%" alt="Bars of enrollment timing against panel moves: destination enrollment usually starts before the panel move, and origin enrollment usually ends after it or is still open." />
 </p>
 
 *Simulated 1,500-clinician panel from `vignette("lead-lag-staleness")`.
-Left (Approach 1): which source breaks concordance first. Right (Approach 2):
-agreement by how long Source B's value has sat unchanged.*
+Top row (Approach 1): which source breaks concordance first, and what
+happens to a disagreement one year later. Bottom left (Approach 2):
+agreement by how long Source B's value has sat unchanged. Bottom right
+(Approach 3): enrollment arrival and departure dates relative to the
+panel move.*
 
 None of the three claims a source is correct -- only that it moved first,
 that disagreement tracks a measurable staleness clock, or that an
