@@ -32,3 +32,83 @@ jobs:
         with:
           upload-snapshots: true
           error-on: '"error"'
+
+  # attribute_truth_fusion()'s crowd_kit and truthdiscovery backends are
+  # optional at runtime (never required, never auto-installed by the
+  # package itself -- see attribute_truth_backends()), but that also means
+  # the job above's R CMD check never exercises either one: both their
+  # probe functions report "unavailable" and every Python-dependent test
+  # skips cleanly. These two jobs close that gap by actually configuring a
+  # Python with each package installed, so a regression in either backend
+  # fails CI instead of silently passing as a skip. The two packages
+  # cannot share one Python environment (crowd-kit needs numpy>=2;
+  # truthdiscovery pins numpy 1.24 and needs Python < 3.12, since its last
+  # release predates the removal of distutils) -- confirmed directly, not
+  # assumed -- so each gets its own job and its own Python installation.
+  R-CMD-check-crowd-kit:
+    runs-on: ubuntu-latest
+    name: ubuntu-latest (release) + crowd-kit
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      RETICULATE_USE_MANAGED_VENV: "no"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+          use-public-rspm: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install crowd-kit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install crowd-kit
+      - name: Point reticulate at this Python
+        run: echo "RETICULATE_PYTHON=$(which python)" >> "$GITHUB_ENV"
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::rcmdcheck
+            any::reticulate
+          needs: check
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          upload-snapshots: true
+          error-on: '"error"'
+
+  R-CMD-check-truthdiscovery:
+    runs-on: ubuntu-latest
+    name: ubuntu-latest (release) + truthdiscovery
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      RETICULATE_USE_MANAGED_VENV: "no"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: 'release'
+          use-public-rspm: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # truthdiscovery's last release needs < 3.12 (distutils)
+      - name: Install truthdiscovery
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install truthdiscovery
+      - name: Point reticulate at this Python
+        run: echo "RETICULATE_PYTHON=$(which python)" >> "$GITHUB_ENV"
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::rcmdcheck
+            any::reticulate
+          needs: check
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          upload-snapshots: true
+          error-on: '"error"'
