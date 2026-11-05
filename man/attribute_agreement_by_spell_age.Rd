@@ -24,7 +24,7 @@ multi-year), with \code{id}, \code{attributes}, and (if multi-year) \code{year}.
 \code{spell_age_years} (see \code{\link[=attribute_spell_age]{attribute_spell_age()}}), with \code{id}, \code{year},
 \code{spell_age_years}, and \code{attributes}.}
 
-\item{attributes}{Character vector of attribute column names to compare.}
+\item{attributes}{Character vector of unique attribute column names to compare.}
 
 \item{id}{Name of the identifier column. Default \code{"npi"}.}
 
@@ -43,8 +43,11 @@ tenure. Default \code{"spell_age_years"}.}
 \code{"spell_age_years"}.}
 }
 \value{
-A tibble with one row per age stratum: \code{comparison}, \code{stratification},
-\code{stratum}, \code{n}, and \verb{<attr>_agree_pct} for each attribute in \code{attributes}.
+A tibble with one row per non-empty age stratum, in age order:
+\code{comparison}, \code{stratification}, \code{stratum} (one of
+\code{"0 yrs (updated in snapshot yr)"}, \code{"1-2 yrs"}, \code{"3-5 yrs"},
+\code{"6-10 yrs"}, \code{"11+ yrs (un-updated >=11 yrs)"}), \code{n} (matched rows),
+and \verb{<attr>_agree_pct} (percent, one decimal) for each attribute.
 }
 \description{
 Tests whether cross-registry disagreement is driven by accumulated staleness
@@ -55,3 +58,38 @@ Conversely, if a comparison source shows no decay with \code{source_b}'s spell a
 that source is likely echoing \code{source_b} rather than observing the attribute
 independently.
 }
+\details{
+Rows join on \verb{(id, year)} when \code{source_a} has a \code{year} column, otherwise on
+\code{id} against \code{panel_b}'s \code{target_year} rows. Matched rows with a missing
+\code{age_col} are dropped. Ages are binned as \code{0}, \code{1-2}, \code{3-5}, \code{6-10}, and
+\verb{11+} years; a bin with no matched rows is omitted from the output rather
+than reported with \code{n = 0}. Each \verb{<attr>_agree_pct} is computed over the
+rows in that stratum where both sources have a non-missing value, so its
+denominator can be smaller than \code{n}. Values are trimmed and upper-cased.
+
+\code{age_col} can be any non-negative integer clock, such as years since
+board certification; the bins are the same.
+}
+\examples{
+panel <- data.frame(npi = c("1", "1", "2", "2", "2"),
+                    year = c(2023, 2024, 2022, 2023, 2024),
+                    street = c("1 A", "2 B", "2 B", "2 B", "2 B"))
+panel <- attribute_spell_age(panel, attribute = "street")
+current <- data.frame(npi = c("1", "2"), street = c("2 B", "9 Z"))
+attribute_agreement_by_spell_age(current, panel, attributes = "street")
+}
+\seealso{
+\code{\link[=attribute_spell_age]{attribute_spell_age()}}; \code{vignette("lead-lag-staleness")}.
+
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

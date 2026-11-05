@@ -40,10 +40,77 @@ one or more \code{comparison} / \code{stratification} blocks).}
 }
 \value{
 Named list with \code{paragraph_1_lead_lag}, \code{paragraph_2_freshness},
-\code{paragraph_3_enrollment}, and \code{combined_text}.
+\code{paragraph_3_enrollment}, and \code{combined_text} (the three joined by a
+blank line), each a single character string.
 }
 \description{
 Produces three publication-ready paragraphs (one per approach) and a combined
 block from the output tables of \code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
 \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}}, and \code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}}.
 }
+\details{
+\strong{Treat the output as a first draft.} The five \verb{*_label} arguments are
+the only wording you can change. The rest of each sentence was written
+for the OB/GYN midwifery workforce study, and it is fixed whatever the
+inputs:
+\itemize{
+\item Study years: \code{2021--2025} transitions, \code{2022} discordances tracked
+through \code{2026}, a \code{2007--2025} back-check, a \verb{20-year panel (2007--2026)}, and a \code{2016--2026} move cohort. These do not follow
+\code{base_year}, \code{cross_section_year}, or \code{min_move_year}.
+\item Source-specific detail: the Open Payments field
+\code{Recipient_Primary_Business_Street_Address_Line1}, manufacturer CRM
+systems, "Medicare PECOS reassignment", the Medicaid fields
+\code{ENRL_START_DT}/\code{ENRL_END_DT}, and "her" for the clinician.
+\item Interpretations: paragraph 1 says the back-check is "confirming" that
+the panel is not retaining outdated addresses, and paragraph 2 says
+agreement "dipped" at 0 years and "decayed steadily". The function
+inserts the numbers whatever they show, so check that each sentence
+still matches them.
+}
+
+The text uses \verb{$...$} math and Markdown emphasis. Render it with R
+Markdown or Quarto, for example with \code{cat()} in a \code{results = "asis"} chunk.
+
+\strong{Required inputs.} It stops instead of writing \code{"NA"} into a sentence.
+\itemize{
+\item \code{lead_lag_df} has one row each for \code{state}, \code{city}, \code{zip5}, and
+\code{street}, with the multi-year and cross-section columns non-missing.
+\code{attribute_lead_lag_matrix()} therefore needs a \code{cross_section}.
+\item In \code{freshness_df}, the first \code{comparison} block must have
+\code{stratification} equal to \code{"nppes_street_spell_age"} or
+\code{"spell_age_years"}, and the \code{"0 yrs ..."}, \code{"1-2 yrs"}, and
+\code{"11+ yrs ..."} strata. Two optional sentences are added when present.
+One needs a \code{comparison} containing \code{"Open Payments"} with \verb{0 yrs} and
+\code{11+ yrs} strata. The other needs a \code{stratification} of
+\code{"amcb_career_tenure"} with strata starting \code{"3-5 yrs"}, \code{"11-20 yrs"},
+and \code{"21+ yrs"}. \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}} does not produce
+the last two career-tenure labels, so you must relabel those rows
+yourself.
+\item \code{enrollment_df} has both \code{direction_type} blocks.
+}
+
+\strong{What it computes.} Percentages from the input tables go in as they
+are. Only these values are worked out here:
+\itemize{
+\item the two "-fold" break ratios, A breaks / max(1, B breaks);
+\item the arrival percentages, re-based on the "acute window" of matched moves
+(every arrival category except enrollment leading by 3+ years);
+\item the enrollment lead ratio.
+}
+}
+\seealso{
+\code{vignette("lead-lag-staleness")} for the full output on example
+inputs.
+
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

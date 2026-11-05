@@ -10,10 +10,31 @@ record_age_band(last_updated, as_of = Sys.Date())
 \item{last_updated, as_of}{See \code{\link[=record_age_years]{record_age_years()}}.}
 }
 \value{
-An ordered factor: \code{"<1 yr"}, \code{"1-3 yr"}, \code{"3-5 yr"}, \code{"5+ yr"}, or
+A factor with levels \code{"<1 yr"}, \code{"1-3 yr"}, \code{"3-5 yr"}, \code{"5+ yr"}, or
 \code{NA} where age is \code{NA}.
 }
 \description{
 The exact cut points \code{e1_last_update_staleness.R} used, ported as-is for
 comparability with that analysis rather than chosen fresh here.
 }
+\details{
+Intervals are right-closed: exactly 1 year old is \code{"<1 yr"}, exactly 3 is
+\code{"1-3 yr"}, exactly 5 is \code{"3-5 yr"}.
+}
+\examples{
+record_age_band(c("2024-06-01", "2022-01-01", "2020-01-01", "2010-01-01"),
+                as_of = "2024-12-31")
+}
+\seealso{
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

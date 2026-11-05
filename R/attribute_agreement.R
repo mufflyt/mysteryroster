@@ -14,7 +14,10 @@
 #'   the date the record was actually *used* (an audit year's end, say) when
 #'   reconstructing historical applicability rather than current staleness.
 #' @return Numeric years, possibly fractional. `NA` where either input is
-#'   `NA` or unparseable.
+#'   `NA` or unparseable. A `last_updated` after `as_of` gives a negative age.
+#' @examples
+#' record_age_years(c("2024-01-01", "2019-06-30T08:00:00Z", NA), as_of = "2025-01-01")
+#' @family no-gold-standard comparison
 #' @export
 record_age_years <- function(last_updated, as_of = Sys.Date()) {
   date_part <- substr(as.character(last_updated), 1, 10)
@@ -29,9 +32,16 @@ record_age_years <- function(last_updated, as_of = Sys.Date()) {
 #' The exact cut points `e1_last_update_staleness.R` used, ported as-is for
 #' comparability with that analysis rather than chosen fresh here.
 #'
+#' Intervals are right-closed: exactly 1 year old is `"<1 yr"`, exactly 3 is
+#' `"1-3 yr"`, exactly 5 is `"3-5 yr"`.
+#'
 #' @param last_updated,as_of See [record_age_years()].
-#' @return An ordered factor: `"<1 yr"`, `"1-3 yr"`, `"3-5 yr"`, `"5+ yr"`, or
+#' @return A factor with levels `"<1 yr"`, `"1-3 yr"`, `"3-5 yr"`, `"5+ yr"`, or
 #'   `NA` where age is `NA`.
+#' @examples
+#' record_age_band(c("2024-06-01", "2022-01-01", "2020-01-01", "2010-01-01"),
+#'                 as_of = "2024-12-31")
+#' @family no-gold-standard comparison
 #' @export
 record_age_band <- function(last_updated, as_of = Sys.Date()) {
   age <- record_age_years(last_updated, as_of)
@@ -55,6 +65,12 @@ record_age_band <- function(last_updated, as_of = Sys.Date()) {
 #'   provably the older information), `"same_date"` (no temporal basis to
 #'   prefer either), or `"no_temporal_basis"` (either date is missing).
 #'   Vectorized; `NA` dates never raise an error.
+#' @examples
+#' classify_record_staleness(
+#'   updated_a = c("2015-03-01", "2024-05-01", "2024-05-01", NA),
+#'   updated_b = c("2024-05-01", "2015-03-01", "2024-05-01", "2024-05-01")
+#' )
+#' @family no-gold-standard comparison
 #' @export
 classify_record_staleness <- function(updated_a, updated_b) {
   updated_a <- as.Date(updated_a)
@@ -84,6 +100,36 @@ classify_record_staleness <- function(updated_a, updated_b) {
 #' two records both touched in 2024. A source with no such field (common for
 #' a scraped roster or a static extract) is still compared; its staleness
 #' classification is simply `"no_temporal_basis"` for every row.
+#'
+#' @details
+#' **Pairs.** With `k` sources there are `choose(k, 2)` pairs, taken in the
+#' order the sources are listed: `source_a` is always the earlier name in
+#' `sources`, so `staleness == "a_predates_b"` means the earlier-listed
+#' source's record is the older one. A pair that shares no identifier-year
+#' contributes no rows (it is skipped, not an error); the call errors only if
+#' no pair overlaps at all.
+#'
+#' **Normalization.** Identifiers are trimmed; attribute values are trimmed
+#' and upper-cased, so `" co"` and `"CO"` agree. Rows with a missing or empty
+#' identifier or attribute value are dropped before pairing, so `n_compared`
+#' in [attribute_agreement_summary()] counts only identifier-years both
+#' sources actually report.
+#'
+#' **Years.** Rows pair on `(id, year)`. A source that lacks the `year`
+#' column gets `year = NA` and therefore pairs only with other sources that
+#' also lack it; pass `year = NULL` for a pure cross-section.
+#'
+#' **Freshness.** `staleness` compares the two records' own dates;
+#' `age_years_*`/`age_band_*` measure each record against one `as_of` date.
+#' `as_of` is a single date for the whole call, so for a multi-year panel
+#' call once per year with that year's reference date and bind the results
+#' (see `vignette("attribute-agreement")`).
+#'
+#' **Reading a disagreement.** `"a_predates_b"` says only that A's record
+#' was last touched before B's, so A cannot reflect whatever changed in
+#' between. It does not say B is correct, and an `agree == TRUE` row is not
+#' evidence that either value is true -- two sources can agree on a stale
+#' value, especially when one copies the other.
 #'
 #' @param sources Named list, same shape as [registry_overlap()]'s argument
 #'   but attribute-bearing: each element is a data frame with an identifier
@@ -115,7 +161,13 @@ classify_record_staleness <- function(updated_a, updated_b) {
 #'   board = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"),
 #'                       last_updated = c("2024-05-01", "2019-01-01"))
 #' )
-#' attribute_agreement(s, attribute = "state", observed_at = "last_updated")
+#' ag <- attribute_agreement(s, attribute = "state", observed_at = "last_updated",
+#'                           as_of = "2024-12-31")
+#' ag[, c("id", "value_a", "value_b", "agree", "staleness", "age_band_a", "age_band_b")]
+#' attribute_agreement_summary(ag)
+#' @seealso [registry_overlap()] for membership-only cross-linking, and
+#'   `vignette("attribute-agreement")` for a worked example with figures.
+#' @family no-gold-standard comparison
 #' @export
 attribute_agreement <- function(sources, attribute, id = "npi", year = "year",
                                  observed_at = NULL, as_of = Sys.Date()) {
@@ -193,7 +245,17 @@ attribute_agreement <- function(sources, attribute, id = "npi", year = "year",
 #' @param agreement Output of [attribute_agreement()].
 #' @return A tibble: `source_a`, `source_b`, `year`, `n_compared`, `n_agree`,
 #'   `pct_agree`, `n_disagree`, `n_disagree_no_temporal_basis`, ordered by
-#'   `year`, `source_a`, `source_b`.
+#'   `year`, `source_a`, `source_b`. `pct_agree` is a proportion in `[0, 1]`,
+#'   not a percentage. Pairs that share no identifier-year are absent rather
+#'   than shown with `n_compared = 0`.
+#' @examples
+#' s <- list(
+#'   nppes = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "CO", "TX")),
+#'   pecos = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "NM", "TX")),
+#'   op    = data.frame(npi = c("1", "3"), year = 2024, state = c("CO", "OK"))
+#' )
+#' attribute_agreement_summary(attribute_agreement(s, attribute = "state"))
+#' @family no-gold-standard comparison
 #' @export
 attribute_agreement_summary <- function(agreement) {
   checkmate::assert_data_frame(agreement)

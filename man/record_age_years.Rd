@@ -17,7 +17,7 @@ reconstructing historical applicability rather than current staleness.}
 }
 \value{
 Numeric years, possibly fractional. \code{NA} where either input is
-\code{NA} or unparseable.
+\code{NA} or unparseable. A \code{last_updated} after \code{as_of} gives a negative age.
 }
 \description{
 Ported from isochrones' \code{e1_last_update_staleness.R} (commit \verb{48dff9a27})
@@ -27,3 +27,19 @@ corroborating source, and by itself is a weak staleness signal. Use it to
 characterize how far back a dataset's evidence reaches, not to accept or
 reject one record.
 }
+\examples{
+record_age_years(c("2024-01-01", "2019-06-30T08:00:00Z", NA), as_of = "2025-01-01")
+}
+\seealso{
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}}
+}
+\concept{no-gold-standard comparison}

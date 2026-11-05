@@ -26,3 +26,22 @@ excluded as current. Ported from \code{mysterymedicaid::mm_classify_record_stale
 made symmetric (pairwise, no reference date) for cross-source attribute
 comparison.
 }
+\examples{
+classify_record_staleness(
+  updated_a = c("2015-03-01", "2024-05-01", "2024-05-01", NA),
+  updated_b = c("2024-05-01", "2015-03-01", "2024-05-01", "2024-05-01")
+)
+}
+\seealso{
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

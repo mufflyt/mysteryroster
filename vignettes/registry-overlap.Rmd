@@ -158,7 +158,7 @@ attribute_agreement(list(ent_board = board_state, nppes = nppes_state),
                      attribute = "state", year = NULL)
 ```
 
-See `?attribute_agreement` for the freshness-tuned, pairwise version of
-this comparison -- it is deliberately a different function from
+See `?attribute_agreement` and `vignette("attribute-agreement")` for the
+freshness-tuned, pairwise version of this comparison, with figures -- it is deliberately a different function from
 `registry_overlap()`, because membership and attribute agreement are
 different claims that should never be conflated into one.

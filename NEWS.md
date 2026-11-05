@@ -1,3 +1,35 @@
+# mysteryroster (development version)
+
+* New vignette, `attribute-agreement`. It covers `attribute_agreement()`,
+  `attribute_agreement_summary()`, and the freshness functions
+  `record_age_years()`, `record_age_band()`, and
+  `classify_record_staleness()`, using four simulated sources. Three
+  figures show agreement per source pair, which side of each disagreement
+  is provably older, and agreement by the older record's age.
+* `vignette("lead-lag-staleness")` gains a timeline figure for the
+  three-NPI example. A new section runs all three approaches on a
+  simulated 1,500-clinician panel and adds four figures: which source
+  breaks concordance first, what happens to a disagreement one year
+  later, agreement by spell age, and enrollment arrival and departure
+  timing.
+* The README shows all eight figures. `data-raw/no_gold_standard_figures.R`
+  regenerates them in `man/figures/` from the vignette chunks.
+* Rewrote the help for the ten no-gold-standard functions:
+  - every output column of `attribute_lead_lag_matrix()` is defined, along
+    with which counts are not exhaustive and each percentage's denominator;
+  - the age bins of `attribute_agreement_by_spell_age()` and the interval
+    matching rules of `enrollment_move_lead_lag()` are written out;
+  - `attribute_agreement()` now explains how it pairs sources, normalizes
+    values, and handles years and `as_of`;
+  - `record_age_band()` notes that its bands are right-closed, and now
+    correctly describes its result as an unordered factor;
+  - each function has `@examples` and a shared "no-gold-standard
+    comparison" `@family` cross-reference.
+* `?format_no_gold_standard_prose` now lists the wording that is fixed to
+  the OB/GYN midwifery study: study years, source-specific mechanisms, and
+  interpretive verbs. It also lists the input rows it requires. Behaviour
+  is unchanged.
+
 # mysteryroster 0.3.0
 
 * Fixed a real `R CMD check` NOTE in `attribute_spell_age()`: it called

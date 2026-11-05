@@ -37,10 +37,21 @@
 #'   age is measured (e.g. `"street"` or `"state"`).
 #' @param id Name of the identifier column. Default `"npi"`.
 #' @param year Name of the integer year column. Default `"year"`.
-#' @return `panel` ordered by `(id, year)` with three added columns:
+#' Values are trimmed and upper-cased before comparison, so `"10 Main St"`
+#' and `"10 MAIN ST "` continue the same spell. A missing value breaks the
+#' spell on both sides: the missing row gets `NA` spell columns, and the next
+#' observed value starts a new spell. Spell age is therefore a *lower bound*
+#' on how long a value has sat unchanged -- the clock starts at the first
+#' panel year, so a value already present in that year is never older than
+#' `year - first_panel_year`.
+#'
+#' @return A tibble of `panel` ordered by `(id, year)`, with `id` coerced to
+#'   trimmed character, `year` to integer, and three added columns:
 #'   `first_panel_year` (earliest year observed for `id`),
 #'   `spell_start_year` (first year of the current uninterrupted consecutive-year
-#'   spell of `attribute`), and `spell_age_years` (`year - spell_start_year`).
+#'   spell of `attribute`), and `spell_age_years` (`year - spell_start_year`;
+#'   `0` in the year a value first appears). Errors on duplicate `(id, year)`
+#'   rows, missing ids, or non-integer years.
 #' @examples
 #' p <- data.frame(
 #'   npi = c("1", "1", "1", "2", "2"),
@@ -48,6 +59,9 @@
 #'   street = c("10 MAIN ST", "10 MAIN ST", "20 OAK AVE", "5 ELM ST", "5 ELM ST")
 #' )
 #' attribute_spell_age(p, attribute = "street")
+#' @seealso [attribute_agreement_by_spell_age()], which stratifies agreement by
+#'   this column; `vignette("lead-lag-staleness")`.
+#' @family no-gold-standard comparison
 #' @export
 attribute_spell_age <- function(panel, attribute, id = "npi", year = "year") {
   checkmate::assert_data_frame(panel, min.rows = 1)
@@ -123,6 +137,29 @@ attribute_spell_age <- function(panel, attribute, id = "npi", year = "year") {
 #'   often did the cross-sectional source's value already appear in Source B in
 #'   an earlier year (`year < cross_section_year`)?
 #'
+#' @details
+#' Values are trimmed and upper-cased, ids trimmed. A transition `t -> t + 1`
+#' counts only when *both* sources report the identifier in both years with
+#' non-missing values for that attribute, so `n_paired_transitions` can
+#' differ by attribute. Each source must have one row per `(id, year)`.
+#'
+#' The concordance-breaking counts are not exhaustive: among concordant
+#' pairs, `a_breaks_concordance_first` (A changes, B holds),
+#' `b_breaks_concordance_first` (B changes, A holds), and
+#' `both_move_together_at_t1` (both change to the same new value) leave out
+#' pairs that stay concordant and pairs where both change to different
+#' values. Likewise the 1-year discordant outcomes (`b_adopts_a`,
+#' `a_reverts_to_b`, `persistent_discordant`) need not sum to 100%: mutual
+#' swaps (`B_{t+1} == A_t` and `A_{t+1} == B_t`) and moves to a third value
+#' are in none of them.
+#'
+#' Multi-year convergence counts an identifier once: B "adopts" if *any*
+#' later B year equals `A_{base_year}`, A "reverts" if *any* later A year
+#' equals `B_{base_year}`. The two are not mutually exclusive.
+#'
+#' A source that leads is informative; a source that never leads is not
+#' thereby correct -- it may simply never be re-observed independently.
+#'
 #' @param source_a Data frame for longitudinal Source A (e.g. Open Payments),
 #'   with `id`, `year`, and one or more `attributes` columns.
 #' @param source_b Data frame for longitudinal Source B (e.g. NPPES panel),
@@ -140,7 +177,45 @@ attribute_spell_age <- function(panel, attribute, id = "npi", year = "year") {
 #'   prior to `cross_section_year`.
 #' @param cross_section_year Integer year corresponding to `cross_section`.
 #'   Default is `max(source_b[[year]])`.
-#' @return A tibble with one row per attribute in `attributes`.
+#' @return A tibble with one row per attribute in `attributes`. Counts are
+#'   integers and `_pct` columns are percentages rounded to one decimal:
+#'   \describe{
+#'     \item{`attribute`}{Attribute name.}
+#'     \item{`n_paired_transitions`}{Consecutive-year transitions with all
+#'       four values (`A_t`, `B_t`, `A_{t+1}`, `B_{t+1}`) present.}
+#'     \item{`n_concordant_at_t`, `n_discordant_at_t`}{Of those, transitions
+#'       with `A_t == B_t` and `A_t != B_t`.}
+#'     \item{`a_breaks_concordance_first`, `b_breaks_concordance_first`}{
+#'       Concordant at `t`; only A (or only B) changed at `t + 1`.}
+#'     \item{`both_move_together_at_t1`}{Concordant at `t`; both moved to the
+#'       same new value at `t + 1`.}
+#'     \item{`b_adopts_a_at_t1_n`, `b_adopts_a_at_t1_pct`}{Discordant at `t`;
+#'       `B_{t+1} == A_t`, swaps excluded. Percent of `n_discordant_at_t`.}
+#'     \item{`a_reverts_to_b_at_t1_n`, `a_reverts_to_b_at_t1_pct`}{
+#'       Discordant at `t`; `A_{t+1} == B_t`, swaps excluded.}
+#'     \item{`persistent_discordant_at_t1_pct`}{Discordant at `t`; neither
+#'       source changed.}
+#'     \item{`base_year`}{Year used for multi-year tracking.}
+#'     \item{`disc_base_n`}{Identifiers discordant in `base_year`.}
+#'     \item{`b_adopts_a_multi_n`, `b_adopts_a_multi_pct`}{Of those, B equals
+#'       `A_{base_year}` in any later year. `NA` if `disc_base_n == 0`.}
+#'     \item{`a_reverts_b_multi_n`, `a_reverts_b_multi_pct`}{Of those, A
+#'       equals `B_{base_year}` in any later year. The percent's denominator
+#'       is the identifiers A observes after `base_year`, not `disc_base_n`.}
+#'     \item{`cross_section_disc_n`}{Identifiers where `cross_section`
+#'       disagrees with B in `cross_section_year`. `NA` without
+#'       `cross_section`.}
+#'     \item{`cross_section_in_prior_b_n`, `cross_section_in_prior_b_pct`}{Of
+#'       those, the cross-section's value appears in B in an earlier year.}
+#'   }
+#' @examples
+#' a <- data.frame(npi = rep(c("1", "2"), each = 3), year = rep(2022:2024, 2),
+#'                 state = c("CO", "NM", "NM", "NY", "NY", "NY"))
+#' b <- data.frame(npi = rep(c("1", "2"), each = 3), year = rep(2022:2024, 2),
+#'                 state = c("CO", "CO", "NM", "NJ", "NY", "NY"))
+#' attribute_lead_lag_matrix(a, b, attributes = "state")
+#' @seealso `vignette("lead-lag-staleness")` for worked examples and figures.
+#' @family no-gold-standard comparison
 #' @export
 attribute_lead_lag_matrix <- function(source_a, source_b, attributes,
                                       id = "npi", year = "year",
@@ -348,6 +423,18 @@ attribute_lead_lag_matrix <- function(source_a, source_b, attributes,
 #' that source is likely echoing `source_b` rather than observing the attribute
 #' independently.
 #'
+#' @details
+#' Rows join on `(id, year)` when `source_a` has a `year` column, otherwise on
+#' `id` against `panel_b`'s `target_year` rows. Matched rows with a missing
+#' `age_col` are dropped. Ages are binned as `0`, `1-2`, `3-5`, `6-10`, and
+#' `11+` years; a bin with no matched rows is omitted from the output rather
+#' than reported with `n = 0`. Each `<attr>_agree_pct` is computed over the
+#' rows in that stratum where both sources have a non-missing value, so its
+#' denominator can be smaller than `n`. Values are trimmed and upper-cased.
+#'
+#' `age_col` can be any non-negative integer clock, such as years since
+#' board certification; the bins are the same.
+#'
 #' @param source_a Data frame for comparison Source A (either cross-sectional or
 #'   multi-year), with `id`, `attributes`, and (if multi-year) `year`.
 #' @param panel_b Data frame for longitudinal Source B annotated with
@@ -364,8 +451,20 @@ attribute_lead_lag_matrix <- function(source_a, source_b, attributes,
 #'   tenure. Default `"spell_age_years"`.
 #' @param stratification_label Label stored in `stratification`. Default
 #'   `"spell_age_years"`.
-#' @return A tibble with one row per age stratum: `comparison`, `stratification`,
-#'   `stratum`, `n`, and `<attr>_agree_pct` for each attribute in `attributes`.
+#' @return A tibble with one row per non-empty age stratum, in age order:
+#'   `comparison`, `stratification`, `stratum` (one of
+#'   `"0 yrs (updated in snapshot yr)"`, `"1-2 yrs"`, `"3-5 yrs"`,
+#'   `"6-10 yrs"`, `"11+ yrs (un-updated >=11 yrs)"`), `n` (matched rows),
+#'   and `<attr>_agree_pct` (percent, one decimal) for each attribute.
+#' @examples
+#' panel <- data.frame(npi = c("1", "1", "2", "2", "2"),
+#'                     year = c(2023, 2024, 2022, 2023, 2024),
+#'                     street = c("1 A", "2 B", "2 B", "2 B", "2 B"))
+#' panel <- attribute_spell_age(panel, attribute = "street")
+#' current <- data.frame(npi = c("1", "2"), street = c("2 B", "9 Z"))
+#' attribute_agreement_by_spell_age(current, panel, attributes = "street")
+#' @seealso [attribute_spell_age()]; `vignette("lead-lag-staleness")`.
+#' @family no-gold-standard comparison
 #' @export
 attribute_agreement_by_spell_age <- function(source_a, panel_b, attributes,
                                              id = "npi", year = "year",
@@ -483,6 +582,26 @@ attribute_agreement_by_spell_age <- function(source_a, panel_b, attributes,
 #' timing** (does origin-state enrollment terminate before, during, or after
 #' the panel move year?).
 #'
+#' @details
+#' A *move* is a pair of consecutive panel years (`t - 1`, `t`) for one id
+#' whose state differs, with `t >= min_move_year`. Panel rows with missing
+#' state are dropped first, so a gap year does not create a move.
+#'
+#' **Arrival.** Each move is matched to the id's intervals in the
+#' destination state that are still active on or after 1 January of
+#' `t - 1`. The lag is `t` minus the interval's start year; when several
+#' intervals match, the one with the smallest absolute lag (then the latest
+#' start) is kept. Positive lags mean enrollment started first (the panel
+#' lagged); negative lags mean the panel moved first.
+#'
+#' **Departure.** Each move is matched to the id's intervals in the origin
+#' state that started by 31 December of `t`. An open-ended interval is
+#' preferred, then the latest end. Termination before `t`, in `t`, or after
+#' `t` (or still open) gives the three departure categories.
+#'
+#' Moves with no matching interval are left out of `total_matched_moves`
+#' and the percentages, but are counted in `total_panel_moves`.
+#'
 #' @param panel Longitudinal panel data frame with `id`, `year`, and `state`.
 #' @param intervals Enrollment interval data frame with `id`, `state`,
 #'   `interval_start` (`Date`), and `interval_end` (`Date`; `NA` or `>= open_end_cutoff`
@@ -498,7 +617,29 @@ attribute_agreement_by_spell_age <- function(source_a, panel_b, attributes,
 #' @return A tibble with arrival and departure lead/lag distributions:
 #'   `direction_type` (`"destination_arrival_timing"` or
 #'   `"origin_departure_termination_timing"`), `category`, `n`,
-#'   `total_panel_moves`, `total_matched_moves`, and `pct_of_matched`.
+#'   `total_panel_moves`, `total_matched_moves`, and `pct_of_matched`
+#'   (percent of `total_matched_moves` for that direction, one decimal).
+#'   Every category is listed, including those with `n = 0`, in this order.
+#'   Arrival: `"Enrollment led by 3+ yrs (pre-existing / long panel lag)"`,
+#'   `"Enrollment led by 2 yrs (panel lagged 2 yrs)"`,
+#'   `"Enrollment led by 1 yr (panel lagged 1 yr)"`,
+#'   `"Same calendar year (0 yr lag)"`,
+#'   `"Panel led by 1 yr (enrollment lagged 1 yr)"`,
+#'   `"Panel led by 2+ yrs (enrollment lagged 2+ yrs)"`. Departure:
+#'   `"Terminated BEFORE panel move year (panel lagged departure)"`,
+#'   `"Terminated in SAME calendar year as panel move"`,
+#'   `"Terminated AFTER panel move year or still open-ended (enrollment lagged departure)"`.
+#'   A direction with no matched move contributes no rows.
+#' @examples
+#' panel <- data.frame(npi = c("1", "1"), year = c(2023, 2024), state = c("CO", "NM"))
+#' intervals <- data.frame(
+#'   npi = c("1", "1"), state = c("NM", "CO"),
+#'   interval_start = as.Date(c("2023-05-01", "2020-01-01")),
+#'   interval_end = as.Date(c("2099-12-31", "2025-03-31"))
+#' )
+#' enrollment_move_lead_lag(panel, intervals)
+#' @seealso `vignette("lead-lag-staleness")`.
+#' @family no-gold-standard comparison
 #' @export
 enrollment_move_lead_lag <- function(panel, intervals,
                                      id = "npi", year = "year", state = "state",
@@ -654,6 +795,54 @@ enrollment_move_lead_lag <- function(panel, intervals,
 #' block from the output tables of [attribute_lead_lag_matrix()],
 #' [attribute_agreement_by_spell_age()], and [enrollment_move_lead_lag()].
 #'
+#' @details
+#' **Treat the output as a first draft.** The five `*_label` arguments are
+#' the only wording you can change. The rest of each sentence was written
+#' for the OB/GYN midwifery workforce study, and it is fixed whatever the
+#' inputs:
+#'
+#' * Study years: `2021--2025` transitions, `2022` discordances tracked
+#'   through `2026`, a `2007--2025` back-check, a `20-year panel
+#'   (2007--2026)`, and a `2016--2026` move cohort. These do not follow
+#'   `base_year`, `cross_section_year`, or `min_move_year`.
+#' * Source-specific detail: the Open Payments field
+#'   `Recipient_Primary_Business_Street_Address_Line1`, manufacturer CRM
+#'   systems, "Medicare PECOS reassignment", the Medicaid fields
+#'   `ENRL_START_DT`/`ENRL_END_DT`, and "her" for the clinician.
+#' * Interpretations: paragraph 1 says the back-check is "confirming" that
+#'   the panel is not retaining outdated addresses, and paragraph 2 says
+#'   agreement "dipped" at 0 years and "decayed steadily". The function
+#'   inserts the numbers whatever they show, so check that each sentence
+#'   still matches them.
+#'
+#' The text uses `$...$` math and Markdown emphasis. Render it with R
+#' Markdown or Quarto, for example with `cat()` in a `results = "asis"` chunk.
+#'
+#' **Required inputs.** It stops instead of writing `"NA"` into a sentence.
+#'
+#' * `lead_lag_df` has one row each for `state`, `city`, `zip5`, and
+#'   `street`, with the multi-year and cross-section columns non-missing.
+#'   `attribute_lead_lag_matrix()` therefore needs a `cross_section`.
+#' * In `freshness_df`, the first `comparison` block must have
+#'   `stratification` equal to `"nppes_street_spell_age"` or
+#'   `"spell_age_years"`, and the `"0 yrs ..."`, `"1-2 yrs"`, and
+#'   `"11+ yrs ..."` strata. Two optional sentences are added when present.
+#'   One needs a `comparison` containing `"Open Payments"` with `0 yrs` and
+#'   `11+ yrs` strata. The other needs a `stratification` of
+#'   `"amcb_career_tenure"` with strata starting `"3-5 yrs"`, `"11-20 yrs"`,
+#'   and `"21+ yrs"`. [attribute_agreement_by_spell_age()] does not produce
+#'   the last two career-tenure labels, so you must relabel those rows
+#'   yourself.
+#' * `enrollment_df` has both `direction_type` blocks.
+#'
+#' **What it computes.** Percentages from the input tables go in as they
+#' are. Only these values are worked out here:
+#'
+#' * the two "-fold" break ratios, A breaks / max(1, B breaks);
+#' * the arrival percentages, re-based on the "acute window" of matched moves
+#'   (every arrival category except enrollment leading by 3+ years);
+#' * the enrollment lead ratio.
+#'
 #' @param lead_lag_df Output of [attribute_lead_lag_matrix()].
 #' @param freshness_df Output of [attribute_agreement_by_spell_age()] (containing
 #'   one or more `comparison` / `stratification` blocks).
@@ -669,7 +858,11 @@ enrollment_move_lead_lag <- function(panel, intervals,
 #' @param enrollment_label Name of administrative enrollment source (default
 #'   `"Medicaid"`).
 #' @return Named list with `paragraph_1_lead_lag`, `paragraph_2_freshness`,
-#'   `paragraph_3_enrollment`, and `combined_text`.
+#'   `paragraph_3_enrollment`, and `combined_text` (the three joined by a
+#'   blank line), each a single character string.
+#' @seealso `vignette("lead-lag-staleness")` for the full output on example
+#'   inputs.
+#' @family no-gold-standard comparison
 #' @export
 format_no_gold_standard_prose <- function(lead_lag_df, freshness_df, enrollment_df,
                                           roster_label = "the American Midwifery Certification Board roster",

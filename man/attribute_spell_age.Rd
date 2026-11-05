@@ -15,13 +15,23 @@ age is measured (e.g. \code{"street"} or \code{"state"}).}
 
 \item{id}{Name of the identifier column. Default \code{"npi"}.}
 
-\item{year}{Name of the integer year column. Default \code{"year"}.}
+\item{year}{Name of the integer year column. Default \code{"year"}.
+Values are trimmed and upper-cased before comparison, so \code{"10 Main St"}
+and \code{"10 MAIN ST "} continue the same spell. A missing value breaks the
+spell on both sides: the missing row gets \code{NA} spell columns, and the next
+observed value starts a new spell. Spell age is therefore a \emph{lower bound}
+on how long a value has sat unchanged -- the clock starts at the first
+panel year, so a value already present in that year is never older than
+\code{year - first_panel_year}.}
 }
 \value{
-\code{panel} ordered by \verb{(id, year)} with three added columns:
+A tibble of \code{panel} ordered by \verb{(id, year)}, with \code{id} coerced to
+trimmed character, \code{year} to integer, and three added columns:
 \code{first_panel_year} (earliest year observed for \code{id}),
-\code{spell_start_year} (first year of the current uninterrupted spell of
-\code{attribute}), and \code{spell_age_years} (\code{year - spell_start_year}).
+\code{spell_start_year} (first year of the current uninterrupted consecutive-year
+spell of \code{attribute}), and \code{spell_age_years} (\code{year - spell_start_year};
+\code{0} in the year a value first appears). Errors on duplicate \verb{(id, year)}
+rows, missing ids, or non-integer years.
 }
 \description{
 When a registry does not carry a reliable per-field \code{last_updated} timestamp
@@ -29,6 +39,11 @@ When a registry does not carry a reliable per-field \code{last_updated} timestam
 a record's staleness can still be measured empirically from a multi-year
 panel: how many consecutive years has the provider's current attribute value
 sat unchanged?
+}
+\details{
+A calendar-year gap in the panel (e.g. observed in 2020 and 2024, but absent
+in 2021-2023) breaks the uninterrupted spell so that an unobserved multi-year
+gap is never misclassified as verified continuity.
 }
 \examples{
 p <- data.frame(
@@ -38,3 +53,19 @@ p <- data.frame(
 )
 attribute_spell_age(p, attribute = "street")
 }
+\seealso{
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}}, which stratifies agreement by
+this column; \code{vignette("lead-lag-staleness")}.
+
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}

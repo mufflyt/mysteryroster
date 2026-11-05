@@ -38,14 +38,71 @@ open-ended (active indefinitely). Default \code{as.Date("2099-01-01")}.}
 A tibble with arrival and departure lead/lag distributions:
 \code{direction_type} (\code{"destination_arrival_timing"} or
 \code{"origin_departure_termination_timing"}), \code{category}, \code{n},
-\code{total_panel_moves}, \code{total_matched_moves}, and \code{pct_of_matched}.
+\code{total_panel_moves}, \code{total_matched_moves}, and \code{pct_of_matched}
+(percent of \code{total_matched_moves} for that direction, one decimal).
+Every category is listed, including those with \code{n = 0}, in this order.
+Arrival: \code{"Enrollment led by 3+ yrs (pre-existing / long panel lag)"},
+\code{"Enrollment led by 2 yrs (panel lagged 2 yrs)"},
+\code{"Enrollment led by 1 yr (panel lagged 1 yr)"},
+\code{"Same calendar year (0 yr lag)"},
+\code{"Panel led by 1 yr (enrollment lagged 1 yr)"},
+\code{"Panel led by 2+ yrs (enrollment lagged 2+ yrs)"}. Departure:
+\code{"Terminated BEFORE panel move year (panel lagged departure)"},
+\code{"Terminated in SAME calendar year as panel move"},
+\code{"Terminated AFTER panel move year or still open-ended (enrollment lagged departure)"}.
+A direction with no matched move contributes no rows.
 }
 \description{
 Compares consecutive-year state (or attribute) transitions in a longitudinal
 panel (\code{panel}) against date-stamped administrative enrollment intervals
 (\code{intervals}, e.g. state Medicaid provider enrollment \code{interval_start} and
 \code{interval_end}). Evaluates both \strong{arrival timing} (does destination-state
-enrollment start before or after the panel move year?) and \strong{departure
+enrollment start before or after the panel move year, restricted to intervals
+active at or after the start of the origin year \code{t - 1}?) and \strong{departure
 timing} (does origin-state enrollment terminate before, during, or after
 the panel move year?).
 }
+\details{
+A \emph{move} is a pair of consecutive panel years (\code{t - 1}, \code{t}) for one id
+whose state differs, with \code{t >= min_move_year}. Panel rows with missing
+state are dropped first, so a gap year does not create a move.
+
+\strong{Arrival.} Each move is matched to the id's intervals in the
+destination state that are still active on or after 1 January of
+\code{t - 1}. The lag is \code{t} minus the interval's start year; when several
+intervals match, the one with the smallest absolute lag (then the latest
+start) is kept. Positive lags mean enrollment started first (the panel
+lagged); negative lags mean the panel moved first.
+
+\strong{Departure.} Each move is matched to the id's intervals in the origin
+state that started by 31 December of \code{t}. An open-ended interval is
+preferred, then the latest end. Termination before \code{t}, in \code{t}, or after
+\code{t} (or still open) gives the three departure categories.
+
+Moves with no matching interval are left out of \code{total_matched_moves}
+and the percentages, but are counted in \code{total_panel_moves}.
+}
+\examples{
+panel <- data.frame(npi = c("1", "1"), year = c(2023, 2024), state = c("CO", "NM"))
+intervals <- data.frame(
+  npi = c("1", "1"), state = c("NM", "CO"),
+  interval_start = as.Date(c("2023-05-01", "2020-01-01")),
+  interval_end = as.Date(c("2099-12-31", "2025-03-31"))
+)
+enrollment_move_lead_lag(panel, intervals)
+}
+\seealso{
+\code{vignette("lead-lag-staleness")}.
+
+Other no-gold-standard comparison:
+\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=classify_record_staleness]{classify_record_staleness()}},
+\code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=record_age_band]{record_age_band()}},
+\code{\link[=record_age_years]{record_age_years()}}
+}
+\concept{no-gold-standard comparison}
