@@ -1,5 +1,30 @@
 # mysteryroster (development version)
 
+* Strengthened `vignette("truth-fusion-case-study-midwifery")` with a
+  second real example: three genuinely independent federal sources
+  (NPPES, a combined DAC/PECOS source, CMS Open Payments -- all public
+  transparency data by design, so real NPIs are shown, not placeholders)
+  for a real cohort of 1,806 adjudicated physician/midwife relocations
+  from an unrelated `midwifery` project prototype
+  (`diagnose_truth_discovery_migration_states.R`) that independently
+  wrote its own one-coin Dawid-Skene EM to solve the same problem this
+  package already implements. Real findings reported directly, not
+  cherry-picked: `dawid_skene` resolves 695 of the real NPI-years plain
+  majority could only tie on, and across the whole real cohort never
+  overturns a majority that was already decisive (0 cases) -- a more
+  modest value-add than the engineered example below it, and the honest
+  one. An independent (not phone-verified, but not derived from the
+  fusion model either) corroboration signal shows `dawid_skene`'s
+  posterior confidence in NPPES's own claim tracks it slightly better
+  than plain majority's vote share does (a 0.035 gap vs. a 0.018 gap
+  between confirmed and unconfirmed moves) -- real, modest, explicitly
+  not presented as a validated benchmark. DAC and PECOS, despite a
+  documented shared upstream dependency, still disagree 26.6% of the time
+  both are observed -- the same "shared upstream feed" phenomenon as the
+  Crowd-Kit vignette's copied-source example, found independently in
+  unrelated real code, which already handles it by excluding
+  disagreements rather than picking one, independently arriving at this
+  package's own `on_source_conflict = "single_value"` policy.
 * Added `docs/validation-protocol.md`, a design specification for a
   held-out benchmark comparing `attribute_truth_fusion()`'s methods
   against real, verified physician-location data: two separate schemas

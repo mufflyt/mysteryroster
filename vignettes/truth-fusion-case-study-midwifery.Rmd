@@ -139,20 +139,120 @@ Same pattern, same caveat: `score_type = "uncalibrated_belief"`, not a
 probability, and not validated against anything -- see
 `vignette("truth-fusion-truthdiscovery")`.
 
+## A second real example: three genuinely independent sources
+
+The panel above only ever has two sources, and both are ultimately
+NPPES-derived -- not a limitation of real data in general, just of that
+particular panel. A separate, unrelated piece of the same `midwifery`
+project independently needed to fuse **three** genuinely independent
+federal sources -- NPPES, a combined DAC/PECOS source, and CMS Open
+Payments -- for a cohort of 1,806 adjudicated physician/midwife
+relocations, and wrote its own one-coin Dawid-Skene EM from scratch to do
+it (`diagnose_truth_discovery_migration_states.R`, a prototype, not yet
+using this package). NPPES, PECOS-derived data, and CMS Open Payments are
+all federal transparency datasets, explicitly public by design -- the NPIs
+below are real, not placeholders.
+
+```{r real-multisource}
+claims3 <- data.frame(
+  entity_id = c(
+    "1023414869","1023414869","1023414869","1043687064","1043687064","1083249650","1083249650","1083249650","1083320303","1083320303",
+    "1083320303","1144628298","1144628298","1245515808","1245515808","1275805459","1275805459","1275805459","1336892694","1336892694",
+    "1386039246","1386039246","1396458402","1396458402","1487917217","1487917217","1639626245","1639626245","1639626245","1710985510",
+    "1710985510","1710985510","1780336768","1780336768"
+  ),
+  attribute = "practice_state",
+  reference_year = c(
+    2024,2024,2024,2023,2023,2023,2023,2023,2024,2024,
+    2024,2023,2023,2023,2023,2024,2024,2024,2024,2024,
+    2019,2019,2024,2024,2025,2025,2024,2024,2024,2025,
+    2025,2025,2024,2024
+  ),
+  source_id = c(
+    "nppes","open_payments","dac_pecos_combined","nppes","dac_pecos_combined","open_payments","dac_pecos_combined","nppes","dac_pecos_combined","nppes",
+    "open_payments","dac_pecos_combined","nppes","dac_pecos_combined","nppes","nppes","dac_pecos_combined","open_payments","dac_pecos_combined","nppes",
+    "dac_pecos_combined","nppes","dac_pecos_combined","nppes","nppes","dac_pecos_combined","open_payments","dac_pecos_combined","nppes","nppes",
+    "dac_pecos_combined","open_payments","nppes","dac_pecos_combined"
+  ),
+  claimed_value = c(
+    "WI","WI","WI","CT","ME","TX","TX","TX","AZ","AZ",
+    "AZ","OK","NC","MD","AZ","DE","DE","DE","MI","WA",
+    "SC","GA","NJ","PA","MI","TX","LA","LA","LA","OH",
+    "OH","OH","NY","NJ"
+  )
+)
+```
+
+This 14-NPI, 34-claim excerpt is deliberately oversampled toward the
+interesting case (8 majority-tied NPI-years, 6 three-source-unanimous
+ones) out of the real cohort, the same way the panel sample above was --
+it is not a representative random draw.
+
+```{r real-multisource-majority}
+majority_result3 <- attribute_truth_fusion(claims3, method = "majority")
+mean(majority_result3$predictions$abstained)
+```
+
+```{r real-multisource-ds, eval = crowdkit_available}
+ds_result3 <- suppressWarnings(attribute_truth_fusion(claims3, method = "dawid_skene"))
+mean(ds_result3$predictions$abstained)
+unique(ds_result3$source_diagnostics[, c("source_id", "reliability_score")])
+```
+
+`dawid_skene` resolves most, not all, of the 8 ties on this small excerpt,
+and its learned reliability ranking here is visibly noisy -- 14 NPIs is not
+enough to separate three sources' reliability cleanly. Fit the identical
+model on the real, full cohort behind this excerpt (3,556 NPI-years across
+1,631 real midwives) and the ranking stabilizes: `nppes` 0.881,
+`open_payments` 0.712, `dac_pecos_combined` 0.644 -- consistently `nppes`
+first, in both the small excerpt and the full cohort, just noisier at n=14.
+At full scale, `dawid_skene` resolves 695 of the NPI-years majority could
+only tie on, and in this cohort it **never** overturns a majority that
+already had a decisive answer (0 cases) -- a more modest value-add than
+the engineered example below, and the honest one: real data, at real
+scale, mostly helps by resolving genuine ties, not by reversing confident
+wrong answers.
+
+### An external signal, still not a validated benchmark
+
+This cohort comes with one thing the panel above doesn't: an *independent*
+corroboration flag (`confirmed`), built from a same-direction-twice
+stability rule over a separate adjudication script, not from anything
+`attribute_truth_fusion()` sees. It is not phone-verified ground truth --
+see `docs/validation-protocol.md` for why nothing in this package claims
+that -- but it is evidence that doesn't come from the fusion model itself,
+which is more than the simulated example below can offer. On the 941
+contested NPI-years with a `confirmed`/not-`confirmed` label, `dawid_skene`'s
+posterior confidence in NPPES's own claim averages **0.923** for
+independently-confirmed moves versus **0.888** for unconfirmed ones; plain
+majority's analogous vote share shows the same direction but a smaller
+gap (0.837 vs. 0.819). A real, if modest, sign that weighting by learned
+reliability tracks independent corroboration slightly better than
+unweighted counting -- not dramatic, and still not an accuracy benchmark.
+
+One more real, independently-discovered parallel: DAC and PECOS share a
+documented upstream dependency (DAC's address field is CMS-derived from
+PECOS enrollment directly) -- the same "shared upstream feed" setup as
+`vignette("truth-fusion-crowdkit")`'s copied-source example. Despite that
+shared lineage, they still disagree 121 of the 454 NPI-years where both
+are observed (26.6%). The prototype script's response was to treat
+agreement as one combined vote and disagreement as *no* vote at all, never
+picking one arbitrarily -- independently arriving at exactly
+`attribute_truth_fusion()`'s own `on_source_conflict = "single_value"`
+policy, in unrelated code written for an unrelated reason.
+
 ## A complicated case, with a known answer
 
-The real midwifery data above only ever has two sources, so majority vote
-can at best tie, never actually be *wrong* -- and with no verified
-reference table, there is no known answer to check any method against
-anyway (`docs/validation-protocol.md` is why). Neither limitation is
-inherent to the problem itself; they are both just properties of this
-particular real panel. To see what it looks like when weighted inference
-*does* outperform plain majority vote -- and to say so with confidence,
-because here the answer is actually known -- this section uses a
-constructed scenario: 16 physician-years, 5 sources with deliberately
-different, realistic reliability profiles, and a ground truth the sources
-are measured against (impossible with the real data above, which is
-exactly why this part is simulated, not real).
+Even three real, independent sources and an independent corroboration
+signal are not the same as a *known* answer -- `confirmed` is itself a
+heuristic, not verified truth, and there is still no reference table to
+check any method against (`docs/validation-protocol.md` is why). To see
+what it looks like when weighted inference provably outperforms majority
+vote, with no ambiguity about which one actually won, this section uses a
+constructed scenario instead: 16 physician-years, 5 sources with
+deliberately different, realistic reliability profiles, and a ground
+truth the sources are measured against -- impossible with real data,
+which is exactly why this part is simulated, not real.
 
 ```{r complicated-setup}
 states <- c("CO", "NM", "TX", "AZ", "UT", "NV", "OR", "WA", "ID", "MT", "WY", "KS", "NE", "SD", "ND", "OK")
@@ -264,16 +364,22 @@ source reliability at all.
 
 ## What this case study does and does not show
 
-It shows real disagreement rates on a real linkage pipeline (10.75% at the
-state level across nine years), and real, verified output from all three
-method families on that real data -- including a real limitation
-(majority's two-source ceiling) and a real caveat (neither probabilistic
-backend can distinguish "this source is less reliable" from "this source
-is simply older" with only two inputs). It does **not** show which
-method, or which snapshot, is actually correct for any of these
-certificants -- no independently verified reference location exists for
-this panel (see `docs/validation-protocol.md`), and nothing in this
-vignette should be read as a benchmark accuracy result. A real benchmark,
-per that protocol, needs at least a third, genuinely independent,
-phone-verified or board-verified source before any of these methods can
-be honestly scored against each other on data like this.
+It shows real disagreement rates on two real pipelines -- 10.75% at the
+state level across nine years on the two-source NPPES panel, 26.6% between
+DAC and PECOS despite a shared upstream dependency on the three-source
+cohort -- and real, verified output from all three method families on
+both. It shows a real limitation (majority's two-source ceiling: agree or
+tie, never actually resolve) and a real caveat that persists even with
+three sources and an independent corroboration signal (`dawid_skene`
+cannot distinguish "this source is less reliable" from "this source is
+simply older," and `confirmed` is a stability heuristic, not verified
+truth). It does **not** show which method, or which source, is actually
+correct for any of these real NPIs -- no phone-verified or board-verified
+reference location exists for either real cohort (see
+`docs/validation-protocol.md`), and nothing in this vignette should be
+read as a benchmark accuracy result. Adding a third independent source
+(done above, with real data) sharpened the comparison -- majority now
+abstains less and can be meaningfully resolved rather than only tied -- but
+it did not supply a verified answer; only a genuinely independent
+reference standard can do that, and building one is exactly what that
+protocol is for.
