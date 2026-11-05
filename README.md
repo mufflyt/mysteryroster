@@ -289,7 +289,18 @@ confident fit from either is not evidence of accuracy; see
 `vignette("truth-fusion-truthdiscovery")` for concrete, verified
 demonstrations of exactly how that confidence can be wrong (including
 when two sources share an upstream feed, and a real convergence failure
-at this package's own default settings).
+at this package's own default settings), and
+`vignette("truth-fusion-case-study-midwifery")` for all three methods
+run together, on both real (no-ground-truth) data and a constructed
+example where weighted inference provably beats majority vote. CI
+actually installs and exercises both optional backends on every push
+(`R-CMD-check-crowd-kit`, `R-CMD-check-truthdiscovery`, each in its own
+Python environment -- the two packages' dependencies conflict in one),
+not just the R-only path, so a regression in either fails CI instead of
+silently skipping. A held-out benchmark against real, verified physician
+locations is specified but not yet run; see `docs/validation-protocol.md`
+for why and `docs/saboteur-test-matrix.md` for the adversarial testing
+behind all of the above.
 
 Votes are counted per *source*, not per row, so a source that submits
 the same value twice only counts once. Whether a source with two
