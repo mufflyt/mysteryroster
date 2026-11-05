@@ -1,11 +1,83 @@
 # mysteryroster (development version)
 
-* `vignette("lead-lag-staleness")` gains a section, "How many years ahead or
-  behind?", with three figures for four simulated sources: agreement when one
-  source is shifted by -4 to +4 years, a heatmap of the mean years each source
-  shows a move before each other source, and catch-up curves of the share of
-  moves each source has not yet shown. The heatmap is also on the README. The
-  code is in the vignette; no functions were added.
+* Added `docs/validation-protocol.md`, a design specification for a
+  held-out benchmark comparing `attribute_truth_fusion()`'s methods
+  against real, verified physician-location data: two separate schemas
+  (evidence claims vs. a verified reference table, never unioned),
+  stable/relocation/discordant cohort eligibility rules, a physician-level
+  (never physician-year-level) train/test partition to prevent
+  source-reliability leakage, a temporal-holdout alternative, primary
+  outcome (city-state classification) and secondary outcomes (geographic
+  distance, abstention, coverage, discordant-record accuracy), and paired
+  comparison against majority voting. A search of the isochrones/
+  midwifery research ecosystem for existing ground-truth data found none
+  that qualifies (an AMCB-NPI linkage panel is a real, dated, but
+  uncorroborated administrative crosswalk, not phone/board-verified; an
+  isochrones test file's `GOLD_STANDARD_NPIS` is an explicit, unusable
+  placeholder) -- documented in the protocol, which holds Phase 4 until a
+  genuinely independent reference standard is identified. No benchmark
+  accuracy claim is made anywhere in this release.
+* Added a new vignette, `truth-fusion-case-study-midwifery`, running
+  Phase 1/2/3 together on a real (de-identified, 50-row sample)
+  excerpt of the midwifery project's AMCB-NPI linkage panel -- two NPPES
+  practice-state extractions nine years apart, 10.75% of 10,507 shared
+  certificants disagreeing between them. Demonstrates a real structural
+  limitation of exactly-two-source majority voting (it can only ever
+  agree or tie, never actually resolve a disagreement) and a real caveat
+  for the probabilistic backends (both "sources" here are the same
+  underlying registry at different times, so a confident Dawid-Skene/
+  TruthFinder score reflects learned agreement patterns, not evidence of
+  which snapshot is actually current) -- then shows that this particular
+  disagreement is a staleness problem, not a reliability problem, and
+  that `classify_record_staleness()` (already in this package, Phase
+  0-era) answers it more simply and more honestly than any truth-fusion
+  backend. No claim is made about which snapshot is actually correct for
+  any certificant; see `docs/validation-protocol.md` for why.
+* Added Phase 3 of the truth-discovery extension: `attribute_truth_fusion()`
+  now implements `method = "sums"`, `"average_log"`, `"investment"`,
+  `"pooled_investment"`, and `"truthfinder"` via a second *optional* Python
+  backend, `backend = "truthdiscovery"` (`joesingo/truthdiscovery`). Same
+  safety contract as `crowd_kit`: never required, never auto-installed,
+  never silently substituted for `"majority"` when unavailable.
+  `truthdiscovery` is **GPL-3.0** licensed (unlike `crowd-kit`'s
+  Apache-2.0) -- mysteryroster (MIT) calls it at arm's length via
+  `reticulate` and vendors none of its source; see `vignette
+  ("truth-fusion-truthdiscovery")`'s licensing note. Its last release also
+  predates Python's removal of `distutils`, so it currently needs a
+  separate, older (< 3.12) Python environment from `crowd_kit` --
+  `attribute_truth_backends()` reports this as the exact `status` reason
+  when unavailable, not just a generic "not found." Belief scores from
+  this backend are `score_type = "uncalibrated_belief"`, never
+  `"posterior_probability"` -- verified directly against the installed
+  package that, unlike `crowd-kit`'s `probas_`, a task's belief scores do
+  not sum to 1. `implication_function` (TruthFinder's claim-implication
+  mechanism, e.g. for geographic similarity) is wired through to
+  `truthdiscovery`'s `Dataset`, evaluated and tested, but left `NULL`
+  (disabled) by default and not shipped with any built-in geographic
+  implication -- per the project's own phase plan, ordinary TruthFinder is
+  evaluated on its own before any geographic extension. A real limitation
+  found and documented rather than hidden: with this package's shared
+  default `max_iterations = 100`, `"pooled_investment"` genuinely fails to
+  converge on a 16-task simulated fixture (`truthdiscovery` raises rather
+  than returning a partial result, so every prediction abstains with the
+  new `"model_did_not_converge"` reason) -- it needs 109 iterations on
+  that data; always check `model_diagnostics$converged`. The
+  `crowd_kit`/`truthdiscovery` backends' shared task-building,
+  single-value-conflict exclusion, and worker-task-connectivity logic was
+  refactored out of `R/truth_fusion_crowdkit.R` into
+  `R/truth_fusion_backends_shared.R` rather than duplicated. New vignette,
+  `truth-fusion-truthdiscovery`, demonstrates all five methods, the
+  uncalibrated-belief property, the convergence limitation, and a
+  cross-language equivalence check (calling `truthdiscovery` directly via
+  `reticulate`, bypassing this package's wrapper, and confirming matching
+  output) is part of the test suite. 414 tests passing when
+  `truthdiscovery` is configured (386 passing, 19 skipping cleanly without
+  any Python backend); 0 errors / 0 warnings / 0 notes on `R CMD check`
+  with vignettes in all three states (no Python, `crowd_kit` only,
+  `truthdiscovery` only -- the two Python backends currently cannot share
+  one Python environment). Geographic implications remain disabled by
+  default; a held-out validation dataset comparing any of these methods
+  against `"majority"` on real data is explicitly not yet built.
 * Added Phase 2 of the truth-discovery extension: `attribute_truth_fusion()`
   now implements `method = "dawid_skene"` and `"one_coin_dawid_skene"`, an
   *optional* Python backend (`backend = "crowd_kit"`) via `reticulate`.
@@ -151,6 +223,12 @@
   the OB/GYN midwifery study: study years, source-specific mechanisms, and
   interpretive verbs. It also lists the input rows it requires. Behaviour
   is unchanged.
+* `vignette("lead-lag-staleness")` gains a section, "How many years ahead or
+  behind?", with three figures for four simulated sources: agreement when one
+  source is shifted by -4 to +4 years, a heatmap of the mean years each source
+  shows a move before each other source, and catch-up curves of the share of
+  moves each source has not yet shown. The heatmap is also on the README. The
+  code is in the vignette; no functions were added.
 
 # mysteryroster 0.3.0
 

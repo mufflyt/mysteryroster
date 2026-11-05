@@ -13,17 +13,22 @@ A tibble: \code{backend}, \code{available} (logical), \code{methods_supported},
 \description{
 \code{"r_native"} (method \code{"majority"}) never has any dependency, so it is
 always reported as implemented. \code{"crowd_kit"} (methods \code{"dawid_skene"}
-and \code{"one_coin_dawid_skene"}) is an \emph{optional} Python backend via
-\code{reticulate}: this function actually probes whether Python and the
-\code{crowdkit} module are available right now, without ever installing or
-configuring either itself (see \code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}}'s Details on
-\code{backend = "crowd_kit"}) -- so \code{available} can be \code{FALSE} on a machine
-that never touches Python, and \code{TRUE} only once a caller has genuinely
-set up their own Python with \code{crowd-kit} installed. \code{"truthdiscovery"}
-is not implemented in this package version regardless of what is
-installed. This never reports a method as available before it is
-actually wired up, so a caller can trust \code{attribute_truth_fusion()} not
-to silently fall back to a different algorithm than the one requested.
+and \code{"one_coin_dawid_skene"}) and \code{"truthdiscovery"} (methods \code{"sums"},
+\code{"average_log"}, \code{"investment"}, \code{"pooled_investment"}, \code{"truthfinder"})
+are both \emph{optional} Python backends via \code{reticulate}: this function
+actually probes whether Python and the relevant module are available
+right now, without ever installing or configuring either itself (see
+\code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}}'s Details) -- so \code{available} can be \code{FALSE}
+on a machine that never touches Python, and \code{TRUE} only once a caller
+has genuinely set up their own Python with that package installed.
+\code{truthdiscovery} is GPL-3.0 licensed (unlike \code{crowd-kit}'s Apache-2.0)
+and, as of its last release, requires Python < 3.12 -- a separate
+Python environment from \code{crowd_kit} if you want both backends at once;
+\code{status} reports the exact reason when unavailable, including a
+version mismatch. This never reports a method as available before it
+is actually wired up, so a caller can trust \code{attribute_truth_fusion()}
+not to silently fall back to a different algorithm than the one
+requested.
 }
 \examples{
 attribute_truth_backends()

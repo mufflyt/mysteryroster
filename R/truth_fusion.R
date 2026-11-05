@@ -144,17 +144,22 @@ attribute_claims_validate <- function(claims, on_duplicate = c("flag", "error"),
 #'
 #' `"r_native"` (method `"majority"`) never has any dependency, so it is
 #' always reported as implemented. `"crowd_kit"` (methods `"dawid_skene"`
-#' and `"one_coin_dawid_skene"`) is an *optional* Python backend via
-#' `reticulate`: this function actually probes whether Python and the
-#' `crowdkit` module are available right now, without ever installing or
-#' configuring either itself (see [attribute_truth_fusion()]'s Details on
-#' `backend = "crowd_kit"`) -- so `available` can be `FALSE` on a machine
-#' that never touches Python, and `TRUE` only once a caller has genuinely
-#' set up their own Python with `crowd-kit` installed. `"truthdiscovery"`
-#' is not implemented in this package version regardless of what is
-#' installed. This never reports a method as available before it is
-#' actually wired up, so a caller can trust `attribute_truth_fusion()` not
-#' to silently fall back to a different algorithm than the one requested.
+#' and `"one_coin_dawid_skene"`) and `"truthdiscovery"` (methods `"sums"`,
+#' `"average_log"`, `"investment"`, `"pooled_investment"`, `"truthfinder"`)
+#' are both *optional* Python backends via `reticulate`: this function
+#' actually probes whether Python and the relevant module are available
+#' right now, without ever installing or configuring either itself (see
+#' [attribute_truth_fusion()]'s Details) -- so `available` can be `FALSE`
+#' on a machine that never touches Python, and `TRUE` only once a caller
+#' has genuinely set up their own Python with that package installed.
+#' `truthdiscovery` is GPL-3.0 licensed (unlike `crowd-kit`'s Apache-2.0)
+#' and, as of its last release, requires Python < 3.12 -- a separate
+#' Python environment from `crowd_kit` if you want both backends at once;
+#' `status` reports the exact reason when unavailable, including a
+#' version mismatch. This never reports a method as available before it
+#' is actually wired up, so a caller can trust `attribute_truth_fusion()`
+#' not to silently fall back to a different algorithm than the one
+#' requested.
 #'
 #' @return A tibble: `backend`, `available` (logical), `methods_supported`,
 #'   `status`.
@@ -169,15 +174,22 @@ attribute_truth_backends <- function() {
   } else {
     crowdkit_probe$reason
   }
+  truthdiscovery_probe <- .mysteryroster_truthdiscovery_probe()
+  truthdiscovery_status <- if (isTRUE(truthdiscovery_probe$available)) {
+    sprintf("available (python %s, truthdiscovery %s, GPL-3.0)",
+            truthdiscovery_probe$python_version, truthdiscovery_probe$truthdiscovery_version)
+  } else {
+    truthdiscovery_probe$reason
+  }
   tibble::tibble(
     backend = c("r_native", "crowd_kit", "truthdiscovery"),
-    available = c(TRUE, isTRUE(crowdkit_probe$available), FALSE),
+    available = c(TRUE, isTRUE(crowdkit_probe$available), isTRUE(truthdiscovery_probe$available)),
     methods_supported = c(
       "majority",
       "dawid_skene, one_coin_dawid_skene",
-      "majority, sums, average_log, investment, pooled_investment, truthfinder"
+      "sums, average_log, investment, pooled_investment, truthfinder"
     ),
-    status = c("implemented", crowdkit_status, "not yet implemented in this package version")
+    status = c("implemented", crowdkit_status, truthdiscovery_status)
   )
 }
 
@@ -363,8 +375,11 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
   if (!is.null(abstain_threshold)) checkmate::assert_number(abstain_threshold, lower = 0, upper = 1)
   on_source_conflict <- match.arg(on_source_conflict)
 
-  implemented_methods <- c(majority = "r_native", dawid_skene = "crowd_kit",
-                            one_coin_dawid_skene = "crowd_kit")
+  implemented_methods <- c(
+    majority = "r_native", dawid_skene = "crowd_kit", one_coin_dawid_skene = "crowd_kit",
+    sums = "truthdiscovery", average_log = "truthdiscovery", investment = "truthdiscovery",
+    pooled_investment = "truthdiscovery", truthfinder = "truthdiscovery"
+  )
   if (!method %in% names(implemented_methods)) {
     stop(sprintf(
       "attribute_truth_fusion: method '%s' is not yet implemented in this version; available: %s",
@@ -379,7 +394,10 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
   }
 
   if (!is.null(implication_function)) {
-    message(sprintf("attribute_truth_fusion: 'implication_function' is not used by method = '%s'", method))
+    checkmate::assert_function(implication_function)
+    if (resolved_backend != "truthdiscovery") {
+      message(sprintf("attribute_truth_fusion: 'implication_function' is not used by method = '%s'", method))
+    }
   }
   if (resolved_backend == "r_native") {
     if (!isTRUE(all.equal(max_iterations, 100L))) {
@@ -528,17 +546,24 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
     n_iterations <- 1L
     converged <- TRUE
   } else {
-    crowdkit_result <- .mysteryroster_crowdkit_fit(
-      claims_used, attribute_name, method, max_iterations, convergence_tolerance,
-      on_source_conflict, abstain_threshold
-    )
-    predictions_tbl <- crowdkit_result$predictions
-    candidate_scores_tbl <- crowdkit_result$candidate_scores
-    source_diagnostics_tbl <- crowdkit_result$source_diagnostics
-    converged <- crowdkit_result$converged
-    n_iterations <- crowdkit_result$n_iterations
-    n_disconnected_components <- crowdkit_result$n_disconnected_components
-    backend_version <- crowdkit_result$backend_version
+    backend_result <- if (resolved_backend == "crowd_kit") {
+      .mysteryroster_crowdkit_fit(
+        claims_used, attribute_name, method, max_iterations, convergence_tolerance,
+        on_source_conflict, abstain_threshold
+      )
+    } else {
+      .mysteryroster_truthdiscovery_fit(
+        claims_used, attribute_name, method, max_iterations, convergence_tolerance,
+        on_source_conflict, abstain_threshold, implication_function
+      )
+    }
+    predictions_tbl <- backend_result$predictions
+    candidate_scores_tbl <- backend_result$candidate_scores
+    source_diagnostics_tbl <- backend_result$source_diagnostics
+    converged <- backend_result$converged
+    n_iterations <- backend_result$n_iterations
+    n_disconnected_components <- backend_result$n_disconnected_components
+    backend_version <- backend_result$backend_version
     if (isFALSE(converged)) n_warnings <- n_warnings + 1L
     if (!is.na(n_disconnected_components) && n_disconnected_components > 1L) n_warnings <- n_warnings + 1L
   }

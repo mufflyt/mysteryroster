@@ -253,7 +253,7 @@ test_that("attribute_truth_fusion requires attribute_name when claims has >1 att
 test_that("attribute_truth_fusion rejects an unimplemented method or mismatched backend", {
   claims <- data.frame(entity_id = "1", attribute = "state", source_id = "a",
                         claimed_value = "CO", reference_year = 2024)
-  expect_error(attribute_truth_fusion(claims, method = "truthfinder"), "not yet implemented")
+  expect_error(attribute_truth_fusion(claims, method = "nonexistent_method"), "not yet implemented")
   expect_error(attribute_truth_fusion(claims, method = "majority", backend = "crowd_kit"),
                "requires backend 'r_native'")
   expect_error(attribute_truth_fusion(claims, method = "dawid_skene", backend = "r_native"),
@@ -317,16 +317,19 @@ test_that("print.mysteryroster_truth summarizes without erroring", {
 
 # --- attribute_truth_backends ------------------------------------------------
 
-test_that("attribute_truth_backends reports r_native as always available and probes crowd_kit live", {
+test_that("attribute_truth_backends reports r_native as always available and probes crowd_kit/truthdiscovery live", {
   backends <- attribute_truth_backends()
   expect_true(backends$available[backends$backend == "r_native"])
-  expect_false(backends$available[backends$backend == "truthdiscovery"])
   expect_true(grepl("dawid_skene", backends$methods_supported[backends$backend == "crowd_kit"]))
   expect_true(grepl("one_coin_dawid_skene", backends$methods_supported[backends$backend == "crowd_kit"]))
-  # crowd_kit's reported availability must match a direct probe, whatever this
-  # machine's Python situation happens to be -- never hardcoded.
+  expect_true(grepl("truthfinder", backends$methods_supported[backends$backend == "truthdiscovery"]))
+  expect_true(grepl("sums", backends$methods_supported[backends$backend == "truthdiscovery"]))
+  # Both optional backends' reported availability must match a direct probe,
+  # whatever this machine's Python situation happens to be -- never hardcoded.
   expect_equal(backends$available[backends$backend == "crowd_kit"],
                isTRUE(.mysteryroster_crowdkit_probe()$available))
+  expect_equal(backends$available[backends$backend == "truthdiscovery"],
+               isTRUE(.mysteryroster_truthdiscovery_probe()$available))
 })
 
 # --- attribute_truth_fusion: crowd_kit backend (Dawid-Skene family) ----------
@@ -493,4 +496,186 @@ test_that("attribute_truth_fusion(dawid_skene) respects abstain_threshold on the
     attribute_truth_fusion(fixture$claims, method = "dawid_skene", abstain_threshold = 0.999)
   ))
   expect_true(any(result$predictions$abstention_reason == "below_abstain_threshold"))
+})
+
+# --- attribute_truth_fusion: truthdiscovery backend (Sums/AverageLog/      --
+# --- Investment/PooledInvestment/TruthFinder) -------------------------------
+# All of these require a real Python + truthdiscovery (GPL-3.0, optional,
+# never required to use this package), and skip entirely when
+# .mysteryroster_truthdiscovery_probe() reports unavailable (including plain
+# CI, and a crowd-kit-only Python session -- the two backends currently need
+# separate Python environments; see attribute_truth_backends()).
+
+skip_unless_truthdiscovery <- function() {
+  testthat::skip_if_not(isTRUE(.mysteryroster_truthdiscovery_probe()$available),
+                         "truthdiscovery is not available in this R session")
+}
+
+test_that("attribute_truth_fusion rejects on_source_conflict = 'multi_value' for truthdiscovery", {
+  claims <- data.frame(
+    entity_id = c("1", "1", "1"), attribute = "state", source_id = c("multi", "multi", "other"),
+    claimed_value = c("CO", "NM", "CO"), reference_year = 2024
+  )
+  expect_error(
+    attribute_truth_fusion(claims, method = "sums", on_source_conflict = "multi_value"),
+    "not supported by backend 'truthdiscovery'"
+  )
+})
+
+test_that("attribute_truth_fusion never silently falls back to majority when truthdiscovery is unavailable", {
+  skip_if(isTRUE(.mysteryroster_truthdiscovery_probe()$available), "truthdiscovery is installed in this session")
+  claims <- data.frame(
+    entity_id = c("1", "1"), attribute = "state", source_id = c("a", "b"),
+    claimed_value = c("CO", "NM"), reference_year = 2024
+  )
+  for (m in c("sums", "average_log", "investment", "pooled_investment", "truthfinder")) {
+    expect_error(attribute_truth_fusion(claims, method = m), "backend 'truthdiscovery' is not available")
+  }
+})
+
+# Same 16-entity active/inactive fixture as the crowd_kit tests: source_1 is
+# highly reliable (one error, at entity 6); source_2 is always correct;
+# source_3 always claims "active" regardless of truth -- a pure
+# false-positive-biased source with zero true discriminative value.
+test_that("attribute_truth_fusion(sums/average_log/truthfinder) rank the biased source lowest", {
+  skip_unless_truthdiscovery()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  for (m in c("sums", "average_log", "truthfinder")) {
+    result <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = m)))
+    trust <- stats::setNames(result$source_diagnostics$reliability_score, result$source_diagnostics$source_id)
+    expect_lt(trust[["source_3"]], trust[["source_1"]])
+    expect_lt(trust[["source_3"]], trust[["source_2"]])
+    expect_true(all(is.na(result$source_diagnostics$true_label)))
+    expect_true(all(is.na(result$source_diagnostics$observed_label)))
+  }
+})
+
+test_that("attribute_truth_fusion(pooled_investment) can need more than the default max_iterations", {
+  skip_unless_truthdiscovery()
+  # Documents a real limitation (see vignette): with this package's default
+  # max_iterations = 100, pooled_investment genuinely fails to converge on
+  # this 16-task fixture and all predictions abstain -- not a bug, a real
+  # property of the algorithm's dynamics on this data. Raising
+  # max_iterations resolves it.
+  fixture <- .truth_fusion_crowdkit_fixture()
+  default_result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "pooled_investment")
+  ))
+  expect_false(default_result$model_diagnostics$converged)
+  expect_true(all(default_result$predictions$abstained))
+  expect_equal(unique(default_result$predictions$abstention_reason), "model_did_not_converge")
+
+  raised_result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "pooled_investment", max_iterations = 500L)
+  ))
+  expect_true(raised_result$model_diagnostics$converged)
+  trust <- stats::setNames(raised_result$source_diagnostics$reliability_score, raised_result$source_diagnostics$source_id)
+  expect_lt(trust[["source_3"]], trust[["source_1"]])
+})
+
+test_that("attribute_truth_fusion(sums) is deterministic across repeated calls", {
+  skip_unless_truthdiscovery()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result_1 <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "sums")))
+  result_2 <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "sums")))
+  expect_equal(result_1$predictions, result_2$predictions)
+  expect_equal(result_1$source_diagnostics, result_2$source_diagnostics)
+})
+
+test_that("attribute_truth_fusion(sums) belief scores are labeled uncalibrated, not posterior probabilities", {
+  skip_unless_truthdiscovery()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "sums")))
+  expect_true(all(result$predictions$score_type == "uncalibrated_belief"))
+  expect_true(all(result$candidate_scores$score_type == "uncalibrated_belief"))
+  # A real, verified property of truthdiscovery's belief scores: unlike
+  # crowd-kit's probas_, they do NOT sum to 1 across a task's candidates in
+  # general (TruthFinder's belief update is not normalized) -- this is
+  # exactly why the "uncalibrated" label matters and "posterior_probability"
+  # would be a false claim. (Sums itself does happen to normalize per task
+  # in this fixture, so check against the un-normalized TruthFinder instead.)
+  tf_result <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "truthfinder")))
+  entity_6_candidates <- tf_result$candidate_scores[tf_result$candidate_scores$entity_id == "6", ]
+  expect_false(isTRUE(all.equal(sum(entity_6_candidates$vote_share), 1, tolerance = 1e-6)))
+})
+
+test_that("attribute_truth_fusion(sums) flags a disconnected source-task graph", {
+  skip_unless_truthdiscovery()
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2", "3", "3", "4", "4"), attribute = "status",
+    source_id = c("a", "b", "a", "b", "c", "d", "c", "d"),
+    claimed_value = c("active", "active", "inactive", "inactive", "active", "inactive", "inactive", "inactive"),
+    reference_year = 2024
+  )
+  expect_warning(
+    result <- attribute_truth_fusion(claims, method = "sums"),
+    "2 disconnected components"
+  )
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(claims, method = "sums")))
+  expect_equal(result$model_diagnostics$n_disconnected_components, 2L)
+})
+
+test_that("attribute_truth_fusion(sums) abstains on every source excluded for a task, like majority", {
+  skip_unless_truthdiscovery()
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2"), attribute = "status",
+    source_id = c("conflicted", "conflicted", "clean", "other"),
+    claimed_value = c("active", "inactive", "active", "inactive"), reference_year = 2024
+  )
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(claims, method = "sums")))
+  entity_1 <- result$predictions[result$predictions$entity_id == "1", ]
+  expect_true(entity_1$abstained)
+  expect_equal(entity_1$abstention_reason, "no_single_value_sources")
+  expect_equal(entity_1$n_sources, 0L)
+  expect_equal(entity_1$n_sources_excluded, 1L)
+})
+
+test_that("attribute_truth_fusion(sums) respects abstain_threshold on the belief score", {
+  skip_unless_truthdiscovery()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "sums", abstain_threshold = 0.999)
+  ))
+  expect_true(any(result$predictions$abstention_reason == "below_abstain_threshold"))
+})
+
+test_that("attribute_truth_fusion(truthfinder) accepts a disabled-by-default implication_function", {
+  skip_unless_truthdiscovery()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  no_op_implication <- function(var, val1, val2) 0
+  with_implication <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "truthfinder", implication_function = no_op_implication)
+  ))
+  without_implication <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "truthfinder")
+  ))
+  # A no-op implication (always 0) must not change the result.
+  expect_equal(with_implication$predictions, without_implication$predictions)
+})
+
+test_that("attribute_truth_fusion(sums) matches truthdiscovery called directly from R via reticulate", {
+  skip_unless_truthdiscovery()
+  # Cross-language equivalence check: build the exact same Dataset and run
+  # the exact same algorithm directly through reticulate, bypassing this
+  # package's wrapper entirely, and confirm the wrapper's output matches --
+  # verifying the wrapper does not silently transform scores in translation.
+  fixture <- .truth_fusion_crowdkit_fixture()
+  wrapped <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "sums")))
+
+  td <- reticulate::import("truthdiscovery", delay_load = FALSE, convert = FALSE)
+  task_ids <- sort(unique(fixture$claims$entity_id))
+  triples <- reticulate::r_to_py(lapply(seq_len(nrow(fixture$claims)), function(i) {
+    reticulate::tuple(
+      fixture$claims$source_id[[i]], match(fixture$claims$entity_id[[i]], task_ids), fixture$claims$claimed_value[[i]]
+    )
+  }))
+  dataset <- td$Dataset(triples, allow_multiple = FALSE)
+  iterator <- td$ConvergenceIterator(td$DistanceMeasures$L2, 0.001, limit = 100L)
+  direct_result <- td$Sums(iterator = iterator)$run(dataset)
+  direct_trust <- unlist(reticulate::py_to_r(direct_result$trust))
+
+  wrapped_trust <- stats::setNames(wrapped$source_diagnostics$reliability_score, wrapped$source_diagnostics$source_id)
+  for (source in names(direct_trust)) {
+    expect_equal(unname(wrapped_trust[[source]]), round(unname(direct_trust[[source]]), 4), tolerance = 1e-4)
+  }
 })
