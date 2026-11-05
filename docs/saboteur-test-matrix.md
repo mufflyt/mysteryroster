@@ -6,7 +6,11 @@ surface. Part A's saboteurs attack the *experimental design* in `docs/validation
 B's attack `attribute_truth_fusion()`'s actual inference code via crafted claims; Part C's attack the
 *testing/CI process* that is supposed to catch both.
 
-**Status: all 60 executed; 16 of Part B's scenarios are now permanent regression tests.** Part A was
+**Status: all 60 executed; 19 of Part B's scenarios are now permanent regression tests (16 for
+`majority`/`dawid_skene`, plus 3 added later to give `truthdiscovery` the same mirror/targeted-
+saboteur/disconnected-graph coverage `dawid_skene` already had -- the disconnected-graph one found
+a genuine, confirmed behavioral difference: `sums` does not exhibit `dawid_skene`'s flat-tie bug on
+the identical fixture, verified directly rather than assumed to generalize).** Part A was
 audited against the protocol document's actual text; Part B was first run as real adversarial claims
 data in a one-off live R session, then the most load-bearing scenarios (plus several new ones found
 while writing them up as tests) were committed to `tests/testthat/test-truth-fusion.R` under the

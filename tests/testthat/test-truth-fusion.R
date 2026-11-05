@@ -886,3 +886,61 @@ test_that("[red-team] a targeted saboteur's global reliability hides a subset-sp
   # validation-protocol.md's per-cohort reporting requirement.
   expect_gt(unique(rel[["targeted"]]), 0.7)
 })
+
+test_that("[red-team] unlike dawid_skene, sums does NOT flat-tie on a fully disconnected graph", {
+  skip_unless_truthdiscovery()
+  # Same fixture as the dawid_skene flat-tie regression above -- confirms a
+  # real, verified difference between the two optional backends (see
+  # docs/saboteur-test-matrix.md): dawid_skene abstains on every task here
+  # despite local unanimity; sums does not.
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2", "3", "3"), attribute = "state",
+    source_id = c("a", "b", "c", "d", "e", "f"),
+    claimed_value = c("CO", "CO", "NM", "NM", "TX", "TX"), reference_year = 2024
+  )
+  expect_warning(
+    result <- attribute_truth_fusion(claims, method = "sums"),
+    "3 disconnected"
+  )
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(claims, method = "sums")))
+  expect_equal(result$model_diagnostics$n_disconnected_components, 3L)
+  expect_false(any(result$predictions$abstained))
+  expect_equal(result$predictions$predicted_value[order(result$predictions$entity_id)], c("CO", "NM", "TX"))
+})
+
+test_that("[red-team] a mirror source's learned trust (sums) tracks whoever it copies, not independent evidence", {
+  skip_unless_truthdiscovery()
+  claims <- do.call(rbind, lapply(1:10, function(i) {
+    truth <- if (i == 5) "NM" else "CO"
+    wrong <- if (truth == "CO") "NM" else "CO"
+    mirrored_value <- if (i == 5) wrong else truth
+    data.frame(entity_id = as.character(i), attribute = "state",
+               source_id = c("source_a", "mirror_of_a", "independent"),
+               claimed_value = c(mirrored_value, mirrored_value, truth), reference_year = 2024)
+  }))
+  result <- suppressWarnings(suppressMessages(attribute_truth_fusion(claims, method = "sums")))
+  task5 <- result$predictions[result$predictions$entity_id == "5", ]
+  # The mirror pair outvotes the lone independent source here too -- the
+  # vulnerability is in the independence assumption shared by every
+  # multi-source-reliability backend, not specific to dawid_skene.
+  expect_equal(task5$predicted_value, "CO")
+  expect_false(task5$abstained)
+})
+
+test_that("[red-team] a targeted saboteur's global trust (sums) hides a subset-specific attack", {
+  skip_unless_truthdiscovery()
+  truths <- rep(c("active", "inactive"), 10)
+  claims <- do.call(rbind, lapply(seq_along(truths), function(i) {
+    t <- truths[i]
+    targeted <- if (i <= 3) setdiff(c("active", "inactive"), t) else t
+    data.frame(entity_id = as.character(i), attribute = "status", source_id = c("reliable", "targeted"),
+               claimed_value = c(t, targeted), reference_year = 2024)
+  }))
+  result <- suppressWarnings(suppressMessages(attribute_truth_fusion(claims, method = "sums")))
+  rel <- stats::setNames(result$source_diagnostics$reliability_score, result$source_diagnostics$source_id)
+  # With only 2 sources, sums' trust computation rates "targeted" at the
+  # same ceiling (1.0) as "reliable" -- an even starker version of the
+  # same finding as dawid_skene's: a global score cannot see an attack
+  # concentrated on a chosen subset of tasks.
+  expect_gt(unique(rel[["targeted"]]), 0.9)
+})
