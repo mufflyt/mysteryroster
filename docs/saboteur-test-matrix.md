@@ -6,13 +6,20 @@ surface. Part A's saboteurs attack the *experimental design* in `docs/validation
 B's attack `attribute_truth_fusion()`'s actual inference code via crafted claims; Part C's attack the
 *testing/CI process* that is supposed to catch both.
 
-**Status: all 60 executed.** Part A was audited against the protocol document's actual text; Part B
-was run as real adversarial claims data against `majority`, `dawid_skene`, and `sums`/`truthfinder`
-in a live R session (script preserved at the bottom of this file); Part C was run as real commands
-against the test suite, coverage tooling, and CI config. See "Execution results" at the end of each
-section. The most significant finding (Part B, item 9 generalized) is now fixed in the warning text
-and roxygen docs; the rest are either already-defended (confirmed, not assumed), or open items
-requiring a judgment call before any code change.
+**Status: all 60 executed; 16 of Part B's scenarios are now permanent regression tests.** Part A was
+audited against the protocol document's actual text; Part B was first run as real adversarial claims
+data in a one-off live R session, then the most load-bearing scenarios (plus several new ones found
+while writing them up as tests) were committed to `tests/testthat/test-truth-fusion.R` under the
+`[red-team]` prefix -- closing the exact gap Part C's own item #20 ("manual verification never
+captured as a regression test") identified against this project. One of those new permanent tests
+immediately caught a real error in this document's own earlier write-up: the "disguised abstainer"
+(whitespace `claimed_value`) was assumed to be dropped like `NA`; running it as a test instead of
+trusting the earlier ad hoc read showed it is **not** dropped (`nzchar("   ")` is `TRUE`) and survives
+as its own literal candidate -- corrected below. Part C was run as real commands against the test
+suite, coverage tooling, and CI config. See "Execution results" at the end of each section. The most
+significant finding (Part B, item 9 generalized) is fixed in the warning text, roxygen docs, and a
+standing regression test; the rest are either already-defended (confirmed, not assumed), now
+permanent tests, or open items requiring a judgment call before any further code change.
 
 ## Part A — 20 saboteurs against the validation protocol
 
@@ -239,7 +246,11 @@ observations with no safe unilateral fix):**
   commits. `.github/workflows/R-CMD-check.yaml` has no Python/reticulate/crowd-kit/truthdiscovery
   setup step at all — confirmed by direct grep, not inferred. Every verification of this backend
   code this session happened by hand, against a throwaway dev venv in a scratch directory that
-  will not exist on any future machine (saboteur #13, also confirmed).
+  will not exist on any future machine (saboteur #13, also confirmed). Re-measured after adding
+  the `[red-team]` tests below, with crowd-kit actually configured: `truth_fusion_backends_shared.R`
+  jumps to **100%**, `truth_fusion_crowdkit.R` to **82.4%** — confirming the new tests genuinely
+  exercise this code, not just that they exist. The gap is entirely environmental: the coverage
+  improvement is real but conditional on Python being configured, and CI still never configures it.
 - **#11 and #12, confirmed real but narrower than first described:** the `max_iterations`
   "not used" test only checked the message text, not the actual effect — fixed (now also asserts
   identical output with and without the argument). The `n_warnings == 1` nonconvergence test turned

@@ -684,3 +684,205 @@ test_that("attribute_truth_fusion(sums) matches truthdiscovery called directly f
     expect_equal(unname(wrapped_trust[[source]]), round(unname(direct_trust[[source]]), 4), tolerance = 1e-4)
   }
 })
+
+# --- Red-team regression tests (docs/saboteur-test-matrix.md) ---------------
+# Codifies adversarial scenarios that were previously only run by hand in a
+# one-off script; see that file's "Execution results" sections for the full
+# narrative. Majority-only scenarios run unconditionally; crowd_kit/
+# truthdiscovery scenarios skip cleanly without a Python backend configured.
+
+test_that("[red-team] a sybil flood is counted as N distinct sources, by design", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state",
+    source_id = c(paste0("sybil_", 1:5), "real"),
+    claimed_value = c(rep("WRONG", 5), "RIGHT"), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_sources, 6)
+  expect_equal(result$predictions$predicted_value, "WRONG")
+})
+
+test_that("[red-team] an actual empty-string claimed_value IS dropped, like NA", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state", source_id = c("a", "b", "c"),
+    claimed_value = c("CO", "", "CO"), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_sources, 2)
+})
+
+test_that("[red-team] whitespace-only claimed_value is a real distinct candidate, NOT treated as missing", {
+  # claimed_value is deliberately never trimmed (unlike entity_id/attribute/
+  # source_id) -- nzchar("   ") is TRUE, so a disguised abstainer survives
+  # as its own literal candidate rather than being silently dropped like NA
+  # or "". Confirmed by running this before trusting the assumption that it
+  # would be filtered -- it is not, and that is consistent with
+  # attribute_claims_validate()'s documented "no transformation" policy.
+  claims <- data.frame(
+    entity_id = "1", attribute = "state", source_id = c("a", "b", "c"),
+    claimed_value = c("CO", "   ", "CO"), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_sources, 3)
+  expect_equal(result$predictions$predicted_value, "CO") # 2 votes for "CO" beat 1 for "   "
+  expect_true("   " %in% result$candidate_scores$candidate_value)
+})
+
+test_that("[red-team] NA-poisoned identifiers are dropped, not silently grouped", {
+  claims <- data.frame(
+    entity_id = c("1", "1", NA, "1"), attribute = "state",
+    source_id = c("a", "b", "c", ""), claimed_value = c("CO", "CO", "NM", "FL"),
+    reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_sources, 2)
+  expect_equal(result$predictions$predicted_value, "CO")
+})
+
+test_that("[red-team] label-recoding fragments the vote with no normalization, by design", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state", source_id = c("a", "b", "c"),
+    claimed_value = c("Colorado", "CO", "NM"), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_candidate_values, 3)
+  expect_true(result$predictions$abstained)
+  expect_setequal(result$candidate_scores$candidate_value, c("Colorado", "CO", "NM"))
+})
+
+test_that("[red-team] a version-skew claim creates a separate task, never blends into the wrong year", {
+  claims <- data.frame(
+    entity_id = c("1", "1", "1"), attribute = "state",
+    source_id = c("a", "b", "skewed"), claimed_value = c("CO", "CO", "NM"),
+    reference_year = c(2024, 2024, 2023)
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(nrow(result$predictions), 2)
+  pred_2023 <- result$predictions[result$predictions$reference_year == 2023, ]
+  pred_2024 <- result$predictions[result$predictions$reference_year == 2024, ]
+  expect_equal(pred_2023$predicted_value, "NM")
+  expect_equal(pred_2024$predicted_value, "CO")
+})
+
+test_that("[red-team] a self-contradicting source across YEARS is not a conflict (different tasks)", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state", source_id = "a",
+    claimed_value = c("CO", "NM"), reference_year = c(2023, 2024)
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(nrow(result$predictions), 2)
+  expect_equal(result$predictions$n_sources_excluded, c(0, 0))
+  expect_equal(result$predictions$predicted_value, c("CO", "NM"))
+})
+
+test_that("[red-team] a massive single-source flood (99 vs 1) still computes a correct vote share", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state",
+    source_id = c(paste0("s", 1:99), "dissenter"),
+    claimed_value = c(rep("CO", 99), "NM"), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_sources, 100)
+  expect_equal(result$predictions$model_score, 0.99)
+})
+
+test_that("[red-team] abstain_threshold = 1 does not abstain an exactly-unanimous (vote_share == 1) prediction", {
+  claims <- data.frame(entity_id = "1", attribute = "state", source_id = c("a", "b"),
+                        claimed_value = c("CO", "CO"), reference_year = 2024)
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority", abstain_threshold = 1))
+  expect_false(result$predictions$abstained)
+  expect_equal(result$predictions$predicted_value, "CO")
+})
+
+test_that("[red-team] a high-cardinality task (every source claims a unique value) ties, keeps every candidate", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state", source_id = paste0("s", 1:10),
+    claimed_value = paste0("V", 1:10), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_candidate_values, 10)
+  expect_true(result$predictions$abstained)
+  expect_equal(result$predictions$abstention_reason, "tied_vote")
+  expect_equal(nrow(result$candidate_scores), 10)
+})
+
+test_that("[red-team] case-sensitive attribute names are never silently collapsed ('state' vs 'State')", {
+  claims <- data.frame(entity_id = "1", attribute = c("state", "State"), source_id = c("a", "b"),
+                        claimed_value = c("CO", "CO"), reference_year = 2024)
+  expect_error(attribute_truth_fusion(claims, method = "majority"), "2 distinct attributes")
+})
+
+test_that("[red-team] a claims table reduced to nothing by filtering errors clearly, not cryptically", {
+  claims <- data.frame(entity_id = "1", attribute = "state", source_id = c("a", "b"),
+                        claimed_value = NA_character_, reference_year = 2024)
+  expect_error(attribute_truth_fusion(claims, method = "majority"), "no non-missing claims remain")
+})
+
+test_that("[red-team] triple internal saboteur (3 of 4 sources self-conflict on one task)", {
+  claims <- data.frame(
+    entity_id = "1", attribute = "state",
+    source_id = c("c1", "c1", "c2", "c2", "c3", "c3", "clean"),
+    claimed_value = c("CO", "NM", "TX", "FL", "GA", "SC", "CO"), reference_year = 2024
+  )
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(result$predictions$n_sources_excluded, 3)
+  expect_equal(result$predictions$n_sources, 1)
+  expect_equal(sum(result$candidate_scores$n_votes), result$predictions$n_sources)
+})
+
+test_that("[red-team] dawid_skene can abstain on EVERY task of a fully disconnected graph despite local unanimity", {
+  skip_unless_crowdkit()
+  # The flat-tie finding from docs/saboteur-test-matrix.md: 3 disconnected
+  # components, each internally unanimous, still abstain with "tied_vote" --
+  # a standing regression guard, now that it is documented behavior rather
+  # than a silent surprise (see vignette("truth-fusion-crowdkit")).
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2", "3", "3"), attribute = "state",
+    source_id = c("a", "b", "c", "d", "e", "f"),
+    claimed_value = c("CO", "CO", "NM", "NM", "TX", "TX"), reference_year = 2024
+  )
+  expect_warning(
+    result <- attribute_truth_fusion(claims, method = "dawid_skene"),
+    "3 disconnected"
+  )
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(claims, method = "dawid_skene")))
+  expect_equal(result$model_diagnostics$n_disconnected_components, 3L)
+  expect_true(all(result$predictions$abstained))
+  expect_true(all(result$predictions$abstention_reason == "tied_vote"))
+  expect_true(all(result$predictions$n_candidate_values == 1)) # locally unanimous, despite abstaining
+})
+
+test_that("[red-team] a mirror source's learned reliability tracks whoever it copies, not independent evidence", {
+  skip_unless_crowdkit()
+  claims <- do.call(rbind, lapply(1:10, function(i) {
+    truth <- if (i == 5) "NM" else "CO"
+    wrong <- if (truth == "CO") "NM" else "CO"
+    mirrored_value <- if (i == 5) wrong else truth
+    data.frame(entity_id = as.character(i), attribute = "state",
+               source_id = c("source_a", "mirror_of_a", "independent"),
+               claimed_value = c(mirrored_value, mirrored_value, truth), reference_year = 2024)
+  }))
+  result <- suppressWarnings(suppressMessages(attribute_truth_fusion(claims, method = "dawid_skene")))
+  task5 <- result$predictions[result$predictions$entity_id == "5", ]
+  # The mirror pair outvotes the lone independent source -- confirms the
+  # documented limitation stays reproducible, not just a one-off observation.
+  expect_equal(task5$predicted_value, "CO")
+  expect_false(task5$abstained)
+})
+
+test_that("[red-team] a targeted saboteur's global reliability hides a subset-specific attack", {
+  skip_unless_crowdkit()
+  truths <- rep(c("active", "inactive"), 10)
+  claims <- do.call(rbind, lapply(seq_along(truths), function(i) {
+    t <- truths[i]
+    targeted <- if (i <= 3) setdiff(c("active", "inactive"), t) else t
+    data.frame(entity_id = as.character(i), attribute = "status", source_id = c("reliable", "targeted"),
+               claimed_value = c(t, targeted), reference_year = 2024)
+  }))
+  result <- suppressWarnings(suppressMessages(attribute_truth_fusion(claims, method = "dawid_skene")))
+  rel <- stats::setNames(result$source_diagnostics$reliability_score, result$source_diagnostics$source_id)
+  # A global score well above chance, even though "targeted" is wrong on
+  # every one of the 3 tasks it specifically attacks -- the whole point of
+  # validation-protocol.md's per-cohort reporting requirement.
+  expect_gt(unique(rel[["targeted"]]), 0.7)
+})
