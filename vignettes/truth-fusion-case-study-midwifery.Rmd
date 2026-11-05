@@ -139,6 +139,98 @@ Same pattern, same caveat: `score_type = "uncalibrated_belief"`, not a
 probability, and not validated against anything -- see
 `vignette("truth-fusion-truthdiscovery")`.
 
+## A complicated case, with a known answer
+
+The real midwifery data above only ever has two sources, so majority vote
+can at best tie, never actually be *wrong* -- and with no verified
+reference table, there is no known answer to check any method against
+anyway (`docs/validation-protocol.md` is why). Neither limitation is
+inherent to the problem itself; they are both just properties of this
+particular real panel. To see what it looks like when weighted inference
+*does* outperform plain majority vote -- and to say so with confidence,
+because here the answer is actually known -- this section uses a
+constructed scenario: 16 physician-years, 5 sources with deliberately
+different, realistic reliability profiles, and a ground truth the sources
+are measured against (impossible with the real data above, which is
+exactly why this part is simulated, not real).
+
+```{r complicated-setup}
+states <- c("CO", "NM", "TX", "AZ", "UT", "NV", "OR", "WA", "ID", "MT", "WY", "KS", "NE", "SD", "ND", "OK")
+true_state <- states # task i's true state is states[i]
+
+# Each source's error pattern across the first 15 tasks is independent of
+# the others -- this is what lets Dawid-Skene learn differential source
+# reliability at all. Task 16 is a deliberately engineered hard case.
+wrong_state_for <- function(i) states[((i + 1) %% length(states)) + 1]
+errs <- list(
+  nppes_recent         = c(3),                     # wrong on 1/15 -- highly reliable
+  pecos                = c(7, 11),                  # wrong on 2/15 -- highly reliable
+  state_board          = c(2, 5, 9, 13),            # wrong on 4/15 -- moderate
+  specialty_directory  = c(1, 4, 6, 8, 10, 13, 14),  # wrong on 7/15 -- close to chance
+  patient_review_site  = c(2, 3, 5, 7, 9, 11, 13, 15) # wrong on 8/15 -- below chance
+)
+claims2 <- do.call(rbind, lapply(1:15, function(i) {
+  data.frame(
+    entity_id = as.character(i), attribute = "practice_state", reference_year = 2026,
+    source_id = names(errs),
+    claimed_value = vapply(errs, function(e) if (i %in% e) wrong_state_for(i) else true_state[i], character(1))
+  )
+}))
+# Task 16: the 3 least reliable sources happen to agree with each other on
+# a WRONG value ("KS"), outvoting the 2 most reliable sources' correct,
+# unanimous "OK" -- 3 votes beats 2 under plain majority vote.
+claims2 <- rbind(claims2, data.frame(
+  entity_id = "16", attribute = "practice_state", reference_year = 2026,
+  source_id = names(errs), claimed_value = c("OK", "OK", "KS", "KS", "KS")
+))
+true_state_by_entity <- stats::setNames(true_state, as.character(1:16))
+```
+
+```{r complicated-majority}
+majority_result2 <- attribute_truth_fusion(claims2, method = "majority")
+majority_correct <- sum(
+  majority_result2$predictions$predicted_value ==
+    true_state_by_entity[majority_result2$predictions$entity_id],
+  na.rm = TRUE
+)
+sprintf("majority vote: %d/16 correct", majority_correct)
+```
+
+```{r complicated-ds, eval = crowdkit_available}
+ds_result2 <- suppressWarnings(attribute_truth_fusion(claims2, method = "dawid_skene"))
+ds_correct <- sum(
+  ds_result2$predictions$predicted_value == true_state_by_entity[ds_result2$predictions$entity_id],
+  na.rm = TRUE
+)
+sprintf("dawid_skene: %d/16 correct", ds_correct)
+unique(ds_result2$source_diagnostics[, c("source_id", "reliability_score")])
+```
+
+Majority gets 14 of 16 right; `dawid_skene` gets all 16. The two it fixes
+are revealing. Task 16 is the one engineered above: `state_board`,
+`specialty_directory`, and `patient_review_site` all happen to say `"KS"`
+(wrong), outvoting `nppes_recent` and `pecos`'s correct, unanimous `"OK"`
+3 votes to 2 -- majority has no way to know those three votes come from
+its *least* reliable sources, so it just counts them. Task 13 breaks the
+same way, but it wasn't engineered -- it happened on its own, from the
+same three unreliable sources' independently-chosen error tasks
+coincidentally landing on task 13 together. `dawid_skene` gets both right
+because its learned `reliability_score` (above) correctly ranks
+`nppes_recent` and `pecos` well above the other three -- so when they
+disagree, their two votes outweigh the other three's three votes, not
+the other way around.
+
+This is the genuine, checkable case for the extra complexity: when
+several sources are available and their reliabilities actually differ
+in a learnable way, weighting votes by *learned* reliability can recover
+the right answer even when it is not the plurality. It required five
+sources with real, differentiated reliability and a known truth to show
+cleanly -- conditions the real midwifery data above does not have, and
+most real administrative panels won't either. That gap, not any flaw in
+the method, is why `docs/validation-protocol.md` exists: a real benchmark
+needs real data with both of those properties, which has not yet been
+identified (`docs/validation-protocol.md` §0).
+
 ## The actual right tool for this specific disagreement
 
 This dataset's disagreement is, by construction, a **staleness** problem:
