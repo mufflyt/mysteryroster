@@ -1,5 +1,20 @@
 # mysteryroster (development version)
 
+* Added `attribute_consensus_tier()` and `attribute_consensus_tier_flow()`,
+  ported and generalized from a one-off midwifery-workforce-audit script
+  (`build_cross_source_comparison.R`) that hardcoded its consensus rule to
+  exactly four sources and a fixed 2021-2025 window. The generalized rule
+  (unanimous when everyone agrees, majority when the largest group is a
+  strict majority, split otherwise) reduces to that script's exact
+  4-source behavior as a special case. Also added
+  `attribute_source_corroboration()`, aggregating
+  `attribute_lead_lag_matrix()` across every pair of 3+ sources into a
+  per-source ranking of which one the comparison set tends to converge
+  toward. New vignette, `consensus-and-corroboration`. Fixed a real bug
+  found while writing its examples: `attribute_consensus_tier()`'s
+  `interaction()` + `split()` grouping silently dropped every row when
+  `year = NULL` (an all-`NA` grouping column has zero factor levels by
+  default) -- switched to a plain pasted string key.
 * New vignette, `attribute-agreement`. It covers `attribute_agreement()`,
   `attribute_agreement_summary()`, and the freshness functions
   `record_age_years()`, `record_age_band()`, and
