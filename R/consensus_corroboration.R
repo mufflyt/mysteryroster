@@ -333,3 +333,373 @@ attribute_source_corroboration <- function(sources, attributes, id = "npi", year
   out <- dplyr::bind_rows(rows)
   tibble::as_tibble(out[order(out$attribute, -out$lead_rate), ])
 }
+
+#' Is exactly one of 3+ sources the odd one out?
+#'
+#' A general disagreement among 3+ sources ("no two agree") and a lone
+#' dissenter ("all but one agree") are different claims --
+#' [attribute_consensus_tier()] reports both as `"split"` once no strict
+#' majority exists. This detects the second, structurally narrower case
+#' specifically: exactly one source's value differs from a value every
+#' other source shares. It never says the lone source is wrong -- the
+#' majority's value is never reported, only its size and which source sits
+#' outside it -- so tallying this with [attribute_odd_one_out_rate()]
+#' answers "how often is this source the one that's out of step," not
+#' "how often is this source wrong."
+#'
+#' @details
+#' **Structure, not just disagreement.** With 4 sources split 2-2, or
+#' 5 sources split 3-1-1, no single source is "the" odd one out -- there
+#' is no source whose value every *other* source shares. Only an
+#' `n_reporting - 1` vs. `1` split qualifies; everything else with more
+#' than one distinct value is `"no_single_outlier"`, deliberately not
+#' merged into `"odd_one_out"`.
+#'
+#' **Normalization.** Identifiers are trimmed; attribute values are
+#' trimmed and upper-cased, matching [attribute_agreement()].
+#'
+#' @inheritParams attribute_consensus_tier
+#' @return A tibble, one row per identifier-year with >= 3 sources
+#'   reporting: `id`, `year`, `n_reporting`, `n_sources_listed` (source
+#'   names, sorted, joined by `"|"`), `n_distinct_values`, `structure`
+#'   (a factor: `"unanimous"`, `"odd_one_out"`, `"no_single_outlier"`),
+#'   and `odd_source` (the lone source's name when `structure ==
+#'   "odd_one_out"`, `NA` otherwise).
+#' @examples
+#' s <- list(
+#'   nppes = data.frame(npi = "1", year = 2024, state = "CO"),
+#'   dac   = data.frame(npi = "1", year = 2024, state = "CO"),
+#'   op    = data.frame(npi = "1", year = 2024, state = "NM"),
+#'   pecos = data.frame(npi = "1", year = 2024, state = "CO")
+#' )
+#' attribute_odd_one_out(s, attribute = "state")
+#' @seealso [attribute_odd_one_out_rate()] to tally this per source;
+#'   [attribute_consensus_tier()] for the broader agreement-size claim;
+#'   `vignette("consensus-and-corroboration")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_odd_one_out <- function(sources, attribute, id = "npi", year = "year") {
+  checkmate::assert_list(sources, min.len = 3, names = "unique")
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  nm <- names(sources)
+
+  long <- vector("list", length(nm))
+  names(long) <- nm
+  for (s in nm) {
+    x <- sources[[s]]
+    checkmate::assert_data_frame(x)
+    for (col in c(id, attribute)) {
+      if (!col %in% names(x)) {
+        stop(sprintf("attribute_odd_one_out: source '%s' has no column '%s'", s, col), call. = FALSE)
+      }
+    }
+    row <- tibble::tibble(
+      id = trimws(as.character(x[[id]])),
+      year = if (!is.null(year) && year %in% names(x)) x[[year]] else NA,
+      value = toupper(trimws(as.character(x[[attribute]])))
+    )
+    row <- row[!is.na(row$value) & nzchar(row$value) & !is.na(row$id) & nzchar(row$id), ]
+    row$source <- s
+    long[[s]] <- row
+  }
+  long <- dplyr::bind_rows(long)
+  if (!nrow(long)) stop("attribute_odd_one_out: no non-missing attribute values in any source", call. = FALSE)
+
+  groups <- split(long, paste(long$id, long$year, sep = ""))
+  rows <- lapply(groups, function(g) {
+    n_reporting <- nrow(g)
+    if (n_reporting < 3L) return(NULL)
+    tab <- table(g$value)
+    sizes <- sort(as.integer(tab), decreasing = TRUE)
+    structure_val <- if (length(tab) == 1L) {
+      "unanimous"
+    } else if (length(tab) == 2L && sizes[1] == n_reporting - 1L && sizes[2] == 1L) {
+      "odd_one_out"
+    } else {
+      "no_single_outlier"
+    }
+    odd_source <- NA_character_
+    if (structure_val == "odd_one_out") {
+      odd_value <- names(tab)[tab == 1L]
+      odd_source <- g$source[g$value == odd_value][1]
+    }
+    tibble::tibble(
+      id = g$id[1], year = g$year[1], n_reporting = n_reporting,
+      n_sources_listed = paste(sort(g$source), collapse = "|"),
+      n_distinct_values = length(tab),
+      structure = factor(structure_val, levels = c("unanimous", "odd_one_out", "no_single_outlier")),
+      odd_source = odd_source
+    )
+  })
+  out <- dplyr::bind_rows(rows)
+  if (!nrow(out)) stop("attribute_odd_one_out: no identifier-year has >= 3 sources reporting", call. = FALSE)
+  tibble::as_tibble(out[order(out$year, out$id), ])
+}
+
+#' Per-source rate of being the odd one out
+#'
+#' Tallies [attribute_odd_one_out()]'s output into a per-source rate: of
+#' every identifier-year this source was part of a scorable (3+ source)
+#' comparison, how often was it the lone dissenter? A source with no
+#' `"odd_one_out"` rows at all still gets a row here, with `n_odd_one_out
+#' = 0`, so it is never missing from the ranking just because it was
+#' never the outlier.
+#'
+#' @param records Output of [attribute_odd_one_out()].
+#' @param source_list,structure,odd_source Column names in `records`.
+#'   Defaults match [attribute_odd_one_out()]'s output exactly.
+#' @return A tibble, one row per source: `source`, `n_eligible`
+#'   (identifier-years this source participated in), `n_odd_one_out`,
+#'   `odd_rate` (`n_odd_one_out / n_eligible`, `NA` if `n_eligible == 0`).
+#'   Ordered by descending `odd_rate`.
+#' @examples
+#' s <- list(
+#'   nppes = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NY")),
+#'   dac   = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NY")),
+#'   op    = data.frame(npi = c("1", "2"), year = 2024, state = c("NM", "NY")),
+#'   pecos = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NJ"))
+#' )
+#' attribute_odd_one_out_rate(attribute_odd_one_out(s, attribute = "state"))
+#' @seealso [attribute_odd_one_out()]; `vignette("consensus-and-corroboration")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_odd_one_out_rate <- function(records, source_list = "n_sources_listed",
+                                        structure = "structure", odd_source = "odd_source") {
+  checkmate::assert_data_frame(records, min.rows = 1)
+  for (col in c(source_list, structure, odd_source)) {
+    if (!col %in% names(records)) {
+      stop(sprintf("attribute_odd_one_out_rate: records has no column '%s'", col), call. = FALSE)
+    }
+  }
+  participants <- strsplit(as.character(records[[source_list]]), "|", fixed = TRUE)
+  is_odd <- as.character(records[[structure]]) == "odd_one_out"
+  odd_src <- as.character(records[[odd_source]])
+
+  all_sources <- sort(unique(unlist(participants)))
+  rows <- lapply(all_sources, function(s) {
+    eligible <- vapply(participants, function(p) s %in% p, logical(1))
+    n_eligible <- sum(eligible)
+    n_odd <- sum(eligible & is_odd & !is.na(odd_src) & odd_src == s)
+    tibble::tibble(
+      source = s, n_eligible = n_eligible, n_odd_one_out = n_odd,
+      odd_rate = if (n_eligible > 0L) round(n_odd / n_eligible, 3) else NA_real_
+    )
+  })
+  out <- dplyr::bind_rows(rows)
+  tibble::as_tibble(out[order(-out$odd_rate), ])
+}
+
+#' Attribute agreement stratified by any covariate, not just spell age
+#'
+#' [attribute_agreement_by_spell_age()] stratifies agreement by a fixed set
+#' of empirical-staleness bins. This generalizes the same question -- does
+#' agreement differ across a grouping variable -- to any covariate at all:
+#' rural vs. urban, provider type, years since licensure, or anything else
+#' with one value per identifier. The covariate's values are used exactly
+#' as given; pre-bin a continuous covariate yourself (for example with
+#' `cut()`) if you want bands rather than one stratum per distinct value.
+#'
+#' @details
+#' **Where the covariate lives.** `covariate_df` is a separate argument,
+#' not assumed to be `source_a` or `source_b`, so the stratifying variable
+#' can come from neither side of the comparison (for example a rurality
+#' flag from a geography lookup). Pass `source_b` itself as `covariate_df`
+#' to stratify by one of its own columns, as
+#' [attribute_agreement_by_spell_age()] does for spell age.
+#'
+#' **Matching.** Rows join on `id` alone across all three data frames
+#' (single cross-section only); there is no `year` argument. Pre-filter
+#' each input to the year you want compared if your data is longitudinal.
+#'
+#' **Stratum order.** If `covariate_df`'s covariate column is a factor,
+#' its levels set the output order; otherwise strata are sorted
+#' alphabetically. A stratum with zero matched rows is never reported.
+#'
+#' @param source_a,source_b Data frames with an identifier column and
+#'   the attribute column.
+#' @param covariate_df Data frame with an identifier column and the
+#'   covariate column (may be `source_a`, `source_b`, or neither).
+#' @param attribute Name of the attribute column to compare, present in
+#'   both `source_a` and `source_b`. Values are trimmed and upper-cased.
+#' @param covariate Name of the stratifying column in `covariate_df`.
+#' @param id Name of the identifier column, present in all three data
+#'   frames. Default `"npi"`.
+#' @param comparison_label Label stored in the `comparison` output column.
+#' @param stratification_label Label stored in `stratification`. Default
+#'   is `covariate`.
+#' @return A tibble, one row per non-empty stratum: `comparison`,
+#'   `stratification`, `stratum`, `n` (matched rows with non-missing
+#'   attribute and covariate values), `agree_pct` (percent, one decimal).
+#' @examples
+#' source_a <- data.frame(npi = c("1", "2", "3"), state = c("CO", "NY", "TX"))
+#' source_b <- data.frame(npi = c("1", "2", "3"), state = c("CO", "NJ", "TX"))
+#' rurality <- data.frame(npi = c("1", "2", "3"), setting = c("rural", "urban", "urban"))
+#' attribute_agreement_by_covariate(source_a, source_b, rurality,
+#'                                  attribute = "state", covariate = "setting")
+#' @seealso [attribute_agreement_by_spell_age()] for the empirical-staleness
+#'   special case; `vignette("consensus-and-corroboration")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_agreement_by_covariate <- function(source_a, source_b, covariate_df, attribute, covariate,
+                                              id = "npi", comparison_label = "Source A vs Source B",
+                                              stratification_label = covariate) {
+  checkmate::assert_data_frame(source_a, min.rows = 1)
+  checkmate::assert_data_frame(source_b, min.rows = 1)
+  checkmate::assert_data_frame(covariate_df, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(covariate, min.chars = 1)
+  for (col in c(id, attribute)) {
+    if (!col %in% names(source_a)) {
+      stop(sprintf("attribute_agreement_by_covariate: source_a has no column '%s'", col), call. = FALSE)
+    }
+    if (!col %in% names(source_b)) {
+      stop(sprintf("attribute_agreement_by_covariate: source_b has no column '%s'", col), call. = FALSE)
+    }
+  }
+  for (col in c(id, covariate)) {
+    if (!col %in% names(covariate_df)) {
+      stop(sprintf("attribute_agreement_by_covariate: covariate_df has no column '%s'", col), call. = FALSE)
+    }
+  }
+
+  cov_raw <- covariate_df[[covariate]]
+  stratum_levels <- if (is.factor(cov_raw)) {
+    levels(cov_raw)
+  } else {
+    sort(unique(as.character(cov_raw)[!is.na(cov_raw) & nzchar(as.character(cov_raw))]))
+  }
+
+  da <- tibble::tibble(
+    id = trimws(as.character(source_a[[id]])),
+    value_a = toupper(trimws(as.character(source_a[[attribute]])))
+  )
+  db <- tibble::tibble(
+    id = trimws(as.character(source_b[[id]])),
+    value_b = toupper(trimws(as.character(source_b[[attribute]])))
+  )
+  dc <- tibble::tibble(
+    id = trimws(as.character(covariate_df[[id]])),
+    stratum = as.character(cov_raw)
+  )
+
+  joined <- merge(merge(da, db, by = "id"), dc, by = "id")
+  joined <- joined[
+    !is.na(joined$value_a) & nzchar(joined$value_a) &
+      !is.na(joined$value_b) & nzchar(joined$value_b) &
+      !is.na(joined$stratum) & nzchar(joined$stratum),
+    , drop = FALSE
+  ]
+  if (!nrow(joined)) {
+    stop("attribute_agreement_by_covariate: no matched rows with non-missing attribute and covariate values",
+         call. = FALSE)
+  }
+
+  groups <- split(joined, factor(joined$stratum, levels = stratum_levels), drop = TRUE)
+  rows <- lapply(groups, function(g) {
+    tibble::tibble(
+      comparison = comparison_label, stratification = stratification_label,
+      stratum = g$stratum[1], n = nrow(g),
+      agree_pct = round(100 * mean(g$value_a == g$value_b), 1)
+    )
+  })
+  tibble::as_tibble(dplyr::bind_rows(rows))
+}
+
+#' Wilson score confidence interval for an agreement rate
+#'
+#' An agreement or concordance rate reported elsewhere in this package
+#' (for example [attribute_agreement_summary()]'s `pct_agree` or
+#' [attribute_consensus_tier()]'s `concordance_pct`) is a point estimate;
+#' it reads very differently off 4 comparable identifier-years than off
+#' 4,000. The Wilson score interval handles small `n_compared` and
+#' extreme proportions (near `0` or `1`) better than a naive normal
+#' approximation, and never produces a bound outside `[0, 1]`.
+#'
+#' Ported from a one-off midwifery-workforce-audit script's
+#' `wilson_ci()` helper (`build_cross_source_comparison.R`), which applied
+#' the same formula to this package's own `agree`-rate tables.
+#'
+#' @param n_agree,n_compared Numeric vectors of equal length: the count
+#'   agreeing and the total compared. `n_agree` cannot exceed
+#'   `n_compared`.
+#' @param conf_level Confidence level. Default `0.95`.
+#' @param as_percent If `FALSE` (default), bounds are proportions in
+#'   `[0, 1]`, rounded to 4 decimals -- matching
+#'   [attribute_agreement_summary()]'s `pct_agree`, itself a proportion
+#'   despite the name. If `TRUE`, bounds are percentages in `[0, 100]`,
+#'   rounded to 1 decimal -- matching [attribute_consensus_tier()]'s
+#'   `concordance_pct`.
+#' @return A tibble: `ci_low`, `ci_high`. `NA` where `n_compared` is `0`,
+#'   missing, or negative.
+#' @examples
+#' wilson_ci(n_agree = 9, n_compared = 10)
+#' wilson_ci(n_agree = c(90, 9), n_compared = c(100, 10), as_percent = TRUE)
+#' @seealso [attribute_agreement_add_ci()] to attach these columns to an
+#'   existing agreement table directly; `vignette("consensus-and-corroboration")`.
+#' @family no-gold-standard comparison
+#' @export
+wilson_ci <- function(n_agree, n_compared, conf_level = 0.95, as_percent = FALSE) {
+  checkmate::assert_numeric(n_agree, lower = 0)
+  checkmate::assert_numeric(n_compared)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  checkmate::assert_flag(as_percent)
+  if (length(n_agree) != length(n_compared)) {
+    stop("wilson_ci: n_agree and n_compared must be the same length", call. = FALSE)
+  }
+  if (any(n_agree > n_compared, na.rm = TRUE)) {
+    stop("wilson_ci: n_agree cannot exceed n_compared", call. = FALSE)
+  }
+
+  z <- stats::qnorm(1 - (1 - conf_level) / 2)
+  p <- n_agree / n_compared
+  denom <- 1 + z^2 / n_compared
+  center <- (p + z^2 / (2 * n_compared)) / denom
+  halfwidth <- (z / denom) * sqrt(p * (1 - p) / n_compared + z^2 / (4 * n_compared^2))
+  ci_low <- pmax(0, center - halfwidth)
+  ci_high <- pmin(1, center + halfwidth)
+  bad <- is.na(n_compared) | n_compared <= 0
+  ci_low[bad] <- NA_real_
+  ci_high[bad] <- NA_real_
+
+  if (as_percent) {
+    tibble::tibble(ci_low = round(100 * ci_low, 1), ci_high = round(100 * ci_high, 1))
+  } else {
+    tibble::tibble(ci_low = round(ci_low, 4), ci_high = round(ci_high, 4))
+  }
+}
+
+#' Attach a Wilson confidence interval to an existing agreement table
+#'
+#' A thin wrapper around [wilson_ci()] that appends `ci_low`/`ci_high`
+#' columns to a data frame in place, naming the input columns instead of
+#' extracting and recombining vectors by hand.
+#'
+#' @param df A data frame with a count-agreeing and a count-compared
+#'   column.
+#' @param n_agree,n_compared Column names in `df`. Defaults
+#'   `"n_agree"`/`"n_compared"`, matching [attribute_agreement_summary()].
+#' @param conf_level,as_percent Passed to [wilson_ci()].
+#' @return `df` as a tibble with `ci_low`/`ci_high` added.
+#' @examples
+#' s <- list(
+#'   a = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "CO")),
+#'   b = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"))
+#' )
+#' attribute_agreement_add_ci(attribute_agreement_summary(attribute_agreement(s, attribute = "state")))
+#' @seealso [wilson_ci()]; `vignette("consensus-and-corroboration")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_agreement_add_ci <- function(df, n_agree = "n_agree", n_compared = "n_compared",
+                                        conf_level = 0.95, as_percent = FALSE) {
+  checkmate::assert_data_frame(df, min.rows = 1)
+  for (col in c(n_agree, n_compared)) {
+    if (!col %in% names(df)) {
+      stop(sprintf("attribute_agreement_add_ci: df has no column '%s'", col), call. = FALSE)
+    }
+  }
+  ci <- wilson_ci(df[[n_agree]], df[[n_compared]], conf_level = conf_level, as_percent = as_percent)
+  df$ci_low <- ci$ci_low
+  df$ci_high <- ci$ci_high
+  tibble::as_tibble(df)
+}

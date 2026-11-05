@@ -35,16 +35,21 @@ classify_record_staleness(
 \seealso{
 Other no-gold-standard comparison:
 \code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_add_ci]{attribute_agreement_add_ci()}},
+\code{\link[=attribute_agreement_by_covariate]{attribute_agreement_by_covariate()}},
 \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
 \code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
 \code{\link[=attribute_consensus_tier]{attribute_consensus_tier()}},
 \code{\link[=attribute_consensus_tier_flow]{attribute_consensus_tier_flow()}},
 \code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}},
+\code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}},
 \code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}},
 \code{\link[=attribute_spell_age]{attribute_spell_age()}},
 \code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
 \code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
 \code{\link[=record_age_band]{record_age_band()}},
-\code{\link[=record_age_years]{record_age_years()}}
+\code{\link[=record_age_years]{record_age_years()}},
+\code{\link[=wilson_ci]{wilson_ci()}}
 }
 \concept{no-gold-standard comparison}

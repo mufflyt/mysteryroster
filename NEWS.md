@@ -1,5 +1,23 @@
 # mysteryroster (development version)
 
+* Added three more relative-claim functions (and their pair/summary
+  companions) to the same `R/consensus_corroboration.R` family:
+  `attribute_odd_one_out()`/`attribute_odd_one_out_rate()` (is exactly
+  one of 3+ sources a lone dissenter, distinct from a tied split with
+  no majority -- `attribute_consensus_tier()` reports both the same way
+  as `"split"`); `attribute_agreement_by_covariate()` (generalizes
+  `attribute_agreement_by_spell_age()`'s stratification to any
+  covariate, from any data frame, not just empirical spell-age bins);
+  and `wilson_ci()`/`attribute_agreement_add_ci()` (a Wilson score
+  confidence interval for an agreement rate, ported from the same
+  midwifery-workforce-audit script's `wilson_ci()` helper -- handles
+  small `n` and extreme rates better than a normal approximation, and
+  defaults to the proportion scale to match
+  `attribute_agreement_summary()`'s `pct_agree`, with an `as_percent`
+  toggle for `attribute_consensus_tier()`-style tables instead).
+  `vignette("consensus-and-corroboration")` extended with worked
+  examples of all three. 297 tests passing; 0 errors / 0 warnings /
+  0 notes on `R CMD check` with vignettes.
 * Added `attribute_consensus_tier()` and `attribute_consensus_tier_flow()`,
   ported and generalized from a one-off midwifery-workforce-audit script
   (`build_cross_source_comparison.R`) that hardcoded its consensus rule to
