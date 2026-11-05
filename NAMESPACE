@@ -38,7 +38,9 @@ export(validity_estimates)
 export(validity_model)
 export(validity_sensitivity_bounds)
 export(wilson_ci)
-importFrom(stats,as.formula)
-importFrom(stats,coef)
-importFrom(stats,quasibinomial)
-importFrom(stats,setNames)
+importFrom(stats,
+  as.formula,
+  coef,
+  quasibinomial,
+  setNames
+)

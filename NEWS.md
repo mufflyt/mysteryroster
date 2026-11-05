@@ -6,6 +6,28 @@
   shows a move before each other source, and catch-up curves of the share of
   moves each source has not yet shown. The heatmap is also on the README. The
   code is in the vignette; no functions were added.
+* Hardened `attribute_truth_fusion()` before starting any Phase 2 work:
+  added an explicit `on_source_conflict = c("single_value", "multi_value")`
+  policy (default `"single_value"`) governing a source that claims more
+  than one distinct value for the same entity-attribute-year. Previously
+  such a source always voted for every value it claimed, which let one
+  source cast competing votes in an ordinary categorical majority vote;
+  under the new default, a conflicted source's votes are excluded
+  entirely (reported via a new `n_sources_excluded` column, and a new
+  `"no_single_value_sources"` abstention reason if every source for an
+  entity-year is excluded) until the conflict is adjudicated elsewhere.
+  `"multi_value"` preserves the original behavior for cases where more
+  than one value can legitimately be true at once, with `model_score`
+  documented as a share of votes cast rather than a probability that one
+  categorical value is correct in that mode. Also replaced
+  `attribute_claims_validate()`'s and `attribute_truth_fusion()`'s
+  internal grouping, which pasted identifiers together with no
+  separator (a latent collision risk, e.g. entity `"1"`/year `23` and
+  entity `"12"`/year `3` both pasting to `"123"`), with `split()` on the
+  actual columns; added a regression test with exactly that collision
+  shape, plus tests for multiple attributes per entity-year, duplicate
+  rows, and the new conflict policy. 369 tests passing; 0 errors / 0
+  warnings / 0 notes on `R CMD check` with vignettes.
 * Added `attribute_claims_validate()`, `attribute_truth_fusion()`,
   `attribute_truth_backends()`, and a `print.mysteryroster_truth()`
   method -- Phase 1 of a larger truth-discovery extension (see
