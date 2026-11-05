@@ -419,6 +419,192 @@ Because Source B lags the true move, destination enrollment usually
 starts *before* the panel records the move. Because many intervals never
 close, origin enrollment usually outlives it.
 
+## How many years ahead or behind?
+
+Approach 1 says which of two sources moves first, but not by how much,
+and it handles only two sources at a time. The three figures below put a
+number of years on the gap, across four sources at once. They use only
+the source panels; the simulated truth is used to generate the sources
+and nothing else. Every number below is relative to another source:
+"ahead" means "shows a move before the other source does", not "correct".
+
+The four sources share the simulated clinicians above. Each one reports
+a clinician's practice site after a personal lag:
+
+- **Open Payments-like:** 0 years for 80% of clinicians, 1 year for the
+  rest.
+- **PECOS-like:** 0 to 3 years.
+- **NPPES-like:** Source B from above, a lag of 0 to 8 years, with 12%
+  of clinicians who never update.
+- **Board-like:** 1 to 6 years.
+
+```{r ahead-setup}
+set.seed(20261106)
+lagged <- function(lag) {
+  sapply(seq_along(years), function(k) truth[cbind(seq_len(n_npi), pmax(1L, k - lag))])
+}
+src <- list(
+  open_payments = lagged(sample(0:1, n_npi, TRUE, c(.80, .20))),
+  pecos         = lagged(sample(0:3, n_npi, TRUE, c(.35, .35, .20, .10))),
+  nppes         = b_site,
+  board         = lagged(sample(1:6, n_npi, TRUE, c(.10, .25, .25, .20, .10, .10)))
+)
+src_cols <- c(open_payments = "#C8553D", pecos = "#F2C14E", nppes = "#1F2A33", board = "#8AA29E")
+
+# Each source as one row per move: the NPI, the year the new site first
+# appears, and the new site.
+moves <- function(m) {
+  ch <- which(m[, -1] != m[, -ncol(m)], arr.ind = TRUE)
+  data.frame(npi = ch[, 1], year = years[ch[, 2] + 1L],
+             value = m[cbind(ch[, 1], ch[, 2] + 1L)])
+}
+ev <- lapply(src, moves)
+sapply(ev, nrow)
+```
+
+### Figure: shift one source until it lines up with another
+
+Compare Open Payments in year *t* with another source in year *t + k*, for
+*k* from -4 to 4. If a source runs *L* years behind Open Payments, its
+year *t + L* values match Open Payments' year *t* values, so agreement
+peaks at *k = L*. The location of the peak is the typical lag; how sharp
+the peak is shows how consistent the lag is from clinician to clinician.
+
+```{r fig-shift-match, fig.alt = "Line chart of percent agreement between Open Payments in year t and each other source in year t plus k, for shifts k from minus 4 to plus 4. PECOS and NPPES peak at plus 1 and the board source peaks at plus 3."}
+shift_match <- function(x, y, shifts = -4:4) {
+  vapply(shifts, function(k) {
+    t <- which(seq_along(years) + k >= 1 & seq_along(years) + k <= length(years))
+    mean(x[, t] == y[, t + k])
+  }, numeric(1))
+}
+shifts <- -4:4
+others <- setdiff(names(src), "open_payments")
+sm <- sapply(others, function(s) 100 * shift_match(src$open_payments, src[[s]], shifts))
+peaks <- setNames(shifts[apply(sm, 2, which.max)], others)
+
+op <- par(mar = c(4.5, 4.5, 3, 1))
+matplot(shifts, sm, type = "b", pch = 19, lty = 1, lwd = 2, col = src_cols[others],
+        xlab = "Shift k (years): Open Payments in year t vs the other source in year t + k",
+        ylab = "% of clinicians at the same site", las = 1, xaxt = "n",
+        main = "How far to shift each source to line it up with Open Payments",
+        cex.main = 0.95, font.main = 2)
+axis(1, shifts, ifelse(shifts == 0, "0", sprintf("%+d", shifts)))
+abline(v = 0, col = "grey80", lty = 2)
+points(peaks, apply(sm, 2, max), pch = 21, cex = 2.2, col = src_cols[others], lwd = 2)
+legend("bottomright", sprintf("%s (peak at %+d)", others, peaks), col = src_cols[others],
+       pch = 19, lwd = 2, bty = "n", cex = 0.85)
+par(op)
+```
+
+Here PECOS and NPPES both peak at a shift of
+`r sprintf("%+d", peaks[["pecos"]])` year, and the board source at
+`r sprintf("%+d", peaks[["board"]])`. NPPES's peak is much lower and
+flatter than PECOS's, because its lags are spread over eight years and
+some clinicians never update. Any source can serve as the reference, and
+a reference that lags itself pushes every peak toward zero.
+
+### Figure: who is ahead of whom, for every pair
+
+To compare all four sources at once, pair up the moves. For each move one
+source shows (a clinician arriving at a new site), find the same arrival
+in the other source and take the difference in years. A heatmap of the
+mean difference ranks the sources without naming any of them as truth.
+
+```{r fig-lead-heatmap, fig.alt = "Four-by-four heatmap of the mean number of years each row source shows a clinician's move before each column source. Open Payments is ahead of every other source and the board source is behind every other source, by up to about three years."}
+lead_years <- function(x, y) {
+  m <- merge(x, y, by = c("npi", "value"), suffixes = c("_x", "_y"))
+  m$gap <- m$year_y - m$year_x
+  m <- m[order(abs(m$gap)), ]
+  m[!duplicated(m[, c("npi", "value", "year_x")]), "gap"]
+}
+nm <- names(src)
+lead <- outer(nm, nm, Vectorize(function(a, b) {
+  if (a == b) NA_real_ else mean(lead_years(ev[[a]], ev[[b]]))
+}))
+dimnames(lead) <- list(nm, nm)
+nm <- names(sort(rowMeans(lead, na.rm = TRUE), decreasing = TRUE))
+lead <- lead[nm, nm]
+
+k <- length(nm)
+lim <- max(abs(lead), na.rm = TRUE)
+op <- par(mar = c(5, 8, 4, 1))
+image(seq_len(k), seq_len(k), t(lead[k:1, ]), zlim = c(-lim, lim), axes = FALSE,
+      col = colorRampPalette(c("#1F2A33", "#F7F5EF", "#C8553D"))(21),
+      xlab = "... than this source (column)", ylab = "")
+axis(1, seq_len(k), nm, tick = FALSE, cex.axis = 0.85)
+axis(2, seq_len(k), rev(nm), las = 1, tick = FALSE, cex.axis = 0.85)
+mtext("This source (row) is ahead by ...", side = 2, line = 6.5, cex = 0.9)
+g <- expand.grid(r = seq_len(k), c = seq_len(k))
+val <- lead[cbind(g$r, g$c)]
+text(g$c, k - g$r + 1, ifelse(is.na(val), "", sprintf("%+.1f yr", val)),
+     col = ifelse(!is.na(val) & abs(val) > lim / 2, "white", "black"), cex = 0.9)
+title("Mean years the row source shows a move before the column source",
+      cex.main = 0.95, font.main = 2, line = 1.5)
+par(op)
+```
+
+Red cells mean the row source is ahead, and dark cells mean it is behind.
+The ordering falls out of the data: Open Payments leads NPPES by
+`r sprintf("%.1f", lead["open_payments", "nppes"])` years on average,
+and NPPES leads the board source by
+`r sprintf("%.1f", lead["nppes", "board"])`. Two things to bear in mind:
+
+- A cell counts only moves that both sources eventually show. A source
+  that never updates contributes nothing here, so it can look less stale
+  than it is. The catch-up curves below show those clinicians.
+- A source that echoes another's errors, or copies another's data, will
+  sit near zero against it. A cell near zero says the two sources move
+  together, not that both are current.
+
+### Figure: how fast each source catches up
+
+Start a clock when the first of the four sources shows a clinician at a
+new site. For each source, follow the share still showing the old site 0,
+1, 2, ... years later. These are survival curves. Moves first seen after
+2024 are left out, and moves seen too late to follow for *d* years drop
+out of the denominator at *d*, as in a Kaplan-Meier estimate.
+
+```{r fig-catch-up, fig.alt = "Step-like line chart of the percent of moves each source has not yet shown, by years since the first source showed them. Open Payments drops to near zero within a year, PECOS within three years, the board source within six, while NPPES is still above ten percent after eight years."}
+all_ev <- do.call(rbind, lapply(names(ev), function(s) ev[[s]]))
+first <- aggregate(year ~ npi + value, all_ev, min)
+names(first)[3] <- "start"
+first <- first[first$start <= 2024, ]
+catch_up <- function(e, days = 0:8) {
+  m <- merge(first, e, by = c("npi", "value"), all.x = TRUE)
+  m$d <- m$year - m$start
+  m <- m[is.na(m$d) | m$d >= 0, ]
+  m <- m[order(m$d), ]
+  m <- m[!duplicated(m[, c("npi", "value", "start")]), ]
+  follow_up <- max(years) - m$start
+  s <- 1
+  vapply(days, function(d) {
+    at_risk <- sum((is.na(m$d) | m$d >= d) & follow_up >= d)
+    if (at_risk == 0) return(NA_real_)
+    s <<- s * (1 - sum(!is.na(m$d) & m$d == d) / at_risk)
+    100 * s
+  }, numeric(1))
+}
+cu <- sapply(ev, catch_up)
+
+op <- par(mar = c(4.5, 4.5, 3, 1))
+matplot(0:8, cu, type = "b", pch = 19, lty = 1, lwd = 2, col = src_cols[colnames(cu)],
+        ylim = c(0, 100), las = 1,
+        xlab = "Years since the first source showed the move",
+        ylab = "% of moves this source has not yet shown",
+        main = "Catch-up: how long each source keeps the old site",
+        cex.main = 0.95, font.main = 2)
+legend("topright", colnames(cu), col = src_cols[colnames(cu)], pch = 19, lwd = 2,
+       bty = "n", cex = 0.85)
+par(op)
+```
+
+Open Payments has shown `r sprintf("%.0f%%", 100 - cu[1, "open_payments"])`
+of moves by the end of the year the move is first seen, while NPPES has
+still not shown `r sprintf("%.0f%%", cu[9, "nppes"])` of them eight years
+later. That long tail is the clinicians who never update, the group the
+heatmap leaves out. A curve that levels off above zero means the source
+never shows some moves, not that it is slow to show them.
+
 ## Turning all three into manuscript text
 
 `format_no_gold_standard_prose()` exists because this analysis is

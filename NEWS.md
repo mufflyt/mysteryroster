@@ -1,5 +1,11 @@
 # mysteryroster (development version)
 
+* `vignette("lead-lag-staleness")` gains a section, "How many years ahead or
+  behind?", with three figures for four simulated sources: agreement when one
+  source is shifted by -4 to +4 years, a heatmap of the mean years each source
+  shows a move before each other source, and catch-up curves of the share of
+  moves each source has not yet shown. The heatmap is also on the README. The
+  code is in the vignette; no functions were added.
 * New vignette, `attribute-agreement`. It covers `attribute_agreement()`,
   `attribute_agreement_summary()`, and the freshness functions
   `record_age_years()`, `record_age_band()`, and
@@ -12,7 +18,7 @@
   breaks concordance first, what happens to a disagreement one year
   later, agreement by spell age, and enrollment arrival and departure
   timing.
-* The README shows all eight figures. `data-raw/no_gold_standard_figures.R`
+* The README shows these eight figures. `data-raw/no_gold_standard_figures.R`
   regenerates them in `man/figures/` from the vignette chunks.
 * Rewrote the help for the ten no-gold-standard functions:
   - every output column of `attribute_lead_lag_matrix()` is defined, along
