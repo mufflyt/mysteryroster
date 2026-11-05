@@ -52,6 +52,10 @@ remotes::install_github("mufflyt/mysteryroster")
   to converge toward, whether exactly one source is a lone dissenter,
   agreement stratified by any covariate, and Wilson confidence
   intervals on any of the above.
+- `vignette("truth-fusion")` -- the one function in this package that
+  *does* predict a value rather than only making a relative claim:
+  majority-vote inference with explicit abstention on ties or weak
+  majorities, and the evidence schema it expects.
 
 ## How the pieces fit
 
@@ -248,6 +252,30 @@ over time, which source others tend to adopt, whether one source sits
 alone outside a shared value, or how much any of the above should be
 trusted given how many identifier-years back it.
 
+## Predicting a value: truth fusion
+
+Everything above makes only relative claims -- agreement, timing,
+stability -- and deliberately never names a value as correct (see
+Design rules, below). `attribute_truth_fusion()` is the one exception,
+introduced as the first phase of a larger truth-discovery extension:
+it predicts a value, with an explicit score, and an explicit option to
+abstain rather than guess. See `vignette("truth-fusion")`.
+
+```r
+claims <- attribute_claims_validate(long_format_claims)  # entity_id/attribute/source_id/claimed_value/reference_year
+fusion_result <- attribute_truth_fusion(claims, method = "majority", abstain_threshold = 0.6)
+fusion_result$predictions        # predicted_value, model_score, abstained, abstention_reason
+fusion_result$candidate_scores   # every candidate value's vote share, ranked
+attribute_truth_backends()       # which methods are actually implemented right now -- only "majority"
+```
+
+Votes are counted per *source*, not per row, so a source that
+legitimately reports two values (two real practice locations, say)
+votes for both rather than being forced to pick one. An exact tie
+always abstains; `attribute_truth_fusion()` never silently substitutes
+a different method or backend than the one requested, and never claims
+a method is available before it is actually implemented.
+
 ## From protocol to function
 
 | Protocol step | Function |
@@ -274,6 +302,9 @@ trusted given how many identifier-years back it.
 | Is exactly one source a lone dissenter (distinct from a tied split with no majority)? | `attribute_odd_one_out()`, `attribute_odd_one_out_rate()` |
 | Agreement stratified by any covariate, not just spell age | `attribute_agreement_by_covariate()` |
 | Wilson confidence interval on an agreement/concordance rate | `wilson_ci()`, `attribute_agreement_add_ci()` |
+| Validate the long-format multi-source claim schema | `attribute_claims_validate()` |
+| Predict a value by majority vote, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
+| Which truth-fusion methods/backends are actually implemented right now | `attribute_truth_backends()` |
 
 ## Design rules
 
@@ -294,6 +325,11 @@ trusted given how many identifier-years back it.
   identifier-year; it never picks a "correct" value. A disagreement is read
   against each side's own freshness date only to say one side provably
   predates the other, not to say which is right.
+- **`attribute_truth_fusion()` is the one deliberate exception to the
+  rule above.** Every other function in this package stops at a
+  relative claim; this one predicts a value, on purpose, with an
+  explicit score and an explicit abstention path -- it does not pretend
+  to follow the "never pick a value" rule it is the exception to.
 
 ## Disposition maps
 

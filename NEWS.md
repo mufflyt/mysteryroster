@@ -1,5 +1,24 @@
 # mysteryroster (development version)
 
+* Added `attribute_claims_validate()`, `attribute_truth_fusion()`,
+  `attribute_truth_backends()`, and a `print.mysteryroster_truth()`
+  method -- Phase 1 of a larger truth-discovery extension (see
+  `vignette("truth-fusion")`). Every other function in this package's
+  no-gold-standard family deliberately never names a value as correct;
+  `attribute_truth_fusion()` is the first, explicit exception --
+  majority-vote prediction with abstention on ties or (via
+  `abstain_threshold`) weak majorities. Votes are counted per source,
+  not per row, so a source reporting two legitimate values (e.g. two
+  real practice locations) votes for both rather than being forced to
+  pick one. `method`/`backend` are validated against a fixed,
+  currently-implemented set (`attribute_truth_backends()` reports it
+  honestly: only `"majority"`, entirely in R) rather than silently
+  substituting a different algorithm than the one requested. Later
+  phases (not implemented here) are expected to add probabilistic
+  backends -- `crowd-kit`'s Dawid-Skene, `truthdiscovery`'s TruthFinder
+  and friends -- via optional Python integration; this phase adds no
+  Python dependency at all. 336 tests passing; 0 errors / 0 warnings /
+  0 notes on `R CMD check` with vignettes.
 * Added three more relative-claim functions (and their pair/summary
   companions) to the same `R/consensus_corroboration.R` family:
   `attribute_odd_one_out()`/`attribute_odd_one_out_rate()` (is exactly
