@@ -48,8 +48,10 @@ remotes::install_github("mufflyt/mysteryroster")
   manuscript-paragraph output of `format_no_gold_standard_prose()`.
 - `vignette("consensus-and-corroboration")` -- beyond pairwise, with
   three or more sources: how much of the group agrees, whether that
-  agreement holds up year over year, and which source the group tends
-  to converge toward.
+  agreement holds up year over year, which source the group tends
+  to converge toward, whether exactly one source is a lone dissenter,
+  agreement stratified by any covariate, and Wilson confidence
+  intervals on any of the above.
 
 ## How the pieces fit
 
@@ -219,8 +221,8 @@ OB/GYN midwifery study. Treat its output as a first draft; see
 
 ## Beyond pairwise: consensus and corroboration
 
-With three or more sources, two further relative claims become
-available -- see `vignette("consensus-and-corroboration")`:
+With three or more sources, further relative claims become available --
+see `vignette("consensus-and-corroboration")`:
 
 ```r
 # How much of the group agrees, per identifier-year (never which value is right):
@@ -233,15 +235,28 @@ attribute_consensus_tier_flow(tier)
 # Which source does the rest of the comparison set tend to converge toward?
 attribute_source_corroboration(list(nppes = nppes_panel, op = op_panel, dac = dac_panel),
                                 attributes = "state")
+
+# Is exactly one source a lone dissenter, distinct from a tied split with no majority?
+attribute_odd_one_out_rate(attribute_odd_one_out(
+  list(nppes = nppes_df, dac = dac_df, op = op_df, pecos = pecos_df), attribute = "state"))
+
+# Does agreement differ by rurality, provider type, or any other covariate?
+attribute_agreement_by_covariate(nppes_df, dac_df, rurality_lookup,
+                                  attribute = "state", covariate = "setting")
+
+# How much should a percentage above actually be trusted, given its n?
+attribute_agreement_add_ci(attribute_agreement_summary(attribute_agreement(sources, attribute = "state")))
 ```
 
-`attribute_consensus_tier()` and `attribute_consensus_tier_flow()` were
-ported from a one-off script written for a midwifery workforce audit
-outside this package, generalized past that script's hardcoded
-assumption of exactly four sources. None of the three functions ever
-picks a value as the group's answer -- only the size of the largest
-agreeing group, whether that size holds up over time, or which source
-others tend to adopt.
+`attribute_consensus_tier()`, `attribute_consensus_tier_flow()`, and
+`wilson_ci()` were ported from a one-off script written for a midwifery
+workforce audit outside this package, generalized past that script's
+hardcoded assumptions (exactly four sources; one fixed agreement table).
+None of these functions ever picks a value as the group's answer --
+only the size of the largest agreeing group, whether that size holds up
+over time, which source others tend to adopt, whether one source sits
+alone outside a shared value, or how much any of the above should be
+trusted given how many identifier-years back it.
 
 ## From protocol to function
 
@@ -266,6 +281,9 @@ others tend to adopt.
 | N-way consensus tier (unanimous / majority / split) across 3+ sources at once | `attribute_consensus_tier()` |
 | Does a consensus tier persist across years, or churn? | `attribute_consensus_tier_flow()` |
 | Per-source ranking: which source does the comparison set converge toward? | `attribute_source_corroboration()` |
+| Is exactly one source a lone dissenter (distinct from a tied split with no majority)? | `attribute_odd_one_out()`, `attribute_odd_one_out_rate()` |
+| Agreement stratified by any covariate, not just spell age | `attribute_agreement_by_covariate()` |
+| Wilson confidence interval on an agreement/concordance rate | `wilson_ci()`, `attribute_agreement_add_ci()` |
 
 ## Design rules
 

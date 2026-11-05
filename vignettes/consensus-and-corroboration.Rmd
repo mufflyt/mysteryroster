@@ -102,13 +102,101 @@ d <- data.frame(npi = "1", year = 2025, state = "CO") # no year in common with a
 suppressWarnings(attribute_source_corroboration(list(a = a, b = b, d = d), attributes = "state"))
 ```
 
+## Is exactly one source the odd one out?
+
+`attribute_consensus_tier()` reports a 4-source 2-2 split and a
+genuine 3-1 lone dissenter the same way: both are `"split"`, since
+neither has a strict majority. `attribute_odd_one_out()` draws that
+distinction explicitly -- a lone dissenter is a narrower, structurally
+different claim than "no majority exists":
+
+```{r odd-one-out}
+s <- list(
+  nppes = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "CO")),
+  dac   = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "CO")),
+  op    = data.frame(npi = c("1", "2"), year = 2024, state = c("NM", "NM")),
+  pecos = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"))
+)
+records <- attribute_odd_one_out(s, attribute = "state")
+records[, c("id", "n_distinct_values", "structure", "odd_source")]
+```
+
+NPI 1 (`CO, CO, NM, CO`) has a lone dissenter (`op`); NPI 2
+(`CO, CO, NM, NM`) is a tied 2-2 split, deliberately *not* reported as
+`odd_one_out` even though it also has two distinct values.
+`attribute_odd_one_out_rate()` tallies this across identifiers into a
+per-source rate, giving every source a row -- including a `0` rate --
+rather than omitting sources that happened never to be the outlier:
+
+```{r odd-one-out-rate}
+attribute_odd_one_out_rate(records)
+```
+
+`op` and `pecos` are each the lone dissenter in exactly one of their
+two eligible identifier-years; `nppes` and `dac` never are. None of
+this says `op` or `pecos` is wrong -- only that each sat outside a
+value the other three shared, once.
+
+## Does agreement differ by some other covariate?
+
+`attribute_agreement_by_spell_age()` stratifies by one specific thing:
+how long a value has sat unchanged. `attribute_agreement_by_covariate()`
+generalizes the same question to any grouping variable -- rurality,
+provider type, years since licensure, or anything else with one value
+per identifier, pulled from a third data frame rather than assumed to
+live in either source being compared:
+
+```{r covariate}
+source_a <- data.frame(npi = c("1", "2", "3"), state = c("CO", "NY", "TX"))
+source_b <- data.frame(npi = c("1", "2", "3"), state = c("CO", "NJ", "TX"))
+rurality <- data.frame(npi = c("1", "2", "3"), setting = c("rural", "urban", "urban"))
+attribute_agreement_by_covariate(source_a, source_b, rurality,
+                                  attribute = "state", covariate = "setting")
+```
+
+Passing a continuous covariate works the same way once it is binned
+(for example with `cut()`); the function itself never auto-bins, so
+whatever strata the input carries are exactly what gets reported.
+
+## How much does a small sample narrow the claim?
+
+Every percentage in this vignette -- `concordance_pct`, `pct_agree`,
+`agree_pct` -- is a point estimate. `wilson_ci()` turns an agreement
+count into a confidence interval, handling small `n` and extreme rates
+better than a normal approximation:
+
+```{r wilson}
+wilson_ci(n_agree = 9, n_compared = 10)
+```
+
+Ten comparable identifier-years at 90% agreement could plausibly be
+anywhere from 60% to 98% -- a much wider claim than "90%" alone
+suggests. `attribute_agreement_add_ci()` attaches this directly to an
+existing table rather than extracting and recombining columns by hand;
+`as_percent` matches whichever scale that table already uses
+(`attribute_agreement_summary()`'s `pct_agree` is a proportion,
+`attribute_consensus_tier()`'s `concordance_pct` a percentage):
+
+```{r wilson-attach}
+s2 <- list(
+  a = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "CO")),
+  b = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"))
+)
+attribute_agreement_add_ci(attribute_agreement_summary(attribute_agreement(s2, attribute = "state")))
+```
+
+With only 2 comparable identifier-years, the interval spans nearly the
+whole `[0, 1]` range -- an honest reflection of how little a 50%
+agreement rate on `n = 2` actually supports.
+
 ## What this layer does and doesn't add
 
-A high concordance tier, a stable flow, or a high corroboration rate
-are all still relative claims about the comparison set, not about
-truth -- a value every source agrees on can still be wrong if every
-source traces back to the same original error (see
-`vignette("attribute-agreement")`'s note on two sources agreeing on a
-stale value). What this layer adds over the pairwise functions is
-scale: a claim about the whole group at once, and whether that claim
-is the kind that holds up year over year.
+A high concordance tier, a stable flow, a high corroboration rate, or a
+narrow confidence interval are all still relative claims about the
+comparison set, not about truth -- a value every source agrees on can
+still be wrong if every source traces back to the same original error
+(see `vignette("attribute-agreement")`'s note on two sources agreeing
+on a stale value). What this layer adds over the pairwise functions is
+scale -- a claim about the whole group at once -- and, with
+`wilson_ci()`, an honest sense of how much any of these percentages
+should actually be trusted given how many identifier-years back them.
