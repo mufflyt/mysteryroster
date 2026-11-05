@@ -21,8 +21,9 @@ attribute_truth_fusion(
 \item{claims}{A data frame shaped like \code{\link[=attribute_claims_validate]{attribute_claims_validate()}}'s
 input/output.}
 
-\item{method}{Inference method. Only \code{"majority"} is implemented in
-this version.}
+\item{method}{Inference method: \code{"majority"} (R-native), or
+\code{"dawid_skene"}/\code{"one_coin_dawid_skene"} (optional Crowd-Kit backend;
+see Details).}
 
 \item{attribute_name}{Which \code{attribute} value in \code{claims} to fuse.
 Required if \code{claims} contains more than one.}
@@ -31,35 +32,49 @@ Required if \code{claims} contains more than one.}
 implements \code{method}; passing a specific backend that does not
 implement \code{method} is an error, never a silent substitution.}
 
-\item{implication_function, max_iterations, convergence_tolerance}{Reserved for methods not yet implemented; see Details.}
+\item{implication_function, max_iterations, convergence_tolerance}{\code{max_iterations}/\code{convergence_tolerance} are the EM iteration cap and
+tolerance for the Crowd-Kit methods; see Details for all three.}
 
 \item{seed}{Stored in \code{model_diagnostics} for reproducibility
-record-keeping; \code{"majority"} itself is deterministic and does not
-use it.}
+record-keeping; every method currently implemented is deterministic
+given its input and does not actually use it.}
 
-\item{abstain_threshold}{Optional minimum winning vote share (\code{0}-\code{1});
-below it, abstain even without a tie. \code{NULL} (default) disables this.}
+\item{abstain_threshold}{Optional minimum winning score (\code{0}-\code{1},
+vote share or posterior probability depending on method); below it,
+abstain even without a tie. \code{NULL} (default) disables this.}
 
-\item{on_source_conflict}{\code{"single_value"} (default) or \code{"multi_value"};
-see Details.}
+\item{on_source_conflict}{\code{"single_value"} (default) or \code{"multi_value"}
+(rejected for \code{backend = "crowd_kit"}); see Details.}
 }
 \value{
 An object of class \code{mysteryroster_truth}, a list with:
 \describe{
 \item{\code{predictions}}{One row per entity-attribute-year:
 \code{entity_id}, \code{attribute}, \code{reference_year}, \code{predicted_value},
-\code{method}, \code{model_score}, \code{score_type}, \code{n_sources} (votes actually
-counted, after excluding conflicted sources under
+\code{method}, \code{model_score}, \code{score_type}, \code{n_sources} (votes/ratings
+actually counted, after excluding conflicted sources under
 \code{"single_value"}), \code{n_sources_excluded}, \code{n_candidate_values},
 \code{abstained}, \code{abstention_reason} (also \code{"no_single_value_sources"}
 when every source for that entity-year was excluded).}
 \item{\code{candidate_scores}}{One row per candidate value per
-entity-attribute-year, ranked by \code{vote_share} descending.}
+entity-attribute-year: \code{candidate_value}, \code{n_votes} (raw count of
+distinct sources claiming it, always computable regardless of
+method), \code{vote_share} (vote share for \code{"majority"}, posterior
+probability for Crowd-Kit methods -- see \code{score_type}),
+\code{score_type}.}
 \item{\code{source_diagnostics}}{Zero rows for \code{"majority"}, which
-learns no source-level reliability; populated by later methods.}
+learns no source-level reliability. For \code{"dawid_skene"}: one row
+per source x true label x observed label, \code{error_probability}
+\eqn{= Pr(\text{source reports observed} \mid \text{true is
+      true})}, plus \code{reliability_score} (mean of the diagonal, i.e.
+mean probability of reporting correctly across classes). For
+\code{"one_coin_dawid_skene"}: one row per source, \code{reliability_score}
+only (\code{true_label}/\code{observed_label}/\code{error_probability} are
+\code{NA}), its single scalar skill.}
 \item{\code{model_diagnostics}}{One row: \code{method}, \code{backend},
-\code{converged}, \code{n_iterations}, \code{runtime_sec}, \code{seed},
-\code{n_warnings}.}
+\code{on_source_conflict}, \code{converged}, \code{n_iterations}, \code{runtime_sec},
+\code{seed}, \code{n_warnings}, \code{backend_version} (\code{NA} for \code{"majority"}),
+\code{n_disconnected_components} (\code{NA} for \code{"majority"}).}
 \item{\code{claims}}{The input claims actually used (filtered to
 \code{attribute_name}, non-missing), unmodified.}
 }
@@ -71,11 +86,11 @@ about agreement, timing, or stability (see
 \code{vignette("consensus-and-corroboration")}'s design note on exactly this
 point). \code{attribute_truth_fusion()} is a different kind of thing: it
 \emph{does} predict a value, with an explicit score and the option to
-abstain rather than guess. Phase 1 implements exactly one method,
-\code{"majority"}, entirely in R; \code{method} and \code{backend} are validated
-against a fixed, currently-implemented set (see
-\code{\link[=attribute_truth_backends]{attribute_truth_backends()}}) rather than silently substituting a
-different algorithm than the one requested.
+abstain rather than guess. \code{method} and \code{backend} are validated against
+a fixed, currently-implemented set (see \code{\link[=attribute_truth_backends]{attribute_truth_backends()}})
+rather than silently substituting a different algorithm than the one
+requested, and a failure in an optional backend is always an error,
+never a silent fall-back to \code{"majority"}.
 }
 \details{
 \strong{Voting unit.} A vote is cast by a \emph{source}, not a \emph{row}: votes are
@@ -95,21 +110,25 @@ one true value can legitimately coexist (for example an entity with
 multiple real practice locations) -- but note that under
 \code{"multi_value"}, \code{model_score} is a share of \emph{votes cast}, not a
 probability that a single categorical value is correct, since one
-source can contribute to more than one candidate's count.
+source can contribute to more than one candidate's count. \code{backend = "crowd_kit"} requires \code{"single_value"}: Dawid-Skene-family models
+assume exactly one label per worker-task, so \code{"multi_value"} is an
+error there rather than a silently ill-defined fit.
 
-\strong{Grouping.} Entity-years are grouped with \code{split(x, list(entity_id, reference_year))}, never a hand-built pasted string key -- \code{entity_id}
-and \code{reference_year} are both already guaranteed non-missing by this
-point, so there is no risk of the all-\code{NA}-key failure mode a pasted or
-\code{interaction()}-based key can hit (see \code{attribute_consensus_tier()}'s
-own fix for exactly that bug), and no risk of two different
-entity-years colliding onto the same pasted string.
+\strong{Grouping.} Entity-years are grouped with \code{split(x, list(entity_id, reference_year))} (\code{"majority"}) or with a \code{merge()}-built integer
+surrogate key (\code{"crowd_kit"}) -- never a hand-built pasted string key.
+\code{entity_id} and \code{reference_year} are both already guaranteed
+non-missing by this point, so there is no risk of the all-\code{NA}-key
+failure mode a pasted or \code{interaction()}-based key can hit (see
+\code{attribute_consensus_tier()}'s own fix for exactly that bug), and no
+risk of two different entity-years colliding onto the same pasted
+string.
 
-\strong{Abstention.} An exact tie for the largest vote share always
-abstains (\code{abstention_reason = "tied_vote"}) -- there is no principled
-winner to report. If \code{abstain_threshold} is set and the winning share
-is below it even without a tie, the call also abstains
-(\code{"below_abstain_threshold"}). \code{predicted_value} is \code{NA} whenever
-\code{abstained} is \code{TRUE}.
+\strong{Abstention.} An exact tie for the largest vote share or posterior
+probability always abstains (\code{abstention_reason = "tied_vote"}) --
+there is no principled winner to report. If \code{abstain_threshold} is set
+and the winning score is below it even without a tie, the call also
+abstains (\code{"below_abstain_threshold"}). \code{predicted_value} is \code{NA}
+whenever \code{abstained} is \code{TRUE}.
 
 \strong{One attribute per call.} If \code{claims} contains more than one
 distinct \code{attribute} value, \code{attribute_name} must select one; this is
@@ -119,11 +138,45 @@ Because \code{claims} is filtered to exactly one \code{attribute} before any
 grouping happens, votes can never mix across attributes regardless of
 how entity-years are grouped.
 
-\strong{Arguments majority doesn't use.} \code{implication_function},
-\code{max_iterations}, and \code{convergence_tolerance} exist for methods Phase 1
-does not implement yet; passing a non-default value with
-\code{method = "majority"} emits a message noting it has no effect, rather
-than silently ignoring it.
+\strong{\code{backend = "crowd_kit"} (\code{method = "dawid_skene"} or
+\code{"one_coin_dawid_skene"}).} An \emph{optional} dependency via \code{reticulate}:
+this package never requires Python to be used, never installs Python
+or any Python package, and never modifies a user's global Python
+environment. \code{\link[=attribute_truth_backends]{attribute_truth_backends()}} probes whether Python and
+\code{crowd-kit} are already available in whatever Python the caller has
+configured (\code{RETICULATE_PYTHON}, \code{reticulate::use_python()}, or one
+already on \code{PATH}); if not, \code{attribute_truth_fusion()} errors with
+that reason rather than silently falling back to \code{"majority"}. Unlike
+\code{"majority"}, which fits independently within each entity-year,
+Dawid-Skene-family models fit \emph{once}, jointly, across every
+entity-year for \code{attribute_name} -- they estimate one confusion matrix
+(\code{"dawid_skene"}) or one scalar skill (\code{"one_coin_dawid_skene"}) per
+\emph{source}, pooling its evidence across every entity-year it rated, so
+\code{source_diagnostics} is populated (one row per source, or per
+source-x-true-label-x-observed-label for the full confusion matrix)
+where it is always empty for \code{"majority"}. \code{model_score} for these
+methods is \code{score_type = "posterior_probability"}: a model-estimated
+probability under the Dawid-Skene assumptions (conditionally
+independent worker errors given the true label), not a probability
+validated against any ground truth -- see
+\code{vignette("truth-fusion-crowdkit")} for a worked demonstration of exactly
+how that assumption fails when sources share an upstream data source, and
+why a confident, fully-converged fit is not evidence of accuracy.
+\code{model_diagnostics$converged} is \code{FALSE} (with a \code{warning()}) if the
+EM loop used every one of \code{max_iterations} without its loss changing
+by less than \code{convergence_tolerance}; \code{n_disconnected_components > 1}
+(also a \code{warning()}) means the worker-task graph split into pieces
+that share no evidence, so per-source reliabilities are not jointly
+identifiable from this call alone.
+
+\strong{Arguments a given method doesn't use.} \code{implication_function} is
+reserved for methods not yet implemented (see
+\code{\link[=attribute_truth_backends]{attribute_truth_backends()}}); passing a non-\code{NULL} value emits a
+message noting it has no effect for the method actually used, rather
+than silently ignoring it. \code{max_iterations}/\code{convergence_tolerance} are
+unused by \code{"majority"} (same message) but are the real EM iteration
+cap and convergence tolerance for \code{"dawid_skene"}/
+\code{"one_coin_dawid_skene"}.
 }
 \examples{
 claims <- data.frame(
@@ -137,8 +190,9 @@ fusion_result$candidate_scores
 }
 \seealso{
 \code{\link[=attribute_claims_validate]{attribute_claims_validate()}}; \code{\link[=attribute_truth_backends]{attribute_truth_backends()}};
-\code{vignette("consensus-and-corroboration")} for the relative-claim
-functions that never predict a value.
+\code{vignette("truth-fusion-crowdkit")} for a worked Crowd-Kit example and
+its limitations; \code{vignette("consensus-and-corroboration")} for the
+relative-claim functions that never predict a value.
 
 Other truth fusion:
 \code{\link[=attribute_claims_validate]{attribute_claims_validate()}},

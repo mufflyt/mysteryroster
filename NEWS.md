@@ -6,6 +6,48 @@
   shows a move before each other source, and catch-up curves of the share of
   moves each source has not yet shown. The heatmap is also on the README. The
   code is in the vignette; no functions were added.
+* Added Phase 2 of the truth-discovery extension: `attribute_truth_fusion()`
+  now implements `method = "dawid_skene"` and `"one_coin_dawid_skene"`, an
+  *optional* Python backend (`backend = "crowd_kit"`) via `reticulate`.
+  `reticulate` moves from nothing to `Suggests`; this package still never
+  requires Python to be installed, never installs Python or any Python
+  package itself, and never modifies a user's global Python environment --
+  `attribute_truth_backends()` now actually probes whether a user's own
+  configured Python has `crowd-kit` installed (`"r_native"`/`"majority"`
+  remains always available, with no dependency), and
+  `attribute_truth_fusion()` errors with that exact reason rather than
+  silently falling back to `"majority"` when it isn't. Unlike `"majority"`,
+  which votes independently within each entity-year, these methods fit
+  *once*, jointly, across every entity-year for one attribute, estimating
+  one confusion matrix (`"dawid_skene"`) or one scalar skill
+  (`"one_coin_dawid_skene"`) per source -- `source_diagnostics` is now
+  populated for them (empty for `"majority"`, as before).
+  `on_source_conflict = "multi_value"` is rejected for this backend
+  (Dawid-Skene assumes one label per worker-task). `model_diagnostics` gains
+  `backend_version` and `n_disconnected_components` (both `NA` for
+  `"majority"`); a disconnected worker-task graph or a fit that used every
+  one of `max_iterations` without converging now triggers an explicit
+  `warning()`, never a silent "it worked." New vignette,
+  `truth-fusion-crowdkit`, demonstrates all of this on a simulated
+  physician active/inactive status panel, including two concrete ways this
+  backend converges confidently on a *wrong* answer: a source's rare error
+  coinciding with another source's permanent bias, and two sources that
+  share an upstream feed (literal duplicates), which Dawid-Skene's
+  independence assumption cannot detect from the claims table alone.
+  Reproducibility and the model's own confusion-matrix output were checked
+  directly against the installed `crowd-kit` Python package (not merely
+  asserted); a real gap found along the way -- `crowd-kit`'s sparse
+  confusion-matrix output omits a (worker, label) row entirely for a label
+  that worker never reports at all, which would have let a constant-output,
+  zero-information source look reliable by only ever being scored on the
+  one diagonal cell it happened to have -- is fixed by completing the full
+  source x true-label x observed-label grid and filling genuinely-absent
+  combinations with an exact `0`, never leaving the gap or an `NA`. 405
+  tests passing when `crowd-kit` is configured (378 passing, 10 skipping
+  cleanly without it); 0 errors / 0 warnings / 0 notes on `R CMD check` with
+  vignettes in both states. Phase 3 (`truthdiscovery`'s TruthFinder and
+  friends), geographic implications, and held-out validation against real
+  data are explicitly out of scope for this phase.
 * Hardened `attribute_truth_fusion()` before starting any Phase 2 work:
   added an explicit `on_source_conflict = c("single_value", "multi_value")`
   policy (default `"single_value"`) governing a source that claims more

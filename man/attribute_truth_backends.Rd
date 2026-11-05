@@ -11,13 +11,19 @@ A tibble: \code{backend}, \code{available} (logical), \code{methods_supported},
 \code{status}.
 }
 \description{
-A static capability report, not a live probe -- Phase 1 of this
-package's truth-fusion work implements only \code{"majority"}, entirely in
-R, regardless of whether Python or the optional \code{crowd-kit}/
-\code{truthdiscovery} libraries happen to be installed. This never reports
-a method as available before it is actually wired up, so a caller can
-trust \code{attribute_truth_fusion()} not to silently fall back to a
-different algorithm than the one requested.
+\code{"r_native"} (method \code{"majority"}) never has any dependency, so it is
+always reported as implemented. \code{"crowd_kit"} (methods \code{"dawid_skene"}
+and \code{"one_coin_dawid_skene"}) is an \emph{optional} Python backend via
+\code{reticulate}: this function actually probes whether Python and the
+\code{crowdkit} module are available right now, without ever installing or
+configuring either itself (see \code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}}'s Details on
+\code{backend = "crowd_kit"}) -- so \code{available} can be \code{FALSE} on a machine
+that never touches Python, and \code{TRUE} only once a caller has genuinely
+set up their own Python with \code{crowd-kit} installed. \code{"truthdiscovery"}
+is not implemented in this package version regardless of what is
+installed. This never reports a method as available before it is
+actually wired up, so a caller can trust \code{attribute_truth_fusion()} not
+to silently fall back to a different algorithm than the one requested.
 }
 \examples{
 attribute_truth_backends()

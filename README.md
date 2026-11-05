@@ -266,8 +266,7 @@ trusted given how many identifier-years back it.
 
 Everything above makes only relative claims -- agreement, timing,
 stability -- and deliberately never names a value as correct (see
-Design rules, below). `attribute_truth_fusion()` is the one exception,
-introduced as the first phase of a larger truth-discovery extension:
+Design rules, below). `attribute_truth_fusion()` is the one exception:
 it predicts a value, with an explicit score, and an explicit option to
 abstain rather than guess. See `vignette("truth-fusion")`.
 
@@ -276,8 +275,25 @@ claims <- attribute_claims_validate(long_format_claims)  # entity_id/attribute/s
 fusion_result <- attribute_truth_fusion(claims, method = "majority", abstain_threshold = 0.6)
 fusion_result$predictions        # predicted_value, model_score, abstained, abstention_reason
 fusion_result$candidate_scores   # every candidate value's vote share, ranked
-attribute_truth_backends()       # which methods are actually implemented right now -- only "majority"
+attribute_truth_backends()       # which methods/backends are actually available right now
 ```
+
+`method = "majority"` is entirely in R, with no dependency beyond this
+package. `method = "dawid_skene"`/`"one_coin_dawid_skene"` is an
+*optional* second backend (`backend = "crowd_kit"`, via Python's
+`crowd-kit` through `reticulate`): this package never requires Python,
+never installs Python or any Python package, and never modifies a
+user's global Python environment. `attribute_truth_backends()` actually
+probes whether a user's own configured Python has `crowd-kit` installed
+before reporting it available; if it isn't, `attribute_truth_fusion()`
+errors with that reason rather than silently falling back to
+`"majority"`. Unlike `"majority"`, these methods fit once, jointly,
+across every entity-year for an attribute, estimating one confusion
+matrix or scalar skill per source (`source_diagnostics`) -- and a
+converged, confident fit from them is not evidence of accuracy; see
+`vignette("truth-fusion-crowdkit")` for two concrete demonstrations of
+exactly how that confidence can be wrong (including when two sources
+share an upstream feed).
 
 Votes are counted per *source*, not per row, so a source that submits
 the same value twice only counts once. Whether a source with two
@@ -321,8 +337,8 @@ available before it is actually implemented.
 | Agreement stratified by any covariate, not just spell age | `attribute_agreement_by_covariate()` |
 | Wilson confidence interval on an agreement/concordance rate | `wilson_ci()`, `attribute_agreement_add_ci()` |
 | Validate the long-format multi-source claim schema | `attribute_claims_validate()` |
-| Predict a value by majority vote, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
-| Which truth-fusion methods/backends are actually implemented right now | `attribute_truth_backends()` |
+| Predict a value by majority vote or an optional Dawid-Skene-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
+| Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
 
 ## Design rules
 
