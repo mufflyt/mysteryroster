@@ -14,6 +14,9 @@
 #' @param seed Integer seed, required so the draw is reproducible.
 #' @return The sampled rows with the four design columns added by
 #'   [listing_weights()]; attribute `allocation` holds the per-stratum table.
+#' @examples
+#' frame <- data.frame(id = 1:10, stratum = rep(c("a", "b"), 5))
+#' stratified_listing_sample(frame, allocation = c(a = 2, b = 2), seed = 20261104)
 #' @export
 stratified_listing_sample <- function(frame, allocation, stratum = "stratum", seed) {
   checkmate::assert_data_frame(frame, min.rows = 1)

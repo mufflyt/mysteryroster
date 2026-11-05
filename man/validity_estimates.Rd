@@ -43,3 +43,11 @@ unweighted \code{n}, one row overall or per \code{by} group.
 \description{
 Design-weighted proportion of listings in a given status
 }
+\examples{
+calls <- data.frame(
+  stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
+  listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+design <- listing_validity_design(calls)
+validity_estimates(design)
+validity_estimates(design, by = "stratum")
+}

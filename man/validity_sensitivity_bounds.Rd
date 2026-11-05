@@ -21,3 +21,8 @@ unresolved counted as invalid. Not-attempted listings are excluded from
 every denominator and reported separately. The bounds are asserted to be
 ordered worst <= observed <= best.
 }
+\examples{
+calls <- data.frame(
+  listing_status = c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted"))
+validity_sensitivity_bounds(calls)
+}

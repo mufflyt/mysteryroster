@@ -44,3 +44,9 @@ or from a reached office; it comes only from the disposition categories in
 \code{map}. A non-missing disposition absent from every category is a codebook
 drift and stops the call unless \code{unmapped = "unresolved"}.
 }
+\examples{
+calls <- data.frame(
+  disposition = c("Yes", "No-changed practices", "No-retired or no longer practicing medicine", NA),
+  reached = c(TRUE, TRUE, TRUE, NA))
+classify_listing_status(calls)[, c("disposition", "listing_status", "invalid_reason")]
+}

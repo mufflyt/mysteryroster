@@ -63,6 +63,9 @@ registry_overlap <- function(sources, id = "npi") {
 #'   then `zone`. Stops if the zone counts do not sum to the number of
 #'   identifiers or if any registry's total does not equal the sum of the
 #'   zones containing it (the "does not close" guard).
+#' @examples
+#' ov <- registry_overlap(list(nppes = c("1", "2", "3"), board = c("2", "3", "4")))
+#' overlap_zone_counts(ov)
 #' @export
 overlap_zone_counts <- function(overlap) {
   nm <- attr(overlap, "registries")
@@ -93,6 +96,9 @@ overlap_zone_counts <- function(overlap) {
 #' @param frame Name of the frame registry. Default: the first registry.
 #' @return The frame rows with a `stratum` column (a factor, levels in the
 #'   order of [overlap_zone_counts()]).
+#' @examples
+#' ov <- registry_overlap(list(nppes = c("1", "2", "3"), board = c("2", "3", "4")))
+#' frame_strata(ov, frame = "nppes")
 #' @export
 frame_strata <- function(overlap, frame = attr(overlap, "registries")[1]) {
   nm <- attr(overlap, "registries")
@@ -113,6 +119,12 @@ frame_strata <- function(overlap, frame = attr(overlap, "registries")[1]) {
 #' @param overlap Output of [registry_overlap()].
 #' @param ... Passed to `eulerr::euler()` (for example `shape = "ellipse"`).
 #' @return The `eulerr` fit object, invisibly; call `plot()` on it.
+#' @examples
+#' ov <- registry_overlap(list(nppes = c("1", "2", "3"), board = c("2", "3", "4")))
+#' if (requireNamespace("eulerr", quietly = TRUE)) {
+#'   fit <- plot_registry_overlap(ov)
+#'   plot(fit, quantities = TRUE)
+#' }
 #' @export
 plot_registry_overlap <- function(overlap, ...) {
   if (!requireNamespace("eulerr", quietly = TRUE)) {

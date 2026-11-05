@@ -30,3 +30,10 @@ stage must imply \code{TRUE} at every earlier stage, otherwise the call stops.
 Counts are unweighted unless \code{weights} names a column, in which case the
 counts are weighted sums (the unweighted \code{n} is kept alongside).
 }
+\examples{
+df <- data.frame(
+  attempted = c(TRUE, TRUE, TRUE, FALSE),
+  reached   = c(TRUE, TRUE, FALSE, FALSE),
+  confirmed = c(TRUE, FALSE, FALSE, FALSE))
+validation_cascade(df, stages = c("attempted", "reached", "confirmed"))
+}

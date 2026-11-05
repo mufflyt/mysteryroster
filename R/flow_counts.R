@@ -10,6 +10,11 @@
 #'   reached, `NA` not attempted.
 #' @param by Optional grouping column.
 #' @return A tibble, one row overall (group `"all"`) plus one per group.
+#' @examples
+#' calls <- data.frame(
+#'   listing_status = c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted"),
+#'   reached = c(TRUE, TRUE, FALSE, NA))
+#' listing_flow_counts(calls)
 #' @export
 listing_flow_counts <- function(df, status = "listing_status", reached = "reached", by = NULL) {
   checkmate::assert_data_frame(df)

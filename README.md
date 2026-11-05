@@ -46,6 +46,10 @@ remotes::install_github("mufflyt/mysteryroster")
   below, first on a three-NPI toy example and then on a simulated
   1,500-clinician panel with eight figures, including the full
   manuscript-paragraph output of `format_no_gold_standard_prose()`.
+- `vignette("consensus-and-corroboration")` -- beyond pairwise, with
+  three or more sources: how much of the group agrees, whether that
+  agreement holds up year over year, and which source the group tends
+  to converge toward.
 
 ## How the pieces fit
 
@@ -213,6 +217,32 @@ years, source-specific mechanisms, verbs like "confirming") is fixed to the
 OB/GYN midwifery study. Treat its output as a first draft; see
 `?format_no_gold_standard_prose` for what it requires and what it fixes.
 
+## Beyond pairwise: consensus and corroboration
+
+With three or more sources, two further relative claims become
+available -- see `vignette("consensus-and-corroboration")`:
+
+```r
+# How much of the group agrees, per identifier-year (never which value is right):
+tier <- attribute_consensus_tier(list(nppes = nppes_df, dac = dac_df, op = op_df, pecos = pecos_df),
+                                  attribute = "state")
+
+# Does that consensus hold up year over year, or churn?
+attribute_consensus_tier_flow(tier)
+
+# Which source does the rest of the comparison set tend to converge toward?
+attribute_source_corroboration(list(nppes = nppes_panel, op = op_panel, dac = dac_panel),
+                                attributes = "state")
+```
+
+`attribute_consensus_tier()` and `attribute_consensus_tier_flow()` were
+ported from a one-off script written for a midwifery workforce audit
+outside this package, generalized past that script's hardcoded
+assumption of exactly four sources. None of the three functions ever
+picks a value as the group's answer -- only the size of the largest
+agreeing group, whether that size holds up over time, or which source
+others tend to adopt.
+
 ## From protocol to function
 
 | Protocol step | Function |
@@ -233,6 +263,9 @@ OB/GYN midwifery study. Treat its output as a first draft; see
 | Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |
 | Administrative enrollment arrival/departure timing around a panel move | `enrollment_move_lead_lag()` |
 | Manuscript-ready paragraphs from the three lead-lag approaches above | `format_no_gold_standard_prose()` |
+| N-way consensus tier (unanimous / majority / split) across 3+ sources at once | `attribute_consensus_tier()` |
+| Does a consensus tier persist across years, or churn? | `attribute_consensus_tier_flow()` |
+| Per-source ranking: which source does the comparison set converge toward? | `attribute_source_corroboration()` |
 
 ## Design rules
 

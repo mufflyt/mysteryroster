@@ -29,3 +29,9 @@ Counts sampled, attempted, reached, definitive, confirmed valid, confirmed
 invalid, unresolved and not attempted, overall and per group, and stops if
 the categories do not partition the sample.
 }
+\examples{
+calls <- data.frame(
+  listing_status = c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted"),
+  reached = c(TRUE, TRUE, FALSE, NA))
+listing_flow_counts(calls)
+}

@@ -6,6 +6,21 @@
   shows a move before each other source, and catch-up curves of the share of
   moves each source has not yet shown. The heatmap is also on the README. The
   code is in the vignette; no functions were added.
+* Added `attribute_consensus_tier()` and `attribute_consensus_tier_flow()`,
+  ported and generalized from a one-off midwifery-workforce-audit script
+  (`build_cross_source_comparison.R`) that hardcoded its consensus rule to
+  exactly four sources and a fixed 2021-2025 window. The generalized rule
+  (unanimous when everyone agrees, majority when the largest group is a
+  strict majority, split otherwise) reduces to that script's exact
+  4-source behavior as a special case. Also added
+  `attribute_source_corroboration()`, aggregating
+  `attribute_lead_lag_matrix()` across every pair of 3+ sources into a
+  per-source ranking of which one the comparison set tends to converge
+  toward. New vignette, `consensus-and-corroboration`. Fixed a real bug
+  found while writing its examples: `attribute_consensus_tier()`'s
+  `interaction()` + `split()` grouping silently dropped every row when
+  `year = NULL` (an all-`NA` grouping column has zero factor levels by
+  default) -- switched to a plain pasted string key.
 * New vignette, `attribute-agreement`. It covers `attribute_agreement()`,
   `attribute_agreement_summary()`, and the freshness functions
   `record_age_years()`, `record_age_band()`, and
@@ -38,6 +53,14 @@
 
 # mysteryroster 0.3.0
 
+* Added `@examples` to the 22 exported functions that had none -- only
+  `registry_overlap()`, `attribute_spell_age()`, and `attribute_agreement()`
+  carried a runnable example before this, so `?function` and a pkgdown
+  reference page showed nothing for the other 22. Every example is
+  executed (not just asserted) by `R CMD check`, including the two most
+  elaborate ones: `validity_model()`'s survey-weighted logistic
+  regression and `format_no_gold_standard_prose()`'s full three-paragraph
+  manuscript-text generation.
 * Fixed a real `R CMD check` NOTE in `attribute_spell_age()`: it called
   base `ave()` unqualified, which `R CMD check` flags as an undefined
   global function since the package never declares a bare `importFrom`

@@ -20,3 +20,7 @@ The sampling frame of a listing-validity study is one registry (usually
 NPPES); the strata are that registry's overlap with the others. Rows not in
 the frame registry are dropped, and \code{stratum} is the overlap zone.
 }
+\examples{
+ov <- registry_overlap(list(nppes = c("1", "2", "3"), board = c("2", "3", "4")))
+frame_strata(ov, frame = "nppes")
+}

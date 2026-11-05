@@ -28,3 +28,7 @@ sampled row, the stratum population \code{pop_N}, the stratum sample size
 allocation larger than a stratum's population, or naming a stratum the
 frame does not contain, stops the call.
 }
+\examples{
+frame <- data.frame(id = 1:10, stratum = rep(c("a", "b"), 5))
+stratified_listing_sample(frame, allocation = c(a = 2, b = 2), seed = 20261104)
+}

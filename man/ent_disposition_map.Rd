@@ -19,3 +19,6 @@ changed practices (invalid here, active elsewhere). \code{retired}: retired,
 deceased or left medicine. \code{not_specified}: a "no" with no reason given.
 Categories must be disjoint.
 }
+\examples{
+ent_disposition_map()
+}

@@ -18,3 +18,10 @@ The \code{eulerr} fit object, invisibly; call \code{plot()} on it.
 Requires the \code{eulerr} package. Zone counts come from
 \code{\link[=overlap_zone_counts]{overlap_zone_counts()}}, so the figure cannot disagree with the table.
 }
+\examples{
+ov <- registry_overlap(list(nppes = c("1", "2", "3"), board = c("2", "3", "4")))
+if (requireNamespace("eulerr", quietly = TRUE)) {
+  fit <- plot_registry_overlap(ov)
+  plot(fit, quantities = TRUE)
+}
+}

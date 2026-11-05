@@ -1,0 +1,114 @@
+---
+title: "Beyond Pairwise: Consensus and Corroboration"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Beyond Pairwise: Consensus and Corroboration}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+`attribute_agreement()` (`vignette("attribute-agreement")`) and
+`attribute_lead_lag_matrix()` (`vignette("lead-lag-staleness")`) both
+compare exactly two sources at a time. With three or more, two further
+relative claims become available -- still never "this source is
+correct," only claims about the *group*: how much of it agrees, whether
+that agreement holds up over time, and which source the group tends to
+converge toward.
+
+The first two functions below were ported from a one-off script
+(`build_cross_source_comparison.R`) written for a midwifery workforce
+audit outside this package, then generalized past that script's
+hardcoded assumption of exactly four sources and a fixed 2021--2025
+window.
+
+## How much of the group agrees?
+
+Four simulated sources for three NPIs. NPI 1 is unanimous; NPI 2 splits
+two ways with no agreeing pair; NPI 3 has a 3-of-4 majority:
+
+```{r consensus-tier}
+s <- list(
+  nppes = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "CO", "TX")),
+  dac   = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "NM", "TX")),
+  op    = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "NM", "OK")),
+  pecos = data.frame(npi = c("1", "2", "3"), year = 2024, state = c("CO", "CO", "TX"))
+)
+attribute_consensus_tier(s, attribute = "state")
+```
+
+NPI 2's two pairs that happen to agree (`dac`/`op` on `NM`) still only
+reach 2 of 4 sources -- not a strict majority, so it is `"split"`, not
+`"majority"`. No value is ever picked as the group's answer; only the
+size of the largest agreeing group is reported.
+
+## Does that consensus hold up over time?
+
+Given a tier classification for each identifier in each year (for
+example, `attribute_consensus_tier()`'s own output, run once per year
+and stacked), `attribute_consensus_tier_flow()` counts year-over-year
+transitions between tiers -- a claim about *stability*, not about who
+moved:
+
+```{r consensus-flow}
+tiers <- data.frame(
+  id   = rep(c("1", "2", "3"), 2),
+  year = rep(c(2023, 2024), each = 3),
+  tier = c("unanimous", "split", "majority", "unanimous", "unanimous", "split")
+)
+attribute_consensus_tier_flow(tiers)
+```
+
+NPI 1 stayed unanimous both years; NPI 2 resolved from split to
+unanimous; NPI 3 degraded from majority to split. By default
+(`require_all_years = TRUE`) the flow is restricted to identifiers
+present in every year supplied, so apparent churn is never actually
+just sources entering or leaving the comparison.
+
+## Which source does the group converge toward?
+
+`attribute_lead_lag_matrix()` answers "who moved first" for one pair.
+Aggregating across every pair of three or more sources gives a
+per-source ranking: how often did *other* sources eventually adopt this
+one's value, versus how often did this source get corrected toward
+someone else's? Source `b` below already has the value that `a` and `c`
+both move toward:
+
+```{r corroboration}
+a <- data.frame(npi = c("1", "1"), year = c(2022, 2023), state = c("CO", "NM"))
+b <- data.frame(npi = c("1", "1"), year = c(2022, 2023), state = c("NM", "NM"))
+c <- data.frame(npi = c("1", "1"), year = c(2022, 2023), state = c("CO", "NM"))
+attribute_source_corroboration(list(a = a, b = b, c = c), attributes = "state")
+```
+
+`b`'s `lead_rate` of 1 says the rest of this small comparison set
+converged toward it -- not that `b` is correct, only that it is the one
+others caught up to, across the `n_pairs` opportunities it actually had.
+A pair that shares no overlapping years is skipped with a message
+rather than failing the whole call:
+
+```{r corroboration-skip}
+d <- data.frame(npi = "1", year = 2025, state = "CO") # no year in common with a or b
+suppressWarnings(attribute_source_corroboration(list(a = a, b = b, d = d), attributes = "state"))
+```
+
+## What this layer does and doesn't add
+
+A high concordance tier, a stable flow, or a high corroboration rate
+are all still relative claims about the comparison set, not about
+truth -- a value every source agrees on can still be wrong if every
+source traces back to the same original error (see
+`vignette("attribute-agreement")`'s note on two sources agreeing on a
+stale value). What this layer adds over the pairwise functions is
+scale: a claim about the whole group at once, and whether that claim
+is the kind that holds up year over year.

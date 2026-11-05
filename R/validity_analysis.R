@@ -7,6 +7,11 @@
 #' @param strata,weights Column names. Defaults `"stratum"`, `"weight"`.
 #' @param ids Optional cluster column name; `NULL` means independent listings.
 #' @return A `survey.design` object.
+#' @examples
+#' calls <- data.frame(
+#'   stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
+#'   listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+#' listing_validity_design(calls)
 #' @export
 listing_validity_design <- function(df, strata = "stratum", weights = "weight", ids = NULL) {
   checkmate::assert_data_frame(df, min.rows = 1)
@@ -43,6 +48,13 @@ listing_validity_design <- function(df, strata = "stratum", weights = "weight", 
 #'   dropped from the design.
 #' @return A tibble with `estimate`, `se`, `ci_low`, `ci_high` and the
 #'   unweighted `n`, one row overall or per `by` group.
+#' @examples
+#' calls <- data.frame(
+#'   stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
+#'   listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+#' design <- listing_validity_design(calls)
+#' validity_estimates(design)
+#' validity_estimates(design, by = "stratum")
 #' @export
 validity_estimates <- function(design, status = "listing_status", level = "confirmed_valid",
                                by = NULL, definitive_only = FALSE, level_ci = 0.95,
@@ -93,6 +105,10 @@ validity_estimates <- function(design, status = "listing_status", level = "confi
 #' @param df Data frame with a status column.
 #' @param status Column name. Default `"listing_status"`.
 #' @return A tibble with `scenario`, `n_valid`, `denominator`, `pct_valid`.
+#' @examples
+#' calls <- data.frame(
+#'   listing_status = c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted"))
+#' validity_sensitivity_bounds(calls)
 #' @export
 validity_sensitivity_bounds <- function(df, status = "listing_status") {
   checkmate::assert_data_frame(df)
@@ -129,6 +145,14 @@ validity_sensitivity_bounds <- function(df, status = "listing_status") {
 #'   `~ stratum + rural + record_age_years`.
 #' @param status,level As in [validity_estimates()].
 #' @return A tibble with `term`, `estimate` (odds ratio), `conf.low`, `conf.high`.
+#' @examples
+#' calls <- data.frame(
+#'   stratum = c("a", "a", "b", "b", "a", "b"), weight = c(2, 2, 1, 1, 2, 1),
+#'   listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid",
+#'                       "confirmed_invalid", "confirmed_valid", "confirmed_valid"),
+#'   rural = c(TRUE, TRUE, FALSE, FALSE, FALSE, TRUE))
+#' design <- listing_validity_design(calls)
+#' validity_model(design, ~ rural)
 #' @export
 validity_model <- function(design, formula, status = "listing_status", level = "confirmed_valid") {
   checkmate::assert_class(design, "survey.design")
