@@ -71,41 +71,6 @@
        crowdkit_version = crowdkit_version)
 }
 
-#' Count connected components of the worker-task bipartite graph
-#'
-#' Internal, not exported. A Dawid-Skene-family model estimates one
-#' confusion matrix (or skill) per worker by pooling evidence across every
-#' task that worker rated; if the worker-task bipartite graph splits into
-#' more than one connected component, parameters in different components
-#' share no evidence and are not jointly identifiable from this call alone
-#' -- `attribute_truth_fusion()` surfaces this count rather than silently
-#' reporting one confident model.
-#'
-#' @param task_ids,worker_ids Parallel vectors, one entry per rated
-#'   (task, worker) edge.
-#' @return An integer count of connected components.
-#' @noRd
-.mysteryroster_bipartite_components <- function(task_ids, worker_ids) {
-  unique_tasks <- sort(unique(task_ids))
-  unique_workers <- sort(unique(worker_ids))
-  task_code <- match(task_ids, unique_tasks)
-  worker_code <- match(worker_ids, unique_workers) + length(unique_tasks)
-  n_nodes <- length(unique_tasks) + length(unique_workers)
-
-  parent <- seq_len(n_nodes)
-  find_root <- function(x) {
-    while (parent[x] != x) x <- parent[x]
-    x
-  }
-  for (i in seq_along(task_code)) {
-    root_a <- find_root(task_code[i])
-    root_b <- find_root(worker_code[i])
-    if (root_a != root_b) parent[max(root_a, root_b)] <- min(root_a, root_b)
-  }
-  roots <- vapply(seq_len(n_nodes), find_root, integer(1))
-  length(unique(roots))
-}
-
 #' Fit a Crowd-Kit Dawid-Skene-family model and standardize its output
 #'
 #' Internal, not exported. Called only by [attribute_truth_fusion()] once it
@@ -117,15 +82,7 @@
 .mysteryroster_crowdkit_fit <- function(claims_used, attribute_name, method,
                                          max_iterations, convergence_tolerance,
                                          on_source_conflict, abstain_threshold) {
-  if (on_source_conflict != "single_value") {
-    stop(sprintf(paste0(
-      "attribute_truth_fusion: on_source_conflict = '%s' is not supported by backend ",
-      "'crowd_kit' -- %s assumes exactly one label per worker-task, so a source with ",
-      "internally conflicting claims has no well-defined vote to contribute. Use ",
-      "on_source_conflict = 'single_value' (the default), or use method = 'majority' if ",
-      "you need 'multi_value' semantics."
-    ), on_source_conflict, method), call. = FALSE)
-  }
+  .mysteryroster_fusion_require_single_value(on_source_conflict, method, "crowd_kit")
 
   probe <- .mysteryroster_crowdkit_probe()
   if (!isTRUE(probe$available)) {
@@ -133,61 +90,18 @@
          call. = FALSE)
   }
 
-  # Same per-source-per-task dedup rule as the majority backend, applied
-  # globally instead of per entity-year: one row per distinct
-  # (entity, year, source, value).
-  vote_cols <- c("entity_id", "reference_year", "source_id", "claimed_value")
-  votes_long <- claims_used[!duplicated(claims_used[vote_cols]), vote_cols, drop = FALSE]
-
-  # Collision-safe task surrogate key via merge() on the real columns --
-  # never a pasted string -- exactly the fix applied to the majority
-  # backend's own grouping.
-  task_key_tbl <- unique(votes_long[c("entity_id", "reference_year")])
-  task_key_tbl <- task_key_tbl[order(task_key_tbl$entity_id, task_key_tbl$reference_year), , drop = FALSE]
-  task_key_tbl$task_id <- seq_len(nrow(task_key_tbl))
-  votes_long <- merge(votes_long, task_key_tbl, by = c("entity_id", "reference_year"), sort = FALSE)
-
-  # on_source_conflict = "single_value": a source claiming >1 distinct value
-  # for the same task is excluded from that task entirely -- grouped with
-  # split() on the integer task_id, the same safe pattern the majority
-  # backend uses, never a pasted key.
-  flagged_groups <- lapply(split(votes_long, votes_long$task_id), function(task_rows) {
-    source_value_counts <- table(task_rows$source_id)
-    task_rows$excluded <- task_rows$source_id %in% names(source_value_counts)[source_value_counts > 1L]
-    task_rows
-  })
-  votes_flagged <- do.call(rbind, flagged_groups)
-  excluded_per_task <- stats::setNames(rep(0L, nrow(task_key_tbl)), as.character(task_key_tbl$task_id))
-  # n_sources_excluded counts distinct excluded SOURCES, not excluded rows --
-  # a source contributing 2 conflicting rows to one task is 1 excluded
-  # source, matching the majority backend's n_sources_excluded convention.
-  excluded_counts <- vapply(flagged_groups, function(task_rows) {
-    length(unique(task_rows$source_id[task_rows$excluded]))
-  }, integer(1))
-  excluded_per_task[names(excluded_counts)] <- as.integer(excluded_counts)
-  votes_used <- votes_flagged[!votes_flagged$excluded, setdiff(names(votes_flagged), "excluded"), drop = FALSE]
+  built <- .mysteryroster_fusion_build_tasks(claims_used, on_source_conflict)
+  task_key_tbl <- built$task_key_tbl
+  votes_used <- built$votes_used
+  excluded_per_task <- built$excluded_per_task
+  empty_rows <- .mysteryroster_fusion_empty_task_rows(
+    task_key_tbl, attribute_name, method, excluded_per_task, "posterior_probability"
+  )
+  empty_prediction_row <- empty_rows$prediction_row
+  empty_candidate_rows <- empty_rows$candidate_rows
 
   n_total_tasks <- nrow(task_key_tbl)
   tasks_with_votes <- sort(unique(votes_used$task_id))
-  tasks_without_votes <- setdiff(task_key_tbl$task_id, tasks_with_votes)
-
-  empty_prediction_row <- function(task_id) {
-    task_info <- task_key_tbl[task_key_tbl$task_id == task_id, , drop = FALSE]
-    tibble::tibble(
-      entity_id = task_info$entity_id, attribute = attribute_name,
-      reference_year = task_info$reference_year, predicted_value = NA_character_,
-      method = method, model_score = NA_real_, score_type = "posterior_probability",
-      n_sources = 0L, n_sources_excluded = excluded_per_task[[as.character(task_id)]],
-      n_candidate_values = 0L, abstained = TRUE, abstention_reason = "no_single_value_sources"
-    )
-  }
-  empty_candidate_rows <- function() {
-    tibble::tibble(
-      entity_id = character(0), attribute = character(0), reference_year = integer(0),
-      candidate_value = character(0), n_votes = integer(0), vote_share = numeric(0),
-      score_type = character(0)
-    )
-  }
 
   if (!length(tasks_with_votes)) {
     predictions_tbl <- dplyr::bind_rows(lapply(task_key_tbl$task_id, empty_prediction_row))

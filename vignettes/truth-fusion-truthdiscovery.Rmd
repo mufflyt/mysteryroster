@@ -1,0 +1,213 @@
+---
+title: "Truth Fusion, Part 3: An Optional TruthFinder-Family Backend"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Truth Fusion, Part 3: An Optional TruthFinder-Family Backend}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+```{r setup}
+library(mysteryroster)
+td_backend <- attribute_truth_backends()
+td_available <- isTRUE(td_backend$available[td_backend$backend == "truthdiscovery"])
+knitr::opts_chunk$set(eval = td_available)
+```
+
+`vignette("truth-fusion")` covers `method = "majority"` (R-native);
+`vignette("truth-fusion-crowdkit")` covers `method = "dawid_skene"`/
+`"one_coin_dawid_skene"` (optional, via `crowd-kit`). This vignette covers
+the third and, for now, last backend: `method = "sums"`, `"average_log"`,
+`"investment"`, `"pooled_investment"`, and `"truthfinder"`, via the
+`joesingo/truthdiscovery` Python package.
+
+```{r availability-note, eval = TRUE}
+td_backend[td_backend$backend == "truthdiscovery", ]
+```
+
+## A licensing note before anything else
+
+`crowd-kit` is Apache-2.0; `truthdiscovery` is **GPL-3.0**. mysteryroster
+itself is MIT licensed and does not vendor or incorporate any
+`truthdiscovery` source -- `.mysteryroster_truthdiscovery_fit()` only calls
+the package a user has installed, at arm's length, through `reticulate`,
+exactly as it would call any other optional runtime dependency. If you
+redistribute a bundle that includes the actual `truthdiscovery` package
+alongside mysteryroster, GPL-3.0's copyleft terms apply to *that bundle*;
+they do not convert mysteryroster's own source. This is a factual
+description of how the dependency is used, not legal advice -- get a real
+legal review before any formal redistribution (a CRAN submission that
+bundles Python dependencies, for instance).
+
+A second, practical note: `truthdiscovery`'s last release predates
+Python's removal of `distutils`, so `pip install truthdiscovery` fails at
+build time on Python >= 3.12 (`ModuleNotFoundError: No module named
+'distutils'`), even though the installed package runs fine once it is
+actually installed into an older interpreter (this was verified directly,
+against Python 3.11). If you want both this backend and `crowd_kit`
+available at once, they currently need **separate** Python environments.
+
+If `available` is `FALSE` above, `attribute_truth_fusion(method =
+"truthfinder", ...)` errors with that exact reason -- never a silent
+fall-back to `"majority"` -- and the code below is shown but not executed.
+
+## The same simulated panel, three backends
+
+Same 16 simulated NPIs as `vignette("truth-fusion-crowdkit")`: `source_1`
+correct on 15 of 16, `source_2` always correct, `source_3` a pure
+false-positive-biased source that always reports `"active"` regardless of
+the true status.
+
+```{r simulate}
+entities <- 1:16
+true_status <- ifelse(entities %% 2 == 1, "active", "inactive")
+claims <- do.call(rbind, lapply(seq_along(entities), function(i) {
+  e <- entities[i]
+  t <- true_status[i]
+  source_1 <- if (e == 6) "active" else t
+  data.frame(
+    entity_id = as.character(e), attribute = "status",
+    source_id = c("source_1", "source_2", "source_3"),
+    claimed_value = c(source_1, t, "active"), reference_year = 2024
+  )
+}))
+```
+
+```{r fit-sums}
+sums_result <- attribute_truth_fusion(claims, method = "sums")
+sums_result
+unique(sums_result$source_diagnostics[c("source_id", "reliability_score")])
+```
+
+Like the Crowd-Kit backend, `"sums"` fits once, jointly, across all 16
+entity-years, and correctly puts `source_3`'s trust score well below the
+other two -- but `source_diagnostics$true_label`/`observed_label`/
+`error_probability` are all `NA` here. `truthdiscovery`'s trust-propagation
+algorithms estimate a single scalar trust per source, never a full
+confusion matrix; only `crowd-kit`'s `"dawid_skene"` does that.
+
+## Belief scores are explicitly uncalibrated -- not probabilities
+
+```{r score-type}
+sums_result$predictions$score_type[1]
+```
+
+`score_type = "uncalibrated_belief"`, never `"posterior_probability"`.
+This is not a cautious label applied just in case -- it reflects a
+directly verified property of these algorithms. `crowd-kit`'s `probas_`
+sum to 1 across a task's candidate values, because it is modeling a
+genuine categorical posterior; `truthdiscovery`'s belief update is not
+normalized that way:
+
+```{r uncalibrated-check}
+tf_result <- attribute_truth_fusion(claims, method = "truthfinder")
+entity_6 <- tf_result$candidate_scores[tf_result$candidate_scores$entity_id == "6", ]
+entity_6[, c("candidate_value", "vote_share")]
+sum(entity_6$vote_share)
+```
+
+`"active"` and `"inactive"` belief for entity 6 sum to well over 1 --
+`TruthFinder`'s belief scores are a confidence measure the algorithm
+itself defines, not a probability distribution. Treat `model_score` as a
+within-algorithm ranking signal, never as a calibrated chance of being
+correct.
+
+## Convergence is not guaranteed at this package's default settings
+
+```{r pooled-investment-default, warning = TRUE}
+default_pi <- attribute_truth_fusion(claims, method = "pooled_investment")
+default_pi$model_diagnostics[, c("converged", "n_iterations")]
+all(default_pi$predictions$abstained)
+```
+
+This is a real, reproducible finding, not a contrived example:
+`"pooled_investment"`, with this package's shared default
+(`max_iterations = 100`), genuinely fails to converge on this fixture --
+`truthdiscovery` raises rather than returning a partial result, so every
+prediction abstains with `abstention_reason = "model_did_not_converge"`.
+Raising `max_iterations` resolves it here:
+
+```{r pooled-investment-raised}
+raised_pi <- attribute_truth_fusion(claims, method = "pooled_investment", max_iterations = 500L)
+raised_pi$model_diagnostics[, c("converged", "n_iterations")]
+```
+
+It converges at 109 iterations on this data -- comfortably under 500, but
+over this package's default of 100. Always check
+`model_diagnostics$converged` rather than assuming the default is enough;
+this is exactly the kind of silent-looking failure (an all-abstained
+result, not a crash) that is easy to miss if you don't check.
+
+## Diagnostics shared with the Crowd-Kit backend
+
+`n_disconnected_components > 1` carries the same meaning as it does for
+`dawid_skene`/`one_coin_dawid_skene`: sources in different components
+share no task in common, so their estimated trust is not jointly
+identifiable from this call alone.
+
+```{r disconnected, warning = TRUE}
+disconnected_claims <- data.frame(
+  entity_id = c("1", "1", "2", "2"), attribute = "state",
+  source_id = c("a", "b", "c", "d"),
+  claimed_value = c("CO", "CO", "NM", "NM"), reference_year = 2024
+)
+attribute_truth_fusion(disconnected_claims, method = "sums")$model_diagnostics[
+  , "n_disconnected_components"
+]
+```
+
+`on_source_conflict = "multi_value"` is rejected for every method in this
+backend, for the same reason as the Crowd-Kit backend: these algorithms
+assume exactly one claim per source-task.
+
+```{r multi-value-error, error = TRUE, eval = TRUE}
+attribute_truth_fusion(claims, method = "sums", on_source_conflict = "multi_value")
+```
+
+## `implication_function`: evaluated, disabled by default
+
+TruthFinder's original design lets belief in one claim influence belief in
+a related claim -- for example, two candidate addresses close enough to
+plausibly be a rounding or transcription variant of the same real
+location. `truthdiscovery` exposes this as `implication_function`, and
+`attribute_truth_fusion()` passes an R function straight through to it:
+
+```{r implication}
+no_op_implication <- function(var, val1, val2) 0
+with_implication <- attribute_truth_fusion(
+  claims, method = "truthfinder", implication_function = no_op_implication
+)
+identical(with_implication$predictions, tf_result$predictions)
+```
+
+A no-op implication (always `0`, meaning "no influence between any two
+claims") reproduces the plain result exactly, confirming the passthrough
+itself does not silently change anything. This package deliberately
+**does not** ship a geographic-distance implication function, and
+`implication_function` defaults to `NULL` (disabled) -- per the project's
+own phase plan, geographic similarity is evaluated as a mechanism here,
+not yet built out as a feature, and ordinary TruthFinder should be
+compared against majority voting and Dawid-Skene on its own merits before
+any geographic extension is layered on top. Every call also crosses the
+R/Python boundary for each pair of claims being compared, so a non-trivial
+implication function will be slow on large datasets.
+
+## What this does and doesn't establish
+
+Exactly as with the Crowd-Kit backend: `"sums"`, `"average_log"`,
+`"investment"`, `"pooled_investment"`, and `"truthfinder"` are a reliable,
+optional backend -- not yet a validated source of truth, and not yet
+compared against real held-out physician-location data. They can rank a
+degenerate, always-wrong-on-negatives source correctly (the first example
+above); they can also fail to converge at this package's own default
+settings without any crash to announce it (the second example) --
+inspect `model_diagnostics` rather than trusting a result just because it
+returned. No accuracy claim is made here, or should be made from this
+vignette alone, about whether any of these methods out-performs
+`"majority"` at the actual task this package exists for -- that is
+explicitly the next phase of work, once a held-out validation dataset
+exists.

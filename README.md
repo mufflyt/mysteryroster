@@ -269,21 +269,27 @@ attribute_truth_backends()       # which methods/backends are actually available
 ```
 
 `method = "majority"` is entirely in R, with no dependency beyond this
-package. `method = "dawid_skene"`/`"one_coin_dawid_skene"` is an
-*optional* second backend (`backend = "crowd_kit"`, via Python's
-`crowd-kit` through `reticulate`): this package never requires Python,
-never installs Python or any Python package, and never modifies a
-user's global Python environment. `attribute_truth_backends()` actually
-probes whether a user's own configured Python has `crowd-kit` installed
-before reporting it available; if it isn't, `attribute_truth_fusion()`
+package. Two further method families are *optional* second backends via
+Python through `reticulate`: `"dawid_skene"`/`"one_coin_dawid_skene"`
+(`backend = "crowd_kit"`, Apache-2.0) and `"sums"`/`"average_log"`/
+`"investment"`/`"pooled_investment"`/`"truthfinder"` (`backend =
+"truthdiscovery"`, **GPL-3.0** -- mysteryroster, MIT, calls it at arm's
+length and vendors none of its source). Neither is ever required,
+auto-installed, or silently substituted: this package never installs
+Python or any Python package, and never modifies a user's global Python
+environment. `attribute_truth_backends()` actually probes whether a
+user's own configured Python has the relevant module installed before
+reporting a backend available; if it isn't, `attribute_truth_fusion()`
 errors with that reason rather than silently falling back to
-`"majority"`. Unlike `"majority"`, these methods fit once, jointly,
-across every entity-year for an attribute, estimating one confusion
-matrix or scalar skill per source (`source_diagnostics`) -- and a
-converged, confident fit from them is not evidence of accuracy; see
-`vignette("truth-fusion-crowdkit")` for two concrete demonstrations of
-exactly how that confidence can be wrong (including when two sources
-share an upstream feed).
+`"majority"`. Unlike `"majority"`, both optional backends fit once,
+jointly, across every entity-year for an attribute, estimating one
+reliability value per source (`source_diagnostics`) -- and a converged,
+confident fit from either is not evidence of accuracy; see
+`vignette("truth-fusion-crowdkit")` and
+`vignette("truth-fusion-truthdiscovery")` for concrete, verified
+demonstrations of exactly how that confidence can be wrong (including
+when two sources share an upstream feed, and a real convergence failure
+at this package's own default settings).
 
 Votes are counted per *source*, not per row, so a source that submits
 the same value twice only counts once. Whether a source with two
@@ -327,7 +333,7 @@ available before it is actually implemented.
 | Agreement stratified by any covariate, not just spell age | `attribute_agreement_by_covariate()` |
 | Wilson confidence interval on an agreement/concordance rate | `wilson_ci()`, `attribute_agreement_add_ci()` |
 | Validate the long-format multi-source claim schema | `attribute_claims_validate()` |
-| Predict a value by majority vote or an optional Dawid-Skene-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
+| Predict a value by majority vote, or an optional Dawid-Skene-family or TruthFinder-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
 | Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
 
 ## Design rules
