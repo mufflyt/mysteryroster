@@ -287,6 +287,11 @@ test_that("attribute_truth_fusion messages (does not error) when an unused argum
                         claimed_value = "CO", reference_year = 2024)
   expect_message(attribute_truth_fusion(claims, method = "majority", max_iterations = 5L),
                   "'max_iterations' is not used")
+  # The message alone doesn't prove the argument had no effect -- confirm the
+  # result is identical to the default, not just that a message was printed.
+  with_override <- suppressMessages(attribute_truth_fusion(claims, method = "majority", max_iterations = 5L))
+  with_default <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_equal(with_override$predictions, with_default$predictions)
 })
 
 test_that("attribute_truth_fusion's source_diagnostics is an empty, typed tibble for majority", {

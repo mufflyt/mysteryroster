@@ -179,3 +179,68 @@ reliably when sources disagree"), not "is method X accurate" standalone.
 - Must not report a benchmark accuracy number before this protocol's leakage rules (§2) are
   implemented and checked — "it ran" is not "it's valid."
 - Must not begin before a real reference table (§1) exists.
+
+## 11. Gaps found by red-teaming this protocol against itself
+
+A systematic audit (20 adversarial scenarios against this document's own text — see
+`docs/saboteur-test-matrix.md`, Part A) found most of the leakage/gaming attacks already closed by
+§2/§6/§8, but these real gaps, not yet addressed above, before any Phase 4 implementation starts:
+
+1. **Missing `verification_date` is unguarded.** §1 guarantees `reference_city`/`reference_state`
+   are never missing "by construction," but says nothing about `verification_date` itself being
+   missing or defaulted (e.g. silently set to `reference_year`'s Jan 1). The §7 temporal holdout
+   depends entirely on this field being real; it must be a required, validated column, with a row
+   missing it excluded from eligibility exactly like a row missing a location.
+2. **Normalization between the two tables is assumed, not enforced.** §8 says comparison uses
+   "whatever normalization `attribute_claims_validate()` already documents" — but that function's
+   own docs state it does *no* transformation of `claimed_value` at all. As written, §8 relies on
+   nothing. Fix: `reference_city`/`reference_state` and `claimed_value` must be produced through
+   one shared normalization step (e.g. both always 2-letter USPS state codes, both always
+   title-cased city names) *before* either table is built, not left to chance at comparison time.
+3. **Verification-selection bias is unaddressed.** §1 defends against *imputing* a missing
+   reference row, but not against the reference table itself being systematically easier to build
+   for stable, easy cases (if discordant/contested physician-years are also the ones a phone audit
+   is more likely to fail to resolve). This would make the discordant cohort (§5) smaller and less
+   representative than it looks. Track and report the verification *attempt* rate per cohort, not
+   just the completed-verification rate.
+4. **The train/test split itself isn't locked or auditable.** §6 specifies *what* to stratify by,
+   not a procedure that fixes the split, records it, and reviews its assignment logic independently
+   of any result, before any method is run. Add: write the partition (physician → train/test) to a
+   versioned file before the first method call; never regenerate it from a result-dependent seed.
+5. **No minimum cohort size.** §6 stratifies "in roughly the proportions they occur," but a small
+   total relocation or discordant cohort can land in the test set with so few physicians that its
+   accuracy is close to a coin flip while still being reported with full confidence. Add: report a
+   confidence interval (or flag "underpowered") for any cohort with test-set n below some stated
+   floor, not just a point estimate.
+6. **Cross-study NPI collisions are unhandled.** If the same NPI has reference rows from two
+   different validity studies (possibly disagreeing), §1 doesn't say which one wins or whether both
+   should instead be flagged as a conflict and excluded. Needs an explicit rule before `verified_by`
+   is relied on for anything.
+7. **Duplicate reference rows are assumed away, not detected.** §1 states "one row per
+   `(entity_id, reference_year)`" as an invariant but specifies no validation step analogous to
+   `attribute_claims_validate()`'s duplicate detection for the claims table. A reference-table
+   construction bug could silently produce two conflicting rows for one physician-year, and
+   whichever `merge()` happens to keep first becomes "ground truth" by accident.
+8. **"Same eligible physician-years" (§10) is a stated goal, not an enforced one.** Nothing
+   specifies *computing the eligible set once, before running any method*, and reusing that exact
+   fixed list for every method. As currently written, each method's own run could independently
+   drop different rows it happens to error on, quietly breaking the "same eligible set" comparison
+   the whole paired design in §10 depends on.
+9. **Global per-source reliability is a modeling constraint this protocol can't fix, only flag.**
+   Dawid-Skene/TruthFinder-family methods estimate one reliability value per source across *all* of
+   a physician's training data — this protocol's leakage rules (§2) control what data that estimate
+   is fit on, but cannot make the estimate cohort-aware. Confirmed directly (see
+   `docs/saboteur-test-matrix.md` Part B, items 5 and 13): a source that is wrong only on a specific
+   subset, or present only on easy/unanimous tasks, gets a global reliability score that hides
+   exactly that pattern. Any Phase 4 report must show per-cohort reliability/accuracy, not rely on
+   a single global source-reliability number to mean the same thing everywhere.
+10. **No operational seal on the test partition during development.** §2 bans fitting on test-set
+    claims, but nothing stops an informal "let me just check" look at test-set accuracy during
+    pipeline debugging from quietly informing a later, nominally-independent parameter choice. The
+    test partition should be stored and loaded separately from the training pipeline's working
+    session, not merely conventionally off-limits.
+
+Items not listed here (reference-derived claims contaminating their own benchmark, a study's own
+audit output scoring itself, abstention dropped from a headline number, physician-level — not
+row-level — partitioning) were checked against the current text and are already closed by
+§1 (`verified_by`), §2, §6, and §8 respectively.

@@ -167,7 +167,15 @@ EM loop used every one of \code{max_iterations} without its loss changing
 by less than \code{convergence_tolerance}; \code{n_disconnected_components > 1}
 (also a \code{warning()}) means the worker-task graph split into pieces
 that share no evidence, so per-source reliabilities are not jointly
-identifiable from this call alone.
+identifiable from this call alone -- and for \code{backend = "crowd_kit"}
+this can be severe, not just imprecise: with too little shared
+structure, Dawid-Skene can fall back to a flat prior across every
+candidate value for \emph{every} task in an affected component, abstaining
+with \code{abstention_reason = "tied_vote"} even on a task where every
+included source agreed (\code{n_candidate_values == 1}). Whenever
+\code{n_disconnected_components > 1}, check an abstained prediction against
+\code{candidate_scores$n_votes} for that task before trusting the
+abstention at face value.
 
 \strong{Arguments a given method doesn't use.} \code{implication_function} is
 reserved for methods not yet implemented (see

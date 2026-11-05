@@ -285,7 +285,15 @@ attribute_truth_backends <- function() {
 #' by less than `convergence_tolerance`; `n_disconnected_components > 1`
 #' (also a `warning()`) means the worker-task graph split into pieces
 #' that share no evidence, so per-source reliabilities are not jointly
-#' identifiable from this call alone.
+#' identifiable from this call alone -- and for `backend = "crowd_kit"`
+#' this can be severe, not just imprecise: with too little shared
+#' structure, Dawid-Skene can fall back to a flat prior across every
+#' candidate value for *every* task in an affected component, abstaining
+#' with `abstention_reason = "tied_vote"` even on a task where every
+#' included source agreed (`n_candidate_values == 1`). Whenever
+#' `n_disconnected_components > 1`, check an abstained prediction against
+#' `candidate_scores$n_votes` for that task before trusting the
+#' abstention at face value.
 #'
 #' **Arguments a given method doesn't use.** `implication_function` is
 #' reserved for methods not yet implemented (see

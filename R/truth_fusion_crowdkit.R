@@ -122,7 +122,13 @@
       "attribute_truth_fusion: the worker-task graph for attribute '%s' has %d disconnected ",
       "components -- sources in different components share no task in common, so their ",
       "estimated reliabilities (and the resulting posterior probabilities) are not jointly ",
-      "identifiable from this call alone."
+      "identifiable from this call alone. This can be severe, not just imprecise: with too ",
+      "little shared structure to estimate any source's confusion matrix, Dawid-Skene can fall ",
+      "back to a flat prior across every candidate value for EVERY task in an affected ",
+      "component, abstaining with abstention_reason = 'tied_vote' even on a task where every ",
+      "included source agreed (n_candidate_values == 1). Check predictions in affected ",
+      "components against candidate_scores$n_votes directly rather than trusting an abstention ",
+      "here at face value."
     ), attribute_name, n_disconnected_components), call. = FALSE)
   }
 

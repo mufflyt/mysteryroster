@@ -194,7 +194,8 @@ attribute_truth_fusion(claims, method = "dawid_skene", max_iterations = 1L)$mode
 
 `n_disconnected_components > 1` (also a `warning()`) means the worker-task
 graph split into pieces sharing no evidence -- per-source reliabilities in
-different pieces are not jointly identifiable from that one call:
+different pieces are not jointly identifiable from that one call. This can
+be worse than just imprecise:
 
 ```{r disconnected, warning = TRUE}
 disconnected_claims <- data.frame(
@@ -202,10 +203,24 @@ disconnected_claims <- data.frame(
   source_id = c("a", "b", "c", "d"),
   claimed_value = c("CO", "CO", "NM", "NM"), reference_year = 2024
 )
-attribute_truth_fusion(disconnected_claims, method = "dawid_skene")$model_diagnostics[
-  , c("n_disconnected_components")
-]
+disconnected_result <- attribute_truth_fusion(disconnected_claims, method = "dawid_skene")
+disconnected_result$model_diagnostics[, "n_disconnected_components"]
+disconnected_result$predictions[, c("entity_id", "predicted_value", "abstained", "abstention_reason")]
 ```
+
+Both entities abstain with `abstention_reason = "tied_vote"` -- even though
+entity 1's two included sources (`a`, `b`) unanimously agreed on `"CO"`, and
+entity 2's two sources unanimously agreed on `"NM"`. There is no real
+disagreement on either task; `n_candidate_values` for both is `1`. With
+nothing shared between the two components, Dawid-Skene has no evidence at
+all to estimate any source's confusion matrix from, and falls back to a
+flat prior across *every* candidate value seen anywhere in the call -- for
+every task in the affected components, not just the ambiguous ones. A
+flat prior over two values is, by construction, an exact tie. **Whenever
+`n_disconnected_components > 1`, check an abstained prediction's
+`candidate_scores$n_votes` before trusting the abstention** -- a task can
+report "tied" here for a reason that has nothing to do with that task's
+own evidence.
 
 `on_source_conflict = "multi_value"` is rejected outright for this backend
 (Dawid-Skene assumes one label per worker-task):
