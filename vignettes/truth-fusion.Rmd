@@ -1,0 +1,151 @@
+---
+title: "Truth Fusion: Predicting a Value, With Abstention"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Truth Fusion: Predicting a Value, With Abstention}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+Every other function in this package's no-gold-standard family --
+`attribute_agreement()`, `attribute_consensus_tier()`,
+`attribute_lead_lag_matrix()`, and the rest -- deliberately never names a
+value as "correct." That is a design rule, stated explicitly in the
+README: agreement, timing, and stability are relative claims about a
+comparison set, not verdicts.
+
+`attribute_truth_fusion()` is a different kind of thing, introduced
+alongside this vignette: it *does* predict a value, with an explicit
+score, and the explicit option to refuse rather than guess. This is the
+first phase of a larger truth-discovery extension (future phases add
+probabilistic backends that learn per-source reliability); this phase
+implements exactly one method, `"majority"`, entirely in R.
+
+## The evidence schema
+
+Every truth-fusion function expects one long-format table: one row per
+`entity_id` / `attribute` / `source_id` / `reference_year` claim.
+`attribute_claims_validate()` checks that shape and reports on it
+without silently repairing anything:
+
+```{r validate}
+claims <- data.frame(
+  entity_id = c("1", "1", "1", "2", "2"),
+  attribute = "state",
+  source_id = c("nppes", "dac", "dac", "nppes", "op"),
+  claimed_value = c("CO", "CO", "NM", "NY", "NY"),
+  reference_year = 2024
+)
+validated <- attribute_claims_validate(claims)
+attr(validated, "report")
+```
+
+NPI 1's `dac` row appears twice with two different values (`CO` and
+`NM`) -- a legitimate claim of two real locations, not an error. The
+report counts it as one `duplicate_source_years` *and* one
+`multi_value_source_years`, and keeps both rows rather than collapsing
+them. `on_duplicate = "error"` is available when you want duplicates to
+stop the call instead, but it does not distinguish the two cases --
+check the report first.
+
+## Majority vote, with abstention
+
+`attribute_truth_fusion()` votes by *source*, not by row: a source that
+submitted the same value twice only counts once, and a source with two
+legitimate values votes for both rather than being forced to pick one.
+
+```{r fusion}
+fusion_result <- attribute_truth_fusion(claims, method = "majority")
+fusion_result
+fusion_result$predictions
+fusion_result$candidate_scores
+```
+
+NPI 1 has three votes across two values (`CO` from `nppes` and `dac`,
+`NM` from `dac`'s second claim) -- `CO` wins 2 of 3, so it is predicted
+with `model_score = 0.6667`. NPI 2's two sources agree outright
+(`model_score = 1`). A genuine tie behaves differently:
+
+```{r fusion-tie}
+tied_claims <- data.frame(
+  entity_id = "3", attribute = "state",
+  source_id = c("nppes", "dac"), claimed_value = c("NY", "NJ"),
+  reference_year = 2024
+)
+suppressMessages(attribute_truth_fusion(tied_claims, method = "majority"))$predictions
+```
+
+A true 1-1 tie always abstains (`abstention_reason = "tied_vote"`) --
+there is no principled winner to report, so `predicted_value` is `NA`
+rather than an arbitrary pick. Setting `abstain_threshold` abstains a
+*non-tied* but weak majority too:
+
+```{r fusion-threshold}
+weak_majority <- data.frame(
+  entity_id = "4", attribute = "state",
+  source_id = c("a", "b", "c"), claimed_value = c("CO", "CO", "NM"),
+  reference_year = 2024
+)
+suppressMessages(
+  attribute_truth_fusion(weak_majority, method = "majority", abstain_threshold = 0.8)
+)$predictions[, c("predicted_value", "model_score", "abstained", "abstention_reason")]
+```
+
+Two of three sources agreeing (67%) is a real majority, but below the
+80% threshold requested here, so the call abstains anyway rather than
+reporting a prediction the caller asked to treat as too weak to trust.
+
+## What's implemented, and what isn't yet
+
+`attribute_truth_backends()` is a static capability report, not a live
+probe -- it never claims a method is available before it is actually
+wired up:
+
+```{r backends}
+attribute_truth_backends()
+```
+
+Only `"majority"` is implemented in this version, entirely in R
+(`backend = "r_native"`). Passing an unimplemented `method`, or a
+`backend` that does not match what a method actually requires, is an
+error -- never a silent substitution of a different algorithm than the
+one requested:
+
+```{r backend-error, error = TRUE}
+attribute_truth_fusion(claims, method = "dawid_skene")
+```
+
+Later phases are expected to add probabilistic backends (`crowd-kit`'s
+Dawid-Skene, `truthdiscovery`'s TruthFinder and friends) that learn
+per-source reliability rather than treating every source's vote
+equally -- `source_diagnostics` is already part of the returned
+object's shape for exactly that purpose, and is simply empty for
+`"majority"`, which learns no such thing:
+
+```{r source-diagnostics}
+fusion_result$source_diagnostics
+```
+
+## What this does and doesn't establish
+
+A majority-vote prediction is still a claim about what *most sources
+say*, not a verified fact -- three sources repeating one outdated
+address can outvote one recently corrected source, and nothing here
+detects that on its own (that is exactly the kind of question
+`attribute_lead_lag_matrix()` and `attribute_agreement_by_spell_age()`,
+in `vignette("consensus-and-corroboration")`, are built to investigate
+directly). Treat `attribute_truth_fusion()`'s output as a prediction
+with an explicit, inspectable score and an honest abstention path --
+not as a replacement for asking why sources disagree in the first
+place.
