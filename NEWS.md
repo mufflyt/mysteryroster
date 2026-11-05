@@ -32,6 +32,14 @@
 
 # mysteryroster 0.3.0
 
+* Added `@examples` to the 22 exported functions that had none -- only
+  `registry_overlap()`, `attribute_spell_age()`, and `attribute_agreement()`
+  carried a runnable example before this, so `?function` and a pkgdown
+  reference page showed nothing for the other 22. Every example is
+  executed (not just asserted) by `R CMD check`, including the two most
+  elaborate ones: `validity_model()`'s survey-weighted logistic
+  regression and `format_no_gold_standard_prose()`'s full three-paragraph
+  manuscript-text generation.
 * Fixed a real `R CMD check` NOTE in `attribute_spell_age()`: it called
   base `ave()` unqualified, which `R CMD check` flags as an undefined
   global function since the package never declares a bare `importFrom`

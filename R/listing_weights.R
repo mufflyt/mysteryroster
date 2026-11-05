@@ -13,6 +13,9 @@
 #' @param stratum Name of the stratum column. Default `"stratum"`.
 #' @return `df` as a tibble with the four design columns added; attribute
 #'   `allocation` holds the per-stratum table.
+#' @examples
+#' df <- data.frame(id = 1:4, stratum = c("a", "a", "b", "b"))
+#' listing_weights(df, pop_N = c(a = 10, b = 20))
 #' @export
 listing_weights <- function(df, pop_N, stratum = "stratum") {
   checkmate::assert_data_frame(df, min.rows = 1)

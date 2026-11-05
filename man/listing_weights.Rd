@@ -26,3 +26,7 @@ a stratum population table: \code{pop_N}, \code{n_sampled} (rows per stratum in
 that \code{pop_N} does not name, or a stratum whose sample exceeds its
 population, stops the call.
 }
+\examples{
+df <- data.frame(id = 1:4, stratum = c("a", "a", "b", "b"))
+listing_weights(df, pop_N = c(a = 10, b = 20))
+}

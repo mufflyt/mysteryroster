@@ -12,3 +12,6 @@ Character vector of length four.
 \description{
 The four listing statuses, in reporting order
 }
+\examples{
+listing_status_levels()
+}

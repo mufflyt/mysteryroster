@@ -27,3 +27,12 @@ Fits \code{survey::svyglm()} with a quasibinomial logit link on the definitive
 listings only (unresolved and not-attempted are excluded, as in the
 complete-case estimand) and returns odds ratios with confidence intervals.
 }
+\examples{
+calls <- data.frame(
+  stratum = c("a", "a", "b", "b", "a", "b"), weight = c(2, 2, 1, 1, 2, 1),
+  listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid",
+                      "confirmed_invalid", "confirmed_valid", "confirmed_valid"),
+  rural = c(TRUE, TRUE, FALSE, FALSE, FALSE, TRUE))
+design <- listing_validity_design(calls)
+validity_model(design, ~ rural)
+}

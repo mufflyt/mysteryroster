@@ -21,3 +21,6 @@ retirement, death, leaving medicine and no longer providing the indexed
 care; \code{not_specified} is a "no" with no reason. New-patient acceptance is a
 separate measure and is not a disposition category.
 }
+\examples{
+obgyn_disposition_map()
+}

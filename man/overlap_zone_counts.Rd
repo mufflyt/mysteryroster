@@ -18,3 +18,7 @@ zones containing it (the "does not close" guard).
 \description{
 Count identifiers per overlap zone, with closure checks
 }
+\examples{
+ov <- registry_overlap(list(nppes = c("1", "2", "3"), board = c("2", "3", "4")))
+overlap_zone_counts(ov)
+}

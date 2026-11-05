@@ -10,6 +10,8 @@
 #'
 #' @return A disposition map for the `taking_new_patients` REDCap field of the
 #'   ENT study. Replace the strings for another study's codebook.
+#' @examples
+#' ent_disposition_map()
 #' @export
 ent_disposition_map <- function() {
   list(
@@ -36,6 +38,8 @@ ent_disposition_map <- function() {
 #' separate measure and is not a disposition category.
 #'
 #' @return A disposition map (named list of character vectors).
+#' @examples
+#' obgyn_disposition_map()
 #' @export
 obgyn_disposition_map <- function() {
   list(
@@ -72,6 +76,11 @@ obgyn_disposition_map <- function() {
 #'   `confirmed_invalid`) and `listing_status`,
 #'   a factor with levels `confirmed_valid`, `confirmed_invalid`, `unresolved`,
 #'   `not_attempted`.
+#' @examples
+#' calls <- data.frame(
+#'   disposition = c("Yes", "No-changed practices", "No-retired or no longer practicing medicine", NA),
+#'   reached = c(TRUE, TRUE, TRUE, NA))
+#' classify_listing_status(calls)[, c("disposition", "listing_status", "invalid_reason")]
 #' @export
 classify_listing_status <- function(calls, disposition = "disposition", reached = "reached",
                                     phone_valid = NULL, map = ent_disposition_map(),
@@ -135,6 +144,8 @@ classify_listing_status <- function(calls, disposition = "disposition", reached 
 
 #' The four listing statuses, in reporting order
 #' @return Character vector of length four.
+#' @examples
+#' listing_status_levels()
 #' @export
 listing_status_levels <- function() {
   c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted")

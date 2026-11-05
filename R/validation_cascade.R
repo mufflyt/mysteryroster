@@ -16,6 +16,12 @@
 #' @return A tibble with `group`, `stage`, `n`, `count` (weighted if
 #'   `weights` given, otherwise equal to `n`), `pct_of_first` and
 #'   `pct_of_prior` (percent; `NA` where the denominator is zero).
+#' @examples
+#' df <- data.frame(
+#'   attempted = c(TRUE, TRUE, TRUE, FALSE),
+#'   reached   = c(TRUE, TRUE, FALSE, FALSE),
+#'   confirmed = c(TRUE, FALSE, FALSE, FALSE))
+#' validation_cascade(df, stages = c("attempted", "reached", "confirmed"))
 #' @export
 validation_cascade <- function(df, stages, by = NULL, weights = NULL) {
   checkmate::assert_data_frame(df)
