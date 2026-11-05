@@ -1,0 +1,187 @@
+---
+title: "Truth Fusion Case Study: Majority, Dawid-Skene, and TruthFinder on a Real NPI Panel"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Truth Fusion Case Study: Majority, Dawid-Skene, and TruthFinder on a Real NPI Panel}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+```{r setup}
+library(mysteryroster)
+backends <- attribute_truth_backends()
+crowdkit_available <- isTRUE(backends$available[backends$backend == "crowd_kit"])
+truthdiscovery_available <- isTRUE(backends$available[backends$backend == "truthdiscovery"])
+```
+
+`vignette("truth-fusion")`, `vignette("truth-fusion-crowdkit")`, and
+`vignette("truth-fusion-truthdiscovery")` each demonstrate one method family
+on simulated data with a known ground truth. This vignette runs all three
+on something closer to what this package actually exists for: real,
+de-identified output from a physician-credentialing linkage pipeline, with
+**no ground truth available at all** -- exactly the situation
+`attribute_truth_fusion()` and the rest of this package's no-gold-standard
+family are built for (see the Design rules in `README.md`, and
+`docs/validation-protocol.md` for why a real benchmark against verified
+locations does not exist yet).
+
+## Where this data comes from
+
+The `midwifery` research project maintains an AMCB (American Midwifery
+Certification Board) certificant panel, each row linked to an NPI and
+cross-referenced against NPPES (the National Plan and Provider Enumeration
+System) for practice location. Two separate extractions of this linkage
+exist, pulled about nine years apart: one dated to NPPES practice-location
+data as of 2017, the other as of 2026. Comparing practice **state** for the
+10,507 certificants present in both extractions:
+
+- 9,377 (89.25%) show the same state in both extractions.
+- 1,130 (10.75%) show a **different** state.
+
+That disagreement rate is itself informative -- it is a real, unfiltered
+measure of how often a single registry's own practice-location field drifts
+over nine years for actively certified clinicians -- but whose row is
+right, for any given certificant, is not independently known. Nothing here
+has been phone-verified or board-confirmed; both "sources" below are
+ultimately NPPES-derived, just pulled nine years apart.
+
+The sample below is a de-identified, randomly drawn 50-row excerpt (35
+agreeing, 15 disagreeing, reproducing the real 70/30 oversample of the rarer
+disagreement case rather than the full panel's 89/11 split, so there is
+enough of the interesting case to look at) with sequential placeholder
+`entity_id`s in place of real NPIs -- the state values and extraction years
+themselves are real.
+
+```{r data}
+claims <- data.frame(
+  entity_id = c(
+    "mw_001","mw_001","mw_002","mw_002","mw_003","mw_003","mw_004","mw_004","mw_005","mw_005",
+    "mw_006","mw_006","mw_007","mw_007","mw_008","mw_008","mw_009","mw_009","mw_010","mw_010",
+    "mw_011","mw_011","mw_012","mw_012","mw_013","mw_013","mw_014","mw_014","mw_015","mw_015",
+    "mw_016","mw_016","mw_017","mw_017","mw_018","mw_018","mw_019","mw_019","mw_020","mw_020",
+    "mw_021","mw_021","mw_022","mw_022","mw_023","mw_023","mw_024","mw_024","mw_025","mw_025",
+    "mw_026","mw_026","mw_027","mw_027","mw_028","mw_028","mw_029","mw_029","mw_030","mw_030",
+    "mw_031","mw_031","mw_032","mw_032","mw_033","mw_033","mw_034","mw_034","mw_035","mw_035",
+    "mw_036","mw_036","mw_037","mw_037","mw_038","mw_038","mw_039","mw_039","mw_040","mw_040",
+    "mw_041","mw_041","mw_042","mw_042","mw_043","mw_043","mw_044","mw_044","mw_045","mw_045",
+    "mw_046","mw_046","mw_047","mw_047","mw_048","mw_048","mw_049","mw_049","mw_050","mw_050"
+  ),
+  attribute = "practice_state",
+  source_id = rep(c("nppes_2017_extract", "nppes_2026_extract"), 50),
+  claimed_value = c(
+    "CA","CA","CA","CA","HI","PA","AZ","AZ","OR","OR","MN","MN","IL","MA","NY","NY","VT","VT","NY","NY",
+    "MA","RI","GA","GA","DE","DE","WY","UT","RI","RI","MA","MA","MN","MN","FL","FL","OH","OH","MN","MN",
+    "GA","GA","VA","VA","TX","TX","MI","MI","MA","MA","WA","WA","NM","NM","MT","CO","NV","NV","MN","MN",
+    "NY","PA","NY","NY","NC","NC","NV","NV","WV","WV","FL","GA","LA","TX","NC","ME","ID","MT","AK","IL",
+    "IL","IL","DE","DE","NJ","FL","OH","SC","CA","NJ","KY","KY","TX","TX","NC","NC","WA","WA","CA","OH"
+  ),
+  reference_year = 2026
+)
+```
+
+## Phase 1: majority vote hits its structural ceiling
+
+```{r majority}
+majority_result <- attribute_truth_fusion(claims, method = "majority")
+majority_result
+table(majority_result$predictions$abstained)
+disagreeing_ids <- majority_result$predictions$entity_id[majority_result$predictions$abstained]
+```
+
+Exactly the 15 known-disagreeing certificants abstain, every one with
+`abstention_reason = "tied_vote"`. This is not a weakness particular to
+this dataset -- it is a mathematical property of majority voting with
+**exactly two** sources: a vote between two voters either agrees
+unanimously or ties. There is no three-way split, no 2-of-3 outvote, no
+possible way for plain majority to ever actually resolve a genuine
+disagreement here, no matter how the votes fall. With only two sources,
+majority voting can tell you *that* something is contested; it cannot
+tell you *which side* to believe.
+
+## Phase 2: Dawid-Skene can break the tie -- but on what basis?
+
+```{r dawid-skene, eval = crowdkit_available}
+ds_result <- suppressWarnings(attribute_truth_fusion(claims, method = "dawid_skene"))
+ds_result$predictions[ds_result$predictions$entity_id %in% disagreeing_ids,
+                       c("entity_id", "predicted_value", "model_score", "abstained")]
+```
+
+Fourteen of the fifteen ties are resolved (one, `mw_014`, is still an exact
+tie even under Dawid-Skene). Unlike majority, Dawid-Skene brings in
+*prior* information -- each source's learned tendency to agree with
+whichever value the other 35 certificants' evidence favors -- and that is
+enough to break most of these local 1-1 deadlocks with a non-trivial
+`model_score`.
+
+**This is not evidence that Dawid-Skene picked the correct state.** Both
+"sources" here are the *same underlying registry*, observed nine years
+apart. Dawid-Skene has no notion of which snapshot is more recent -- it
+treats `nppes_2017_extract` and `nppes_2026_extract` exactly as it would
+treat two genuinely independent registries, learning a symmetric
+reliability score for each from how often they happen to agree with the
+eventual consensus. If one extraction is simply *newer*, that is a
+**recency** fact, not a **reliability** fact, and nothing in this model
+knows the difference.
+
+## Phase 3: the TruthFinder family, same caveat
+
+```{r truthfinder, eval = truthdiscovery_available}
+sums_result <- suppressWarnings(attribute_truth_fusion(claims, method = "sums"))
+sums_result$predictions[sums_result$predictions$entity_id %in% disagreeing_ids,
+                         c("entity_id", "predicted_value", "model_score", "score_type")]
+```
+
+Same pattern, same caveat: `score_type = "uncalibrated_belief"`, not a
+probability, and not validated against anything -- see
+`vignette("truth-fusion-truthdiscovery")`.
+
+## The actual right tool for this specific disagreement
+
+This dataset's disagreement is, by construction, a **staleness** problem:
+one extraction is dated 2017, the other 2026, for the same registry. This
+package already has a purpose-built tool for exactly that question, and it
+gives a far simpler answer than any of the three fusion methods above:
+
+```{r staleness}
+disagreeing <- data.frame(
+  entity_id = disagreeing_ids,
+  updated_2017 = as.Date("2017-01-01"),
+  updated_2026 = as.Date("2026-01-01")
+)
+disagreeing$which_is_newer <- classify_record_staleness(disagreeing$updated_2017, disagreeing$updated_2026)
+table(disagreeing$which_is_newer)
+```
+
+Every single disagreement resolves to `"a_predates_b"` -- the 2017
+extraction is older than the 2026 one, for all 15, because that is simply
+true of the two extraction dates and has nothing to do with per-record
+content. For a question dated to 2026, "trust the newer snapshot" is a
+far simpler, more defensible answer than anything Dawid-Skene or
+TruthFinder computed above, *because the actual disagreement mechanism
+here is recency, not differing source reliability*. Reaching for
+`attribute_truth_fusion()`'s probabilistic backends on a problem that is
+really a staleness problem is reaching for the wrong tool --
+`record_age_years()`, `classify_record_staleness()`, and
+`attribute_lead_lag_matrix()` (see `vignette("lead-lag-staleness")`) are
+built for exactly this question, and answer it without needing to model
+source reliability at all.
+
+## What this case study does and does not show
+
+It shows real disagreement rates on a real linkage pipeline (10.75% at the
+state level across nine years), and real, verified output from all three
+method families on that real data -- including a real limitation
+(majority's two-source ceiling) and a real caveat (neither probabilistic
+backend can distinguish "this source is less reliable" from "this source
+is simply older" with only two inputs). It does **not** show which
+method, or which snapshot, is actually correct for any of these
+certificants -- no independently verified reference location exists for
+this panel (see `docs/validation-protocol.md`), and nothing in this
+vignette should be read as a benchmark accuracy result. A real benchmark,
+per that protocol, needs at least a third, genuinely independent,
+phone-verified or board-verified source before any of these methods can
+be honestly scored against each other on data like this.
