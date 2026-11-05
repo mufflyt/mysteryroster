@@ -173,7 +173,7 @@ format_no_gold_standard_prose(ll, freshness_strata, enrollment_timing)
 ```
 
 <p align="center">
-<img src="man/figures/lead-lag-staleness-fig-toy-timeline-1.png" width="70%" alt="Timeline of the state reported by Source A and Source B for three NPIs over 2022 to 2024: Source A moves first for NPI 1, Source B for NPI 2, and both agree throughout after 2022 for NPI 3." />
+<img src="man/figures/lead-lag-staleness-fig-toy-timeline-1.png" width="70%" alt="Timeline of the state reported by Source A and Source B for three NPIs over 2022 to 2024: Source A moves to NM a year before Source B for NPI 1; Source B corrects NJ to NY a year after Source A for NPI 2; Source A corrects TX to CO for NPI 3, matching Source B from 2023." />
 </p>
 
 *The three-NPI toy example: who moves first?*
