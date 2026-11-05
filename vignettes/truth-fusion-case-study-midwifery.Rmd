@@ -209,8 +209,8 @@ unique(ds_result2$source_diagnostics[, c("source_id", "reliability_score")])
 Majority gets 14 of 16 right; `dawid_skene` gets all 16. The two it fixes
 are revealing. Task 16 is the one engineered above: `state_board`,
 `specialty_directory`, and `patient_review_site` all happen to say `"KS"`
-(wrong), outvoting `nppes_recent` and `pecos`'s correct, unanimous `"OK"`
-3 votes to 2 -- majority has no way to know those three votes come from
+(wrong), outvoting the correct, unanimous `"OK"` from `nppes_recent` and
+`pecos` 3 votes to 2 -- majority has no way to know those three votes come from
 its *least* reliable sources, so it just counts them. Task 13 breaks the
 same way, but it wasn't engineered -- it happened on its own, from the
 same three unreliable sources' independently-chosen error tasks

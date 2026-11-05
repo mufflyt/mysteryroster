@@ -157,17 +157,20 @@ attribute_truth_backends()
 ```
 
 `"majority"` is implemented entirely in R (`backend = "r_native"`) and has
-no dependency beyond this package. `"dawid_skene"` and
-`"one_coin_dawid_skene"` are also implemented, but via an *optional* Python
-backend (`crowd-kit`, through `reticulate`) -- see
-`vignette("truth-fusion-crowdkit")` for a worked example, including two
-ways that backend can converge confidently on a wrong answer. Passing a
-method this package does not implement at all, or a `backend` that does
-not match what a method actually requires, is still an error -- never a
-silent substitution of a different algorithm than the one requested:
+no dependency beyond this package. `"dawid_skene"`/`"one_coin_dawid_skene"`
+and `"sums"`/`"average_log"`/`"investment"`/`"pooled_investment"`/
+`"truthfinder"` are also implemented, each via its own *optional* Python
+backend (`crowd-kit` and `truthdiscovery` respectively, through
+`reticulate`) -- see `vignette("truth-fusion-crowdkit")` and
+`vignette("truth-fusion-truthdiscovery")` for worked examples, including
+concrete ways either backend can converge confidently on a wrong answer.
+Passing a method this package does not implement at all, or a `backend`
+that does not match what a method actually requires, is still an error --
+never a silent substitution of a different algorithm than the one
+requested:
 
 ```{r backend-error, error = TRUE}
-attribute_truth_fusion(claims, method = "truthfinder")
+attribute_truth_fusion(claims, method = "nonexistent_method")
 ```
 
 `source_diagnostics` is part of the returned object's shape for
