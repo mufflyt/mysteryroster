@@ -1,0 +1,231 @@
+---
+title: "Truth Fusion, Part 2: An Optional Crowd-Kit Backend"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Truth Fusion, Part 2: An Optional Crowd-Kit Backend}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+```{r setup}
+library(mysteryroster)
+crowdkit_backend <- attribute_truth_backends()
+crowdkit_available <- isTRUE(crowdkit_backend$available[crowdkit_backend$backend == "crowd_kit"])
+knitr::opts_chunk$set(eval = crowdkit_available)
+```
+
+`vignette("truth-fusion")` covers `attribute_truth_fusion(method = "majority")`,
+entirely in R, with no dependency beyond this package. This vignette covers
+the *optional* second backend: `method = "dawid_skene"` and
+`"one_coin_dawid_skene"`, via Python's `crowd-kit` through `reticulate`.
+Nothing here is required to use the rest of the package.
+
+```{r availability-note, eval = TRUE}
+crowdkit_backend[crowdkit_backend$backend == "crowd_kit", ]
+```
+
+If `available` is `FALSE`, `attribute_truth_fusion(method = "dawid_skene", ...)`
+errors with the exact reason (no Python found, or Python found but `crowdkit`
+not installed) -- never a silent fall-back to `"majority"`. This package never
+installs Python or any Python package on your behalf; the error message tells
+you what to install yourself (`pip install crowd-kit`) and how to point
+`reticulate` at it (`RETICULATE_PYTHON`, `reticulate::use_python()`, or a
+Python already on `PATH`). The code in the rest of this vignette only
+actually *runs* when `crowdkit_available` is `TRUE` above -- on a machine
+without Python, you will still see every chunk, but not its output.
+
+## A simulated physician active/inactive status example
+
+Sixteen simulated NPIs, each with a true (simulated, known-to-us-but-not-to-
+the-model) active/inactive status. Three sources report on each:
+
+- `source_1` is highly reliable -- correct on 15 of 16.
+- `source_2` is always correct.
+- `source_3` always reports `"active"`, regardless of the true status: a
+  pure false-positive-biased source (sensitivity 1, specificity 0) that
+  carries no real discriminative information at all.
+
+```{r simulate}
+entities <- 1:16
+true_status <- ifelse(entities %% 2 == 1, "active", "inactive")
+claims <- do.call(rbind, lapply(seq_along(entities), function(i) {
+  e <- entities[i]
+  t <- true_status[i]
+  source_1 <- if (e == 6) "active" else t # source_1's one error
+  data.frame(
+    entity_id = as.character(e), attribute = "status",
+    source_id = c("source_1", "source_2", "source_3"),
+    claimed_value = c(source_1, t, "active"), reference_year = 2024
+  )
+}))
+```
+
+```{r fit-ds}
+ds_result <- attribute_truth_fusion(claims, method = "dawid_skene")
+ds_result
+```
+
+Unlike `"majority"`, which votes independently within each entity-year,
+Dawid-Skene fits *once*, jointly, across all 16 entity-years -- it estimates
+one confusion matrix per source by pooling that source's evidence across
+every entity it rated. `source_diagnostics` is where that shows up:
+
+```{r source-diagnostics}
+reliability <- unique(ds_result$source_diagnostics[c("source_id", "reliability_score")])
+reliability[order(-reliability$reliability_score), ]
+```
+
+`source_3`'s `reliability_score` lands at exactly `0.5` -- chance -- correctly
+identifying it as carrying no real information, not just "less reliable"
+than the other two. Its full confusion matrix makes the reason explicit:
+
+```{r source-3-matrix}
+ds_result$source_diagnostics[ds_result$source_diagnostics$source_id == "source_3", ]
+```
+
+`error_probability` is `1` for reporting `"active"` regardless of whether the
+true status is `"active"` or `"inactive"` -- `source_3` says the same thing
+every time no matter what is actually true, which is exactly what a
+false-positive-biased source looks like in a confusion matrix. (A source
+that simply never reports a given label at all gets `error_probability = 0`
+for every true label on that row, not a missing row -- `crowd-kit`'s own
+output is sparse here, listing only label combinations a source actually
+produced; leaving the gap would let a source that never discriminates look
+reliable merely by never being scored on its missing cell.)
+
+## Convergence is not accuracy
+
+```{r entity-6}
+ds_result$predictions[ds_result$predictions$entity_id == "6", ]
+```
+
+Entity 6 is `source_1`'s one error, and it is where the model gets the
+*wrong* answer -- true status is `"inactive"`, but `dawid_skene` predicts
+`"active"` with `model_score` over `0.9`, and `model_diagnostics$converged`
+is `TRUE`. This is not a bug; it is exactly the kind of failure the model
+cannot see from the inside. Once the fit comes to (wrongly) believe entity 6
+is `"active"`, it also slightly discounts `source_2`'s correct `"inactive"`
+report there as if it were one of `source_2`'s rare errors -- a
+self-reinforcing loop between the latent-label estimate and the per-source
+error estimates that EM has no way to escape once it locks in. A converged,
+confident, successfully-executed fit is not evidence that the fit is
+*right*. Treat `model_score` as `score_type = "posterior_probability"` says:
+a probability under this model's own assumptions, estimated from this data,
+never a validated probability of being correct.
+
+## When sources share an upstream feed
+
+The failure mode above is at least visible in principle -- a careful look at
+`source_diagnostics` would flag `source_1` as imperfect. A more dangerous
+version of the same problem is close to invisible: Dawid-Skene assumes every
+source's errors are conditionally independent given the true label. Two
+sources that are actually the same underlying data, copied -- a registry
+mirrored into a second system, say -- violate that assumption completely,
+and the model has no way to detect it from the claims table alone.
+
+```{r copied-source-setup}
+entities2 <- 1:12
+true_state <- ifelse(entities2 %% 2 == 1, "CO", "NM")
+error_entities <- c(2, 8) # nppes (and its copy) are wrong here
+claims2 <- do.call(rbind, lapply(seq_along(entities2), function(i) {
+  e <- entities2[i]
+  t <- true_state[i]
+  other <- if (t == "CO") "NM" else "CO"
+  nppes_val <- if (e %in% error_entities) other else t
+  data.frame(
+    entity_id = as.character(e), attribute = "state",
+    source_id = c("nppes", "pecos_copy", "op"),
+    # pecos_copy is a VERBATIM copy of nppes -- same upstream feed, same errors
+    claimed_value = c(nppes_val, nppes_val, t), reference_year = 2024
+  )
+}))
+```
+
+```{r copied-source-fit}
+copied_result <- attribute_truth_fusion(claims2, method = "dawid_skene")
+copied_result$predictions[copied_result$predictions$entity_id %in% c("2", "8"), ]
+```
+
+True state for entities 2 and 8 is `"NM"`; `dawid_skene` predicts `"CO"` for
+both, and `model_score` rounds to exactly `1` -- not "highly confident," but
+indistinguishable from certainty at four decimal places. `nppes` and
+`pecos_copy` are not two corroborating sources -- they are one source's
+claim, counted twice, outvoting `op`'s single correct report 2 to 1. The
+model cannot tell that apart from two genuinely independent sources
+agreeing, so its confidence is exactly as extreme as if they *were*
+independent, for an answer that is wrong. If you suspect two sources might
+share an upstream feed,
+check that *before* trusting a confident Dawid-Skene fit:
+`attribute_agreement()` and `attribute_source_corroboration()` (see
+`vignette("consensus-and-corroboration")`) describe raw pairwise agreement
+without this model's independence assumption, and are a reasonable first
+place to look for a suspiciously perfect pair.
+
+## `one_coin_dawid_skene`: one scalar per source, not a full confusion matrix
+
+```{r one-coin}
+oc_result <- attribute_truth_fusion(claims, method = "one_coin_dawid_skene")
+oc_result$source_diagnostics[, c("source_id", "reliability_score")]
+```
+
+`"one_coin_dawid_skene"` simplifies each source to a single skill (its
+overall probability of reporting correctly, not broken out by class), so
+`true_label`/`observed_label`/`error_probability` are `NA` -- only
+`reliability_score` is populated. It still ranks `source_3` lowest, but
+cannot show *why* (a biased source and a merely-noisy source with the same
+overall accuracy look identical to it); use `"dawid_skene"` when
+distinguishing those matters.
+
+## Diagnostics this backend adds
+
+`model_diagnostics$converged` is `FALSE` (with a `warning()`, never silent)
+if the EM loop used every one of `max_iterations` without its loss changing
+by less than `convergence_tolerance`:
+
+```{r nonconvergence, warning = TRUE}
+attribute_truth_fusion(claims, method = "dawid_skene", max_iterations = 1L)$model_diagnostics[
+  , c("converged", "n_iterations", "n_warnings")
+]
+```
+
+`n_disconnected_components > 1` (also a `warning()`) means the worker-task
+graph split into pieces sharing no evidence -- per-source reliabilities in
+different pieces are not jointly identifiable from that one call:
+
+```{r disconnected, warning = TRUE}
+disconnected_claims <- data.frame(
+  entity_id = c("1", "1", "2", "2"), attribute = "state",
+  source_id = c("a", "b", "c", "d"),
+  claimed_value = c("CO", "CO", "NM", "NM"), reference_year = 2024
+)
+attribute_truth_fusion(disconnected_claims, method = "dawid_skene")$model_diagnostics[
+  , c("n_disconnected_components")
+]
+```
+
+`on_source_conflict = "multi_value"` is rejected outright for this backend
+(Dawid-Skene assumes one label per worker-task):
+
+```{r multi-value-error, error = TRUE, eval = TRUE}
+attribute_truth_fusion(claims, method = "dawid_skene", on_source_conflict = "multi_value")
+```
+
+## What this does and doesn't establish
+
+`"dawid_skene"`/`"one_coin_dawid_skene"` are a reliable, optional
+*probabilistic* backend -- not yet a validated source of truth. They can
+correctly identify a degenerate, uninformative source from its confusion
+matrix alone (the first example above); they can also converge, with high
+confidence, on a wrong answer when a source's rare error happens to align
+with another source's bias (the second example), or when two sources share
+an upstream feed the model has no way to see (the third). None of this is
+checked against any real-world ground truth -- that is explicitly future
+work (a held-out validation dataset, not yet built). Treat a confident
+`model_score` the way you would treat a confident p-value from a model whose
+assumptions you have not checked: as a reason to look closer at
+`source_diagnostics` and at independent agreement checks, not as a
+substitute for them.

@@ -156,22 +156,24 @@ wired up:
 attribute_truth_backends()
 ```
 
-Only `"majority"` is implemented in this version, entirely in R
-(`backend = "r_native"`). Passing an unimplemented `method`, or a
-`backend` that does not match what a method actually requires, is an
-error -- never a silent substitution of a different algorithm than the
-one requested:
+`"majority"` is implemented entirely in R (`backend = "r_native"`) and has
+no dependency beyond this package. `"dawid_skene"` and
+`"one_coin_dawid_skene"` are also implemented, but via an *optional* Python
+backend (`crowd-kit`, through `reticulate`) -- see
+`vignette("truth-fusion-crowdkit")` for a worked example, including two
+ways that backend can converge confidently on a wrong answer. Passing a
+method this package does not implement at all, or a `backend` that does
+not match what a method actually requires, is still an error -- never a
+silent substitution of a different algorithm than the one requested:
 
 ```{r backend-error, error = TRUE}
-attribute_truth_fusion(claims, method = "dawid_skene")
+attribute_truth_fusion(claims, method = "truthfinder")
 ```
 
-Later phases are expected to add probabilistic backends (`crowd-kit`'s
-Dawid-Skene, `truthdiscovery`'s TruthFinder and friends) that learn
-per-source reliability rather than treating every source's vote
-equally -- `source_diagnostics` is already part of the returned
-object's shape for exactly that purpose, and is simply empty for
-`"majority"`, which learns no such thing:
+`source_diagnostics` is part of the returned object's shape for
+*every* method, so that a per-source reliability backend has somewhere to
+report it -- it is simply empty for `"majority"`, which learns no such
+thing:
 
 ```{r source-diagnostics}
 fusion_result$source_diagnostics

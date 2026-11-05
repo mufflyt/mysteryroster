@@ -253,9 +253,33 @@ test_that("attribute_truth_fusion requires attribute_name when claims has >1 att
 test_that("attribute_truth_fusion rejects an unimplemented method or mismatched backend", {
   claims <- data.frame(entity_id = "1", attribute = "state", source_id = "a",
                         claimed_value = "CO", reference_year = 2024)
-  expect_error(attribute_truth_fusion(claims, method = "dawid_skene"), "not yet implemented")
+  expect_error(attribute_truth_fusion(claims, method = "truthfinder"), "not yet implemented")
   expect_error(attribute_truth_fusion(claims, method = "majority", backend = "crowd_kit"),
                "requires backend 'r_native'")
+  expect_error(attribute_truth_fusion(claims, method = "dawid_skene", backend = "r_native"),
+               "requires backend 'crowd_kit'")
+})
+
+test_that("attribute_truth_fusion never silently falls back to majority when crowd_kit is unavailable", {
+  skip_if(isTRUE(.mysteryroster_crowdkit_probe()$available), "crowd-kit is installed in this session")
+  claims <- data.frame(
+    entity_id = c("1", "1"), attribute = "state", source_id = c("a", "b"),
+    claimed_value = c("CO", "NM"), reference_year = 2024
+  )
+  expect_error(attribute_truth_fusion(claims, method = "dawid_skene"), "backend 'crowd_kit' is not available")
+  expect_error(attribute_truth_fusion(claims, method = "one_coin_dawid_skene"),
+               "backend 'crowd_kit' is not available")
+})
+
+test_that("attribute_truth_fusion rejects on_source_conflict = 'multi_value' for crowd_kit", {
+  claims <- data.frame(
+    entity_id = c("1", "1", "1"), attribute = "state", source_id = c("multi", "multi", "other"),
+    claimed_value = c("CO", "NM", "CO"), reference_year = 2024
+  )
+  expect_error(
+    attribute_truth_fusion(claims, method = "dawid_skene", on_source_conflict = "multi_value"),
+    "not supported by backend 'crowd_kit'"
+  )
 })
 
 test_that("attribute_truth_fusion messages (does not error) when an unused argument is set", {
@@ -270,7 +294,18 @@ test_that("attribute_truth_fusion's source_diagnostics is an empty, typed tibble
                         claimed_value = "CO", reference_year = 2024)
   result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
   expect_equal(nrow(result$source_diagnostics), 0)
-  expect_true(all(c("source_id", "reliability_score") %in% names(result$source_diagnostics)))
+  expect_true(all(
+    c("source_id", "attribute", "true_label", "observed_label", "error_probability", "reliability_score") %in%
+      names(result$source_diagnostics)
+  ))
+})
+
+test_that("attribute_truth_fusion's model_diagnostics reports NA backend_version/n_disconnected_components for majority", {
+  claims <- data.frame(entity_id = "1", attribute = "state", source_id = "a",
+                        claimed_value = "CO", reference_year = 2024)
+  result <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  expect_true(is.na(result$model_diagnostics$backend_version))
+  expect_true(is.na(result$model_diagnostics$n_disconnected_components))
 })
 
 test_that("print.mysteryroster_truth summarizes without erroring", {
@@ -282,8 +317,180 @@ test_that("print.mysteryroster_truth summarizes without erroring", {
 
 # --- attribute_truth_backends ------------------------------------------------
 
-test_that("attribute_truth_backends reports only majority as implemented", {
+test_that("attribute_truth_backends reports r_native as always available and probes crowd_kit live", {
   backends <- attribute_truth_backends()
   expect_true(backends$available[backends$backend == "r_native"])
-  expect_false(any(backends$available[backends$backend != "r_native"]))
+  expect_false(backends$available[backends$backend == "truthdiscovery"])
+  expect_true(grepl("dawid_skene", backends$methods_supported[backends$backend == "crowd_kit"]))
+  expect_true(grepl("one_coin_dawid_skene", backends$methods_supported[backends$backend == "crowd_kit"]))
+  # crowd_kit's reported availability must match a direct probe, whatever this
+  # machine's Python situation happens to be -- never hardcoded.
+  expect_equal(backends$available[backends$backend == "crowd_kit"],
+               isTRUE(.mysteryroster_crowdkit_probe()$available))
+})
+
+# --- attribute_truth_fusion: crowd_kit backend (Dawid-Skene family) ----------
+# All of these require a real Python + crowd-kit, which is never required to
+# use this package -- they skip entirely on a machine where
+# .mysteryroster_crowdkit_probe() reports unavailable (including plain CI).
+
+skip_unless_crowdkit <- function() {
+  testthat::skip_if_not(isTRUE(.mysteryroster_crowdkit_probe()$available),
+                         "crowd-kit is not available in this R session")
+}
+
+# 16 entities, true status alternates active/inactive. source_1 is highly
+# reliable (one error, at entity 6); source_2 is always correct; source_3
+# always claims "active" regardless of truth -- a pure false-positive-biased
+# source with zero true discriminative value (sensitivity = 1, specificity = 0).
+.truth_fusion_crowdkit_fixture <- function() {
+  entities <- 1:16
+  true_label <- ifelse(entities %% 2 == 1, "active", "inactive")
+  rows <- do.call(rbind, lapply(seq_along(entities), function(i) {
+    e <- entities[i]
+    t <- true_label[i]
+    source_1 <- if (e == 6) "active" else t
+    data.frame(
+      entity_id = as.character(e), attribute = "status",
+      source_id = c("source_1", "source_2", "source_3"),
+      claimed_value = c(source_1, t, "active"), reference_year = 2024
+    )
+  }))
+  list(claims = rows, true_label = stats::setNames(true_label, as.character(entities)))
+}
+
+test_that("attribute_truth_fusion(dawid_skene) ranks a false-positive-biased source at chance reliability", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "dawid_skene")
+  ))
+  reliability <- unique(result$source_diagnostics[c("source_id", "reliability_score")])
+  reliability_by_source <- stats::setNames(reliability$reliability_score, reliability$source_id)
+
+  # source_3 never discriminates true status at all (always says "active"):
+  # a complete, correctly-estimated confusion matrix puts it at chance (0.5),
+  # not at a misleadingly high score from only ever being scored on one cell.
+  expect_equal(reliability_by_source[["source_3"]], 0.5)
+  expect_gt(reliability_by_source[["source_1"]], reliability_by_source[["source_3"]])
+  expect_gt(reliability_by_source[["source_2"]], reliability_by_source[["source_3"]])
+})
+
+test_that("attribute_truth_fusion(dawid_skene) exposes the biased source's false-positive rate explicitly", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "dawid_skene")
+  ))
+  source_3_rows <- result$source_diagnostics[result$source_diagnostics$source_id == "source_3", ]
+  false_positive_rate <- source_3_rows$error_probability[
+    source_3_rows$true_label == "inactive" & source_3_rows$observed_label == "active"
+  ]
+  expect_equal(false_positive_rate, 1)
+})
+
+test_that("attribute_truth_fusion(dawid_skene) is deterministic across repeated calls", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result_1 <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "dawid_skene")))
+  result_2 <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "dawid_skene")))
+  expect_equal(result_1$predictions, result_2$predictions)
+  expect_equal(result_1$source_diagnostics, result_2$source_diagnostics)
+})
+
+test_that("attribute_truth_fusion(dawid_skene) can converge on a confidently wrong answer", {
+  skip_unless_crowdkit()
+  # Documents a real limitation (see vignette("truth-fusion")): a converged,
+  # high-confidence fit is not evidence of accuracy. On this fixture, DS
+  # converges but still mis-infers entity 6 (true status "inactive") as
+  # "active", because the one coincidental agreement between source_1's lone
+  # error and source_3's permanent bias outweighs source_2's lone correct
+  # vote once source_3 is (correctly) judged uninformative but not literally
+  # zero-weight.
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "dawid_skene")))
+  entity_6 <- result$predictions[result$predictions$entity_id == "6", ]
+  expect_false(entity_6$abstained)
+  expect_equal(entity_6$predicted_value, "active")
+  expect_equal(fixture$true_label[["6"]], "inactive")
+  expect_gt(entity_6$model_score, 0.9)
+  expect_true(result$model_diagnostics$converged)
+})
+
+test_that("attribute_truth_fusion(one_coin_dawid_skene) also ranks the biased source lowest", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "one_coin_dawid_skene")
+  ))
+  skill <- stats::setNames(result$source_diagnostics$reliability_score, result$source_diagnostics$source_id)
+  expect_lt(skill[["source_3"]], skill[["source_1"]])
+  expect_lt(skill[["source_3"]], skill[["source_2"]])
+  expect_true(all(is.na(result$source_diagnostics$true_label)))
+  expect_true(all(is.na(result$source_diagnostics$observed_label)))
+})
+
+test_that("attribute_truth_fusion(dawid_skene) flags a disconnected worker-task graph", {
+  skip_unless_crowdkit()
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2", "3", "3", "4", "4"), attribute = "status",
+    source_id = c("a", "b", "a", "b", "c", "d", "c", "d"),
+    claimed_value = c("active", "active", "inactive", "inactive", "active", "inactive", "inactive", "inactive"),
+    reference_year = 2024
+  )
+  expect_warning(
+    result <- attribute_truth_fusion(claims, method = "dawid_skene"),
+    "2 disconnected components"
+  )
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(claims, method = "dawid_skene")))
+  expect_equal(result$model_diagnostics$n_disconnected_components, 2L)
+})
+
+test_that("attribute_truth_fusion(dawid_skene) flags nonconvergence within max_iterations", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  expect_warning(
+    result <- attribute_truth_fusion(fixture$claims, method = "dawid_skene", max_iterations = 1L),
+    "did not converge"
+  )
+  result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "dawid_skene", max_iterations = 1L)
+  ))
+  expect_false(result$model_diagnostics$converged)
+  expect_equal(result$model_diagnostics$n_iterations, 1L)
+  expect_equal(result$model_diagnostics$n_warnings, 1L)
+})
+
+test_that("attribute_truth_fusion(dawid_skene) abstains on every source excluded for a task, like majority", {
+  skip_unless_crowdkit()
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2"), attribute = "status",
+    source_id = c("conflicted", "conflicted", "clean", "other"),
+    claimed_value = c("active", "inactive", "active", "inactive"), reference_year = 2024
+  )
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(claims, method = "dawid_skene")))
+  entity_1 <- result$predictions[result$predictions$entity_id == "1", ]
+  expect_true(entity_1$abstained)
+  expect_equal(entity_1$abstention_reason, "no_single_value_sources")
+  expect_equal(entity_1$n_sources, 0L)
+  expect_equal(entity_1$n_sources_excluded, 1L)
+})
+
+test_that("attribute_truth_fusion(dawid_skene) candidate_scores n_votes is a raw tally, vote_share is a posterior", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(attribute_truth_fusion(fixture$claims, method = "dawid_skene")))
+  entity_1 <- result$candidate_scores[result$candidate_scores$entity_id == "1", ]
+  expect_equal(sum(entity_1$n_votes), 3L) # all 3 sources voted "active" on entity 1 (true status "active")
+  expect_true(all(entity_1$score_type == "posterior_probability"))
+  expect_true(all(entity_1$vote_share >= 0 & entity_1$vote_share <= 1))
+})
+
+test_that("attribute_truth_fusion(dawid_skene) respects abstain_threshold on the posterior probability", {
+  skip_unless_crowdkit()
+  fixture <- .truth_fusion_crowdkit_fixture()
+  result <- suppressMessages(suppressWarnings(
+    attribute_truth_fusion(fixture$claims, method = "dawid_skene", abstain_threshold = 0.999)
+  ))
+  expect_true(any(result$predictions$abstention_reason == "below_abstain_threshold"))
 })

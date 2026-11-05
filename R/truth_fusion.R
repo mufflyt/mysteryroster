@@ -142,13 +142,19 @@ attribute_claims_validate <- function(claims, on_duplicate = c("flag", "error"),
 
 #' Which truth-fusion backends and methods are available right now
 #'
-#' A static capability report, not a live probe -- Phase 1 of this
-#' package's truth-fusion work implements only `"majority"`, entirely in
-#' R, regardless of whether Python or the optional `crowd-kit`/
-#' `truthdiscovery` libraries happen to be installed. This never reports
-#' a method as available before it is actually wired up, so a caller can
-#' trust `attribute_truth_fusion()` not to silently fall back to a
-#' different algorithm than the one requested.
+#' `"r_native"` (method `"majority"`) never has any dependency, so it is
+#' always reported as implemented. `"crowd_kit"` (methods `"dawid_skene"`
+#' and `"one_coin_dawid_skene"`) is an *optional* Python backend via
+#' `reticulate`: this function actually probes whether Python and the
+#' `crowdkit` module are available right now, without ever installing or
+#' configuring either itself (see [attribute_truth_fusion()]'s Details on
+#' `backend = "crowd_kit"`) -- so `available` can be `FALSE` on a machine
+#' that never touches Python, and `TRUE` only once a caller has genuinely
+#' set up their own Python with `crowd-kit` installed. `"truthdiscovery"`
+#' is not implemented in this package version regardless of what is
+#' installed. This never reports a method as available before it is
+#' actually wired up, so a caller can trust `attribute_truth_fusion()` not
+#' to silently fall back to a different algorithm than the one requested.
 #'
 #' @return A tibble: `backend`, `available` (logical), `methods_supported`,
 #'   `status`.
@@ -157,19 +163,21 @@ attribute_claims_validate <- function(claims, on_duplicate = c("flag", "error"),
 #' @family truth fusion
 #' @export
 attribute_truth_backends <- function() {
+  crowdkit_probe <- .mysteryroster_crowdkit_probe()
+  crowdkit_status <- if (isTRUE(crowdkit_probe$available)) {
+    sprintf("available (python %s, crowd-kit %s)", crowdkit_probe$python_version, crowdkit_probe$crowdkit_version)
+  } else {
+    crowdkit_probe$reason
+  }
   tibble::tibble(
     backend = c("r_native", "crowd_kit", "truthdiscovery"),
-    available = c(TRUE, FALSE, FALSE),
+    available = c(TRUE, isTRUE(crowdkit_probe$available), FALSE),
     methods_supported = c(
       "majority",
       "dawid_skene, one_coin_dawid_skene",
       "majority, sums, average_log, investment, pooled_investment, truthfinder"
     ),
-    status = c(
-      "implemented",
-      "not yet implemented in this package version",
-      "not yet implemented in this package version"
-    )
+    status = c("implemented", crowdkit_status, "not yet implemented in this package version")
   )
 }
 
@@ -181,11 +189,11 @@ attribute_truth_backends <- function() {
 #' `vignette("consensus-and-corroboration")`'s design note on exactly this
 #' point). `attribute_truth_fusion()` is a different kind of thing: it
 #' *does* predict a value, with an explicit score and the option to
-#' abstain rather than guess. Phase 1 implements exactly one method,
-#' `"majority"`, entirely in R; `method` and `backend` are validated
-#' against a fixed, currently-implemented set (see
-#' [attribute_truth_backends()]) rather than silently substituting a
-#' different algorithm than the one requested.
+#' abstain rather than guess. `method` and `backend` are validated against
+#' a fixed, currently-implemented set (see [attribute_truth_backends()])
+#' rather than silently substituting a different algorithm than the one
+#' requested, and a failure in an optional backend is always an error,
+#' never a silent fall-back to `"majority"`.
 #'
 #' @details
 #' **Voting unit.** A vote is cast by a *source*, not a *row*: votes are
@@ -206,22 +214,27 @@ attribute_truth_backends <- function() {
 #' multiple real practice locations) -- but note that under
 #' `"multi_value"`, `model_score` is a share of *votes cast*, not a
 #' probability that a single categorical value is correct, since one
-#' source can contribute to more than one candidate's count.
+#' source can contribute to more than one candidate's count. `backend =
+#' "crowd_kit"` requires `"single_value"`: Dawid-Skene-family models
+#' assume exactly one label per worker-task, so `"multi_value"` is an
+#' error there rather than a silently ill-defined fit.
 #'
 #' **Grouping.** Entity-years are grouped with `split(x, list(entity_id,
-#' reference_year))`, never a hand-built pasted string key -- `entity_id`
-#' and `reference_year` are both already guaranteed non-missing by this
-#' point, so there is no risk of the all-`NA`-key failure mode a pasted or
-#' `interaction()`-based key can hit (see `attribute_consensus_tier()`'s
-#' own fix for exactly that bug), and no risk of two different
-#' entity-years colliding onto the same pasted string.
+#' reference_year))` (`"majority"`) or with a `merge()`-built integer
+#' surrogate key (`"crowd_kit"`) -- never a hand-built pasted string key.
+#' `entity_id` and `reference_year` are both already guaranteed
+#' non-missing by this point, so there is no risk of the all-`NA`-key
+#' failure mode a pasted or `interaction()`-based key can hit (see
+#' `attribute_consensus_tier()`'s own fix for exactly that bug), and no
+#' risk of two different entity-years colliding onto the same pasted
+#' string.
 #'
-#' **Abstention.** An exact tie for the largest vote share always
-#' abstains (`abstention_reason = "tied_vote"`) -- there is no principled
-#' winner to report. If `abstain_threshold` is set and the winning share
-#' is below it even without a tie, the call also abstains
-#' (`"below_abstain_threshold"`). `predicted_value` is `NA` whenever
-#' `abstained` is `TRUE`.
+#' **Abstention.** An exact tie for the largest vote share or posterior
+#' probability always abstains (`abstention_reason = "tied_vote"`) --
+#' there is no principled winner to report. If `abstain_threshold` is set
+#' and the winning score is below it even without a tie, the call also
+#' abstains (`"below_abstain_threshold"`). `predicted_value` is `NA`
+#' whenever `abstained` is `TRUE`.
 #'
 #' **One attribute per call.** If `claims` contains more than one
 #' distinct `attribute` value, `attribute_name` must select one; this is
@@ -231,46 +244,95 @@ attribute_truth_backends <- function() {
 #' grouping happens, votes can never mix across attributes regardless of
 #' how entity-years are grouped.
 #'
-#' **Arguments majority doesn't use.** `implication_function`,
-#' `max_iterations`, and `convergence_tolerance` exist for methods Phase 1
-#' does not implement yet; passing a non-default value with
-#' `method = "majority"` emits a message noting it has no effect, rather
-#' than silently ignoring it.
+#' **`backend = "crowd_kit"` (`method = "dawid_skene"` or
+#' `"one_coin_dawid_skene"`).** An *optional* dependency via `reticulate`:
+#' this package never requires Python to be used, never installs Python
+#' or any Python package, and never modifies a user's global Python
+#' environment. [attribute_truth_backends()] probes whether Python and
+#' `crowd-kit` are already available in whatever Python the caller has
+#' configured (`RETICULATE_PYTHON`, `reticulate::use_python()`, or one
+#' already on `PATH`); if not, `attribute_truth_fusion()` errors with
+#' that reason rather than silently falling back to `"majority"`. Unlike
+#' `"majority"`, which fits independently within each entity-year,
+#' Dawid-Skene-family models fit *once*, jointly, across every
+#' entity-year for `attribute_name` -- they estimate one confusion matrix
+#' (`"dawid_skene"`) or one scalar skill (`"one_coin_dawid_skene"`) per
+#' *source*, pooling its evidence across every entity-year it rated, so
+#' `source_diagnostics` is populated (one row per source, or per
+#' source-x-true-label-x-observed-label for the full confusion matrix)
+#' where it is always empty for `"majority"`. `model_score` for these
+#' methods is `score_type = "posterior_probability"`: a model-estimated
+#' probability under the Dawid-Skene assumptions (conditionally
+#' independent worker errors given the true label), not a probability
+#' validated against any ground truth -- see
+#' `vignette("truth-fusion-crowdkit")` for a worked demonstration of exactly
+#' how that assumption fails when sources share an upstream data source, and
+#' why a confident, fully-converged fit is not evidence of accuracy.
+#' `model_diagnostics$converged` is `FALSE` (with a `warning()`) if the
+#' EM loop used every one of `max_iterations` without its loss changing
+#' by less than `convergence_tolerance`; `n_disconnected_components > 1`
+#' (also a `warning()`) means the worker-task graph split into pieces
+#' that share no evidence, so per-source reliabilities are not jointly
+#' identifiable from this call alone.
+#'
+#' **Arguments a given method doesn't use.** `implication_function` is
+#' reserved for methods not yet implemented (see
+#' [attribute_truth_backends()]); passing a non-`NULL` value emits a
+#' message noting it has no effect for the method actually used, rather
+#' than silently ignoring it. `max_iterations`/`convergence_tolerance` are
+#' unused by `"majority"` (same message) but are the real EM iteration
+#' cap and convergence tolerance for `"dawid_skene"`/
+#' `"one_coin_dawid_skene"`.
 #'
 #' @param claims A data frame shaped like [attribute_claims_validate()]'s
 #'   input/output.
-#' @param method Inference method. Only `"majority"` is implemented in
-#'   this version.
+#' @param method Inference method: `"majority"` (R-native), or
+#'   `"dawid_skene"`/`"one_coin_dawid_skene"` (optional Crowd-Kit backend;
+#'   see Details).
 #' @param attribute_name Which `attribute` value in `claims` to fuse.
 #'   Required if `claims` contains more than one.
 #' @param backend `"auto"` (default) resolves to the one backend that
 #'   implements `method`; passing a specific backend that does not
 #'   implement `method` is an error, never a silent substitution.
 #' @param implication_function,max_iterations,convergence_tolerance
-#'   Reserved for methods not yet implemented; see Details.
+#'   `max_iterations`/`convergence_tolerance` are the EM iteration cap and
+#'   tolerance for the Crowd-Kit methods; see Details for all three.
 #' @param seed Stored in `model_diagnostics` for reproducibility
-#'   record-keeping; `"majority"` itself is deterministic and does not
-#'   use it.
-#' @param abstain_threshold Optional minimum winning vote share (`0`-`1`);
-#'   below it, abstain even without a tie. `NULL` (default) disables this.
-#' @param on_source_conflict `"single_value"` (default) or `"multi_value"`;
-#'   see Details.
+#'   record-keeping; every method currently implemented is deterministic
+#'   given its input and does not actually use it.
+#' @param abstain_threshold Optional minimum winning score (`0`-`1`,
+#'   vote share or posterior probability depending on method); below it,
+#'   abstain even without a tie. `NULL` (default) disables this.
+#' @param on_source_conflict `"single_value"` (default) or `"multi_value"`
+#'   (rejected for `backend = "crowd_kit"`); see Details.
 #' @return An object of class `mysteryroster_truth`, a list with:
 #'   \describe{
 #'     \item{`predictions`}{One row per entity-attribute-year:
 #'       `entity_id`, `attribute`, `reference_year`, `predicted_value`,
-#'       `method`, `model_score`, `score_type`, `n_sources` (votes actually
-#'       counted, after excluding conflicted sources under
+#'       `method`, `model_score`, `score_type`, `n_sources` (votes/ratings
+#'       actually counted, after excluding conflicted sources under
 #'       `"single_value"`), `n_sources_excluded`, `n_candidate_values`,
 #'       `abstained`, `abstention_reason` (also `"no_single_value_sources"`
 #'       when every source for that entity-year was excluded).}
 #'     \item{`candidate_scores`}{One row per candidate value per
-#'       entity-attribute-year, ranked by `vote_share` descending.}
+#'       entity-attribute-year: `candidate_value`, `n_votes` (raw count of
+#'       distinct sources claiming it, always computable regardless of
+#'       method), `vote_share` (vote share for `"majority"`, posterior
+#'       probability for Crowd-Kit methods -- see `score_type`),
+#'       `score_type`.}
 #'     \item{`source_diagnostics`}{Zero rows for `"majority"`, which
-#'       learns no source-level reliability; populated by later methods.}
+#'       learns no source-level reliability. For `"dawid_skene"`: one row
+#'       per source x true label x observed label, `error_probability`
+#'       \eqn{= Pr(\text{source reports observed} \mid \text{true is
+#'       true})}, plus `reliability_score` (mean of the diagonal, i.e.
+#'       mean probability of reporting correctly across classes). For
+#'       `"one_coin_dawid_skene"`: one row per source, `reliability_score`
+#'       only (`true_label`/`observed_label`/`error_probability` are
+#'       `NA`), its single scalar skill.}
 #'     \item{`model_diagnostics`}{One row: `method`, `backend`,
-#'       `converged`, `n_iterations`, `runtime_sec`, `seed`,
-#'       `n_warnings`.}
+#'       `on_source_conflict`, `converged`, `n_iterations`, `runtime_sec`,
+#'       `seed`, `n_warnings`, `backend_version` (`NA` for `"majority"`),
+#'       `n_disconnected_components` (`NA` for `"majority"`).}
 #'     \item{`claims`}{The input claims actually used (filtered to
 #'       `attribute_name`, non-missing), unmodified.}
 #'   }
@@ -284,8 +346,9 @@ attribute_truth_backends <- function() {
 #' fusion_result$predictions
 #' fusion_result$candidate_scores
 #' @seealso [attribute_claims_validate()]; [attribute_truth_backends()];
-#'   `vignette("consensus-and-corroboration")` for the relative-claim
-#'   functions that never predict a value.
+#'   `vignette("truth-fusion-crowdkit")` for a worked Crowd-Kit example and
+#'   its limitations; `vignette("consensus-and-corroboration")` for the
+#'   relative-claim functions that never predict a value.
 #' @family truth fusion
 #' @export
 attribute_truth_fusion <- function(claims, method = "majority", attribute_name = NULL,
@@ -300,7 +363,8 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
   if (!is.null(abstain_threshold)) checkmate::assert_number(abstain_threshold, lower = 0, upper = 1)
   on_source_conflict <- match.arg(on_source_conflict)
 
-  implemented_methods <- c(majority = "r_native")
+  implemented_methods <- c(majority = "r_native", dawid_skene = "crowd_kit",
+                            one_coin_dawid_skene = "crowd_kit")
   if (!method %in% names(implemented_methods)) {
     stop(sprintf(
       "attribute_truth_fusion: method '%s' is not yet implemented in this version; available: %s",
@@ -315,13 +379,15 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
   }
 
   if (!is.null(implication_function)) {
-    message("attribute_truth_fusion: 'implication_function' is not used by method = 'majority'")
+    message(sprintf("attribute_truth_fusion: 'implication_function' is not used by method = '%s'", method))
   }
-  if (!isTRUE(all.equal(max_iterations, 100L))) {
-    message("attribute_truth_fusion: 'max_iterations' is not used by method = 'majority'")
-  }
-  if (!isTRUE(all.equal(convergence_tolerance, 0.001))) {
-    message("attribute_truth_fusion: 'convergence_tolerance' is not used by method = 'majority'")
+  if (resolved_backend == "r_native") {
+    if (!isTRUE(all.equal(max_iterations, 100L))) {
+      message(sprintf("attribute_truth_fusion: 'max_iterations' is not used by method = '%s'", method))
+    }
+    if (!isTRUE(all.equal(convergence_tolerance, 0.001))) {
+      message(sprintf("attribute_truth_fusion: 'convergence_tolerance' is not used by method = '%s'", method))
+    }
   }
 
   required_cols <- c("entity_id", "attribute", "source_id", "claimed_value", "reference_year")
@@ -374,84 +440,110 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
   }
 
   started_at <- proc.time()[["elapsed"]]
+  n_warnings <- 0L
+  backend_version <- NA_character_
+  n_disconnected_components <- NA_integer_
 
-  # One vote row per distinct (entity, year, source, value) -- not per
-  # input row -- so a source repeating the same value twice (a duplicate
-  # row) only casts one vote. entity_id/reference_year are both already
-  # guaranteed non-missing above, so grouping via split(x, list(...))
-  # never hits the all-NA-key failure mode a pasted string key can, and
-  # never risks two different entity-years colliding onto one key.
-  vote_cols <- c("entity_id", "reference_year", "source_id", "claimed_value")
-  votes_long <- claims_used[!duplicated(claims_used[vote_cols]), vote_cols, drop = FALSE]
-  vote_groups <- split(votes_long, list(votes_long$entity_id, votes_long$reference_year), drop = TRUE)
+  if (resolved_backend == "r_native") {
+    # One vote row per distinct (entity, year, source, value) -- not per
+    # input row -- so a source repeating the same value twice (a duplicate
+    # row) only casts one vote. entity_id/reference_year are both already
+    # guaranteed non-missing above, so grouping via split(x, list(...))
+    # never hits the all-NA-key failure mode a pasted string key can, and
+    # never risks two different entity-years colliding onto one key.
+    vote_cols <- c("entity_id", "reference_year", "source_id", "claimed_value")
+    votes_long <- claims_used[!duplicated(claims_used[vote_cols]), vote_cols, drop = FALSE]
+    vote_groups <- split(votes_long, list(votes_long$entity_id, votes_long$reference_year), drop = TRUE)
 
-  prediction_rows <- vector("list", length(vote_groups))
-  candidate_rows <- vector("list", length(vote_groups))
-  for (i in seq_along(vote_groups)) {
-    full_group <- vote_groups[[i]]
-    group_entity_id <- full_group$entity_id[1]
-    group_reference_year <- full_group$reference_year[1]
+    prediction_rows <- vector("list", length(vote_groups))
+    candidate_rows <- vector("list", length(vote_groups))
+    for (i in seq_along(vote_groups)) {
+      full_group <- vote_groups[[i]]
+      group_entity_id <- full_group$entity_id[1]
+      group_reference_year <- full_group$reference_year[1]
 
-    # on_source_conflict: a source appears more than once in full_group
-    # only by having a DIFFERENT claimed_value each time (exact-duplicate
-    # rows were already collapsed above). "single_value" excludes such a
-    # source from voting here entirely -- unresolved, not arbitrarily
-    # picked -- rather than letting it cast competing votes.
-    source_value_counts <- table(full_group$source_id)
-    conflicted_sources <- names(source_value_counts)[source_value_counts > 1L]
-    n_sources_excluded <- 0L
-    group_votes <- full_group
-    if (on_source_conflict == "single_value" && length(conflicted_sources) > 0L) {
-      n_sources_excluded <- length(conflicted_sources)
-      group_votes <- full_group[!full_group$source_id %in% conflicted_sources, , drop = FALSE]
-    }
+      # on_source_conflict: a source appears more than once in full_group
+      # only by having a DIFFERENT claimed_value each time (exact-duplicate
+      # rows were already collapsed above). "single_value" excludes such a
+      # source from voting here entirely -- unresolved, not arbitrarily
+      # picked -- rather than letting it cast competing votes.
+      source_value_counts <- table(full_group$source_id)
+      conflicted_sources <- names(source_value_counts)[source_value_counts > 1L]
+      n_sources_excluded <- 0L
+      group_votes <- full_group
+      if (on_source_conflict == "single_value" && length(conflicted_sources) > 0L) {
+        n_sources_excluded <- length(conflicted_sources)
+        group_votes <- full_group[!full_group$source_id %in% conflicted_sources, , drop = FALSE]
+      }
 
-    if (!nrow(group_votes)) {
+      if (!nrow(group_votes)) {
+        prediction_rows[[i]] <- tibble::tibble(
+          entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
+          predicted_value = NA_character_, method = method, model_score = NA_real_,
+          score_type = "vote_share", n_sources = 0L, n_sources_excluded = n_sources_excluded,
+          n_candidate_values = 0L, abstained = TRUE, abstention_reason = "no_single_value_sources"
+        )
+        candidate_rows[[i]] <- tibble::tibble(
+          entity_id = character(0), attribute = character(0), reference_year = integer(0),
+          candidate_value = character(0), n_votes = integer(0), vote_share = numeric(0), score_type = character(0)
+        )
+        next
+      }
+
+      tally <- table(group_votes$claimed_value)
+      n_sources_group <- dplyr::n_distinct(group_votes$source_id)
+      winner_n <- max(tally)
+      is_tie <- sum(tally == winner_n) > 1L
+      winner_value <- names(tally)[which.max(tally)]
+      vote_share <- winner_n / n_sources_group
+
+      abstained <- is_tie
+      abstention_reason <- if (is_tie) "tied_vote" else NA_character_
+      if (!abstained && !is.null(abstain_threshold) && vote_share < abstain_threshold) {
+        abstained <- TRUE
+        abstention_reason <- "below_abstain_threshold"
+      }
+
       prediction_rows[[i]] <- tibble::tibble(
         entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
-        predicted_value = NA_character_, method = method, model_score = NA_real_,
-        score_type = "vote_share", n_sources = 0L, n_sources_excluded = n_sources_excluded,
-        n_candidate_values = 0L, abstained = TRUE, abstention_reason = "no_single_value_sources"
+        predicted_value = if (abstained) NA_character_ else winner_value,
+        method = method, model_score = round(vote_share, 4), score_type = "vote_share",
+        n_sources = n_sources_group, n_sources_excluded = n_sources_excluded,
+        n_candidate_values = length(tally),
+        abstained = abstained, abstention_reason = abstention_reason
       )
       candidate_rows[[i]] <- tibble::tibble(
-        entity_id = character(0), attribute = character(0), reference_year = integer(0),
-        candidate_value = character(0), n_votes = integer(0), vote_share = numeric(0)
+        entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
+        candidate_value = names(tally), n_votes = as.integer(tally),
+        vote_share = round(as.integer(tally) / n_sources_group, 4), score_type = "vote_share"
       )
-      next
     }
 
-    tally <- table(group_votes$claimed_value)
-    n_sources_group <- dplyr::n_distinct(group_votes$source_id)
-    winner_n <- max(tally)
-    is_tie <- sum(tally == winner_n) > 1L
-    winner_value <- names(tally)[which.max(tally)]
-    vote_share <- winner_n / n_sources_group
-
-    abstained <- is_tie
-    abstention_reason <- if (is_tie) "tied_vote" else NA_character_
-    if (!abstained && !is.null(abstain_threshold) && vote_share < abstain_threshold) {
-      abstained <- TRUE
-      abstention_reason <- "below_abstain_threshold"
-    }
-
-    prediction_rows[[i]] <- tibble::tibble(
-      entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
-      predicted_value = if (abstained) NA_character_ else winner_value,
-      method = method, model_score = round(vote_share, 4), score_type = "vote_share",
-      n_sources = n_sources_group, n_sources_excluded = n_sources_excluded,
-      n_candidate_values = length(tally),
-      abstained = abstained, abstention_reason = abstention_reason
+    predictions_tbl <- dplyr::bind_rows(prediction_rows)
+    candidate_scores_tbl <- dplyr::bind_rows(candidate_rows)
+    source_diagnostics_tbl <- tibble::tibble(
+      source_id = character(0), attribute = character(0), true_label = character(0),
+      observed_label = character(0), error_probability = numeric(0), reliability_score = numeric(0)
     )
-    candidate_rows[[i]] <- tibble::tibble(
-      entity_id = group_entity_id, attribute = attribute_name, reference_year = group_reference_year,
-      candidate_value = names(tally), n_votes = as.integer(tally),
-      vote_share = round(as.integer(tally) / n_sources_group, 4)
+    n_iterations <- 1L
+    converged <- TRUE
+  } else {
+    crowdkit_result <- .mysteryroster_crowdkit_fit(
+      claims_used, attribute_name, method, max_iterations, convergence_tolerance,
+      on_source_conflict, abstain_threshold
     )
+    predictions_tbl <- crowdkit_result$predictions
+    candidate_scores_tbl <- crowdkit_result$candidate_scores
+    source_diagnostics_tbl <- crowdkit_result$source_diagnostics
+    converged <- crowdkit_result$converged
+    n_iterations <- crowdkit_result$n_iterations
+    n_disconnected_components <- crowdkit_result$n_disconnected_components
+    backend_version <- crowdkit_result$backend_version
+    if (isFALSE(converged)) n_warnings <- n_warnings + 1L
+    if (!is.na(n_disconnected_components) && n_disconnected_components > 1L) n_warnings <- n_warnings + 1L
   }
 
-  predictions_tbl <- dplyr::bind_rows(prediction_rows)
   predictions_tbl <- predictions_tbl[order(predictions_tbl$entity_id, predictions_tbl$reference_year), ]
-  candidate_scores_tbl <- dplyr::bind_rows(candidate_rows)
   if (nrow(candidate_scores_tbl) > 0L) {
     candidate_scores_tbl <- candidate_scores_tbl[order(
       candidate_scores_tbl$entity_id, candidate_scores_tbl$reference_year, -candidate_scores_tbl$vote_share
@@ -470,10 +562,12 @@ attribute_truth_fusion <- function(claims, method = "majority", attribute_name =
     list(
       predictions = tibble::as_tibble(predictions_tbl),
       candidate_scores = tibble::as_tibble(candidate_scores_tbl),
-      source_diagnostics = tibble::tibble(source_id = character(0), reliability_score = numeric(0)),
+      source_diagnostics = tibble::as_tibble(source_diagnostics_tbl),
       model_diagnostics = tibble::tibble(
         method = method, backend = resolved_backend, on_source_conflict = on_source_conflict,
-        converged = TRUE, n_iterations = 1L, runtime_sec = elapsed_sec, seed = seed, n_warnings = 0L
+        converged = converged, n_iterations = n_iterations, runtime_sec = elapsed_sec, seed = seed,
+        n_warnings = n_warnings, backend_version = backend_version,
+        n_disconnected_components = n_disconnected_components
       ),
       claims = claims_used
     ),
