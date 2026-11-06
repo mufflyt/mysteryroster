@@ -93,7 +93,7 @@ Every claim added under this expansion should carry one more column,
 | Historical DAC/Physician Compare vintages | `artifacts/physician_compare_historical_midwives.csv`, 14 vintages 2013-2025 | `direct_snapshot` | `dac_pecos` (existing) | already in `dac_pecos_combined`; no new information without re-splitting that merge, which is out of scope here |
 | PECOS revalidation | `cms_revalidation.duckdb`, 40 monthly vintages 2021-12 to 2026-09 | `direct_snapshot` | `dac_pecos` (existing, per `SHARED_LINEAGE_GROUPS`) | already in `dac_pecos_combined` |
 | PPEF / NBER PPEF | single current snapshot | n/a | n/a | **exclude** -- audit found only an enrollment-ID-derived date, no state/address field at all; nothing to add |
-| Hospital facility affiliations | `artifacts/dac_facility_affiliations.csv`, current, vintage-matched to 2026-06 DAC | `affiliation` | independent (own family) -- a CCN facility registry is a structurally different record type from DAC/PECOS's physician-level enrollment data, so "vintage-matched" is read as a shared *extract date*, not shared *lineage*; the `~/midwifery` session reached the same call independently | **include as a direct `practice_state` claim, dated 2026-only, never extrapolated to earlier years** -- per constraint 3's override; same single-snapshot treatment already applied to Healthgrades/Doximity/state boards elsewhere |
+| Hospital facility affiliations | `artifacts/dac_facility_affiliations.csv`, current, vintage-matched to 2026-06 DAC | `affiliation` | independent (own family) -- **confirmed, not inferred**: the `~/midwifery` session read `extract_dac_facility_affiliations.R` directly and reports that although the NPI-CCN affiliation *link* is published alongside DAC in the same monthly CMS release (vintage-matched), the `state` column traces to `cms_hospital_info` (CMS Hospital General Information / Care Compare) joined in via CCN -- the *facility's own* independent CMS registration, never DAC/PECOS's clinician-address pipeline. Structurally independent lineage, confirmed from the actual code | **include as a direct `practice_state` claim, dated 2026-only, never extrapolated to earlier years** -- per constraint 3's override; same single-snapshot treatment already applied to Healthgrades/Doximity/state boards elsewhere. **Missingness caveat (from the same script's comments, via the `~/midwifery` session):** only Medicare-enrolled clinicians appear in DAC at all, and of those, only ones with a recorded facility privilege appear in this file -- so a midwife's *absence* from this source means "not Medicare-enrolled" or "no recorded hospital privilege," never "does not practice at a hospital." Unlike the other sources, this source's absence is not informative and must not be read as corroborating or contradicting evidence either way when any downstream corroboration metric (e.g. `any_corroboration`) is computed. |
 | Trilliant work sites | `midwife_work_sites_long.csv`, claims-derived, single snapshot (evidence_date 2026-06-25) | `direct_snapshot` for that one date; `scrape_current_only`-like for any other year | independent (own family) | include at its one dated snapshot year only; do not propagate to other years (constraint 6) |
 | Open Payments, per-payment history | merged DuckDB, dated 2013-2024 (`Date_of_Payment`); some corrupted dates (year 0002, 3015) flagged by the audit | `direct_snapshot` | independent (already `open_payments`) | include the richer per-payment year coverage, but **filter corrupted dates before loading** -- a malformed date is not a valid `reference_year`, and silently coercing it would violate constraint 5's spirit even though it's a different failure mode |
 | Medicaid T-MSIS enrollment segments | `medicaid_provider_enrollment_segments.duckdb`, 66M rows, `ENRL_START_DT`/`ENRL_END_DT` + `STATE_CD`, Jan 2018-Dec 2024 | `enrollment_interval` | independent (own family) | **the one genuinely new, independently-lineaged, properly-dated candidate** -- include, tagged `enrollment_interval`, never merged into a `direct_snapshot` lineage family; NPI-completeness varies wildly by state (audit found states as low as ~0%), so coverage must be measured per state before trusting any null result from it |
@@ -117,9 +117,11 @@ cast by the family; drops a disagreeing group entirely (never picks one);
 passes through unchanged when only one group member has a claim there. This
 is the general form of the rule the original `dac_pecos_combined` merge
 already applied once, ad hoc -- it is now reusable for any future
-lineage-sharing pair. Facility affiliations turned out not to need it (both
-sessions independently judged the CCN registry structurally independent of
-DAC/PECOS, not just coincidentally dated together) -- but the function is
+lineage-sharing pair. Facility affiliations turned out not to need it: the
+`~/midwifery` session confirmed from `extract_dac_facility_affiliations.R`
+that the state evidence traces to CMS's Hospital General Information
+registry via CCN, not to DAC/PECOS's clinician pipeline -- structurally
+independent, not just coincidentally dated together -- but the function is
 ready the day a genuinely lineage-sharing pair among the newer sources
 *is* found.
 
@@ -144,3 +146,9 @@ alone.
 - `attribute_claims_collapse_lineage()`'s tests (`tests/testthat/
   test-claims-lineage.R`) use synthetic fixtures only, by design -- they
   check the function's rule, not any real source's actual agreement rate.
+- The `~/midwifery` session's own DAC/PECOS merge (`merge_dac_pecos_sources()`
+  in `R/lib/truth_fusion_claims.R`) is hand-rolled and logic-equivalent to
+  `attribute_claims_collapse_lineage()`, not yet switched over -- deferred
+  deliberately so an already-running full-panel pass isn't interrupted to
+  swap in an equivalent implementation. Worth confirming this actually
+  happened before anyone treats the two as interchangeable long-term.
