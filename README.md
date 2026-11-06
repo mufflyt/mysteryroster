@@ -260,6 +260,25 @@ Design rules, below). `attribute_truth_fusion()` is the one exception:
 it predicts a value, with an explicit score, and an explicit option to
 abstain rather than guess. See `vignette("truth-fusion")`.
 
+<img src="man/figures/truth-discovery-abstention-vs-reliability.png" width="100%"
+     alt="Diagram contrasting abstention (a per-entity-year decision: clear
+     agreement predicts a state, a tie or unresolved conflict abstains, and a
+     same-source internal conflict -- for example DAC and PECOS sharing
+     lineage -- abstains or excludes that source) against source reliability
+     (a per-source property learned across many records by how often it
+     matches the model's inferred truth, illustrated as three sources with
+     high, moderate, and low agreement rates). The diagram's closing warning:
+     reliability is not the same as verified truth -- dependent sources can
+     agree with each other and still be wrong together." />
+
+Abstention is a per-entity-year decision (does *this* record have enough
+clean evidence to predict a state); reliability is a per-source property
+learned across *many* records (how often does this source's evidence end up
+matching the fused value). The two are easy to conflate -- a highly
+"reliable" source is not a verified-correct one, and two dependent sources
+(like DAC and PECOS; see `attribute_claims_collapse_lineage()` above) can
+agree with each other and still both be wrong.
+
 ```r
 claims <- attribute_claims_validate(long_format_claims)  # entity_id/attribute/source_id/claimed_value/reference_year
 

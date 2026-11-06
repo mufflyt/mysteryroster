@@ -1,5 +1,11 @@
 # mysteryroster (development version)
 
+* Added `man/figures/truth-discovery-abstention-vs-reliability.png` -- a
+  conceptual diagram contrasting abstention (a per-entity-year decision)
+  with source reliability (a per-source property learned across many
+  records), including the warning that dependent sources can agree with
+  each other and still be wrong together -- to README.md's "Predicting a
+  value: truth fusion" section.
 * Added two base-R figures to `vignette("truth-fusion-evidence-ledger-cross-check")`:
   a grouped bar chart of majority-vote abstention by transition year (baseline vs.
   +T-MSIS), visually showing the asymmetry between the 2018 and 2024 spike years, and
