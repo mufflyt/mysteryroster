@@ -137,6 +137,24 @@ test_that("attribute_catch_up_curve left-truncates a source's risk set until its
   expect_equal(cu$median_horizon$median_horizon[cu$median_horizon$source == "b"], 5L)
 })
 
+test_that("attribute_catch_up_curve excludes an identifier a source never observes at all from that source's risk set", {
+  # id 1: a detects CO -> NM; b has records for id 1 (shows CO throughout) but never NM --
+  # ordinary "watched, unresolved". id 2: a detects TX -> GA; b has NO records for id 2 at
+  # all, in any year -- structural non-coverage, not merely an unresolved watch.
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "GA"))
+  b <- data.frame(npi = c("1", "1", "1"), year = 2020:2022, state = c("CO", "CO", "CO"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+
+  nc <- cu$n_no_coverage
+  expect_equal(nc$n_no_coverage[nc$source == "a"], 0L) # a observes both identifiers
+  expect_equal(nc$n_no_coverage[nc$source == "b"], 1L) # b never observes id 2 at all
+
+  cb <- cu$curve[cu$curve$source == "b", ]
+  expect_equal(cb$n_at_risk[cb$horizon == 0], 1L) # id 2's event dropped entirely, not just unresolved
+  expect_true(is.na(cu$median_horizon$median_horizon[cu$median_horizon$source == "b"]))
+})
+
 test_that("attribute_catch_up_curve's reference = 'exclude_self' removes circularity and reports n_unanchored", {
   # id 1: only a ever shows NM -- this event has no independent confirmation at all.
   # id 2: both a (2022) and b (2021, earlier) detect the TX -> GA arrival independently.

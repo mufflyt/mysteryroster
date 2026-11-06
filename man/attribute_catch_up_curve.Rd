@@ -46,6 +46,10 @@ observed panel, reported as \code{NA}, not a misleadingly small number.}
 \item{\code{n_tracked}}{Total distinct \verb{(id, value)} arrival events pooled across all
 sources -- a single constant, independent of any source's own observation window.}
 \item{\code{reference}}{The \code{reference} argument used, echoed back.}
+\item{\code{n_no_coverage}}{Tibble, one row per source: the count of pooled events dropped
+for that source because the identifier has no record in that source at all, in any
+year -- structural non-coverage, excluded from the risk set entirely rather than
+left unresolved.}
 \item{\code{n_unanchored}}{Only present when \code{reference = "exclude_self"}: tibble, one row
 per source, the count of pooled events dropped for that source because no \emph{other}
 source independently detected them.}
@@ -112,6 +116,20 @@ the source is slow -- it is evidence the source cannot be assessed over years it
 never observed in at all. A source whose own data entirely predates or postdates an
 event's observable window (no overlap at all) is never at risk for that event and simply
 does not contribute to its curve.
+
+\strong{Person-level non-coverage is a third category, distinct from both of the above.} A
+source's own observation window tells you when the \emph{source} was operating; it says
+nothing about whether a \emph{given identifier} ever appears in it at all. An identifier this
+source has zero records for, in any year, cannot show any value for it, let alone the
+tracked one -- this is not "watched and still pending", it is structural absence, and on
+real data it is often the dominant effect: in a real application, 46\% of tracked
+identifiers never appeared in a sparse source at all, for any year, which was a far
+larger driver of that source's slow-looking curve than its temporal window ever was.
+Such identifiers are excluded from a source's risk set entirely (not merely left
+unresolved) and counted in the returned \code{n_no_coverage}, the same way \code{n_unanchored}
+counts events dropped for lacking independent confirmation -- both are reasons an event
+cannot inform a source's curve at all, as opposed to informing it with a slow or fast
+result.
 
 \strong{Circularity in which source "defines" an event, and the \code{reference} parameter.} By
 default (\code{reference = "pooled"}), an event's \code{start} is pooled across every source's own
