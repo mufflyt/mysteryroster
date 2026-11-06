@@ -1016,6 +1016,20 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' event's observable window (no overlap at all) is never at risk for that event and simply
 #' does not contribute to its curve.
 #'
+#' **Person-level non-coverage is a third category, distinct from both of the above.** A
+#' source's own observation window tells you when the *source* was operating; it says
+#' nothing about whether a *given identifier* ever appears in it at all. An identifier this
+#' source has zero records for, in any year, cannot show any value for it, let alone the
+#' tracked one -- this is not "watched and still pending", it is structural absence, and on
+#' real data it is often the dominant effect: in a real application, 46% of tracked
+#' identifiers never appeared in a sparse source at all, for any year, which was a far
+#' larger driver of that source's slow-looking curve than its temporal window ever was.
+#' Such identifiers are excluded from a source's risk set entirely (not merely left
+#' unresolved) and counted in the returned `n_no_coverage`, the same way `n_unanchored`
+#' counts events dropped for lacking independent confirmation -- both are reasons an event
+#' cannot inform a source's curve at all, as opposed to informing it with a slow or fast
+#' result.
+#'
 #' **Circularity in which source "defines" an event, and the `reference` parameter.** By
 #' default (`reference = "pooled"`), an event's `start` is pooled across every source's own
 #' detected arrivals -- which means the source that happens to detect an event earliest gets
@@ -1058,6 +1072,10 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #'     \item{`n_tracked`}{Total distinct `(id, value)` arrival events pooled across all
 #'       sources -- a single constant, independent of any source's own observation window.}
 #'     \item{`reference`}{The `reference` argument used, echoed back.}
+#'     \item{`n_no_coverage`}{Tibble, one row per source: the count of pooled events dropped
+#'       for that source because the identifier has no record in that source at all, in any
+#'       year -- structural non-coverage, excluded from the risk set entirely rather than
+#'       left unresolved.}
 #'     \item{`n_unanchored`}{Only present when `reference = "exclude_self"`: tibble, one row
 #'       per source, the count of pooled events dropped for that source because no *other*
 #'       source independently detected them.}
@@ -1174,10 +1192,23 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
       first_seen_s <- first_seen_pooled
     }
 
+    # Person-level non-coverage: an identifier this source has NO records for at all, in
+    # any year, cannot show ANY value for it, let alone the tracked one -- structurally
+    # absent from this source, not "watched but not yet updated". Keeping such an
+    # identifier in the risk set anyway (as the source-level observation window alone
+    # would) drags the curve down for a reason that has nothing to do with update speed:
+    # on real data, this was the dominant driver of an implausibly slow-looking source,
+    # far more than the source-level window ever was. Excluded here and reported
+    # separately, the same way n_unanchored is, rather than silently counted as still
+    # pending.
+    ids_observed <- unique(src$id)
+    n_no_coverage <- sum(!(first_seen_s$id %in% ids_observed))
+    first_seen_s <- first_seen_s[first_seen_s$id %in% ids_observed, , drop = FALSE]
+
     if (nrow(first_seen_s) == 0L) {
       return(list(
         curve = tibble::tibble(horizon = horizons, n_at_risk = 0L, n_events = 0L, pct_not_yet_shown = NA_real_),
-        n_unanchored = n_unanchored
+        n_unanchored = n_unanchored, n_no_coverage = n_no_coverage
       ))
     }
 
@@ -1215,7 +1246,7 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
     list(
       curve = tibble::tibble(horizon = horizons, n_at_risk = n_at_risk_vec, n_events = n_events_vec,
                              pct_not_yet_shown = round(surv_vec, 1)),
-      n_unanchored = n_unanchored
+      n_unanchored = n_unanchored, n_no_coverage = n_no_coverage
     )
   }
 
@@ -1237,6 +1268,10 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
   median_horizon <- tibble::as_tibble(dplyr::bind_rows(median_rows))
 
   out <- list(curve = curve, median_horizon = median_horizon, n_tracked = n_tracked, reference = reference)
+  out$n_no_coverage <- tibble::tibble(
+    source = nm,
+    n_no_coverage = unname(vapply(nm, function(s) per_source[[s]]$n_no_coverage, integer(1)))
+  )
   if (identical(reference, "exclude_self")) {
     out$n_unanchored <- tibble::tibble(
       source = nm,

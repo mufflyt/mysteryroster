@@ -1,5 +1,24 @@
 # mysteryroster (development version)
 
+* Fixed a third real validity problem in `attribute_catch_up_curve()`, found while
+  investigating why Open Payments' `exclude_self` median catch-up (13 years) was still
+  implausibly high after the censoring-window and circularity fixes below: a source's own
+  observation *window* (when the source as a whole was operating) says nothing about
+  whether a *given identifier* ever appears in it at all. An identifier a source has zero
+  records for, in any year, cannot show any value for it -- this is structural
+  non-coverage, not "watched and still pending" -- yet it was being kept in that source's
+  risk set for the source's entire operating window regardless, dragging the curve down
+  for a reason with nothing to do with update speed. On the real data this was the
+  dominant effect, far larger than the window fix: facility affiliation never observes 69%
+  of its tracked identifiers at all (2,104 of 3,029), Open Payments 44% (1,322), T-MSIS 22%
+  (653). Fixed: such identifiers are now excluded from a source's risk set entirely
+  (reported via the new `n_no_coverage`, the same way `n_unanchored` already reported
+  circularity exclusions). Effect on the real data: Open Payments' median fell further,
+  10 -> 4 years (`pooled`) and 13 -> 5 years (`exclude_self`); T-MSIS and facility
+  affiliation, which previously never crossed 50% catch-up at all, now resolve at medians
+  of 13 and 5 years respectively once the identifiers they structurally cannot observe
+  stop being counted against them. One new regression test; all prior tests for this
+  function still pass unchanged.
 * Fixed two real validity problems in `attribute_catch_up_curve()`, found by running it
   against a real five-source midwifery comparison rather than only hand-built test
   fixtures:
