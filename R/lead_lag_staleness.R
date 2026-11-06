@@ -113,6 +113,308 @@ attribute_spell_age <- function(panel, attribute, id = "npi", year = "year") {
   tibble::as_tibble(dplyr::bind_rows(res))
 }
 
+#' How often does one source's own value change, independent of whether it's right?
+#'
+#' A source that flips its reported value every year is less trustworthy than
+#' one that holds steady, even setting aside which one is *correct* -- a
+#' question [attribute_spell_age()] already answers for a single current
+#' value ("how old is this specific record") but does not aggregate into a
+#' rate that one source's overall volatility can be compared to another's.
+#' This does that: among a single source's own consecutive-year transitions,
+#' what fraction show a changed value at all (no second source, no
+#' "is this the right change" judgment -- pure churn).
+#'
+#' @details
+#' A transition counts only when the identifier is present in *both*
+#' consecutive years with a non-missing value -- a calendar-year gap (e.g.
+#' observed in 2020 and 2022 but absent in 2021) is not counted as a
+#' transition at all, the same convention [attribute_spell_age()] uses for
+#' breaking a spell. Values are trimmed and upper-cased before comparison.
+#'
+#' **Compare two sources' churn with [format_proportion_comparison_prose()],
+#' not a separate function here** -- `overall$n_changed`/`overall$n_transitions`
+#' from two calls are exactly the `n_a`/`n_total_a`/`n_b`/`n_total_b` that
+#' function already expects (see Examples), so no redundant wrapper is
+#' needed just to get a two-proportion test and a sentence out of it.
+#'
+#' **Churn is not staleness, and neither implies accuracy.** A source that
+#' never changes might be current and correct, or might simply never be
+#' re-observed. A source that changes constantly might be tracking a
+#' genuinely mobile population, or might be unreliable data entry. This
+#' function reports the rate; what it means for a specific source is a
+#' judgment call outside its scope.
+#'
+#' @param panel Data frame with at least `id`, `year`, and `attribute`.
+#' @param attribute Name of the attribute column to track.
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param conf_level Confidence level for the overall and by-year Wilson
+#'   intervals. Default `0.95`.
+#' @return A list:
+#'   \describe{
+#'     \item{`overall`}{List: `n_transitions`, `n_changed`, `pct`, `ci_low`,
+#'       `ci_high` (Wilson, via [wilson_ci()]).}
+#'     \item{`by_year`}{Tibble, one row per transition `year_from`/`year_to`:
+#'       `n_transitions`, `n_changed`, `pct`, `ci_low`, `ci_high`.}
+#'     \item{`by_identifier`}{Tibble, one row per identifier that has at
+#'       least one transition: `n_transitions`, `n_changed`.}
+#'     \item{`change_count_distribution`}{Tibble: how many identifiers had
+#'       `0`, `1`, `2`, or `3+` changes, with `n` and `pct` (of identifiers
+#'       with at least one transition) -- separates a source whose churn is
+#'       spread evenly from one where a handful of identifiers account for
+#'       most of it.}
+#'   }
+#' @examples
+#' panel <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"),
+#'   year = c(2022, 2023, 2024, 2022, 2023, 2024),
+#'   state = c("CO", "CO", "CO", "NM", "TX", "NM")
+#' )
+#' churn <- attribute_churn_rate(panel, attribute = "state")
+#' churn$overall
+#'
+#' # Comparing two sources' churn reuses format_proportion_comparison_prose():
+#' panel_b <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"),
+#'   year = c(2022, 2023, 2024, 2022, 2023, 2024),
+#'   state = c("CO", "CO", "CO", "NM", "NM", "NM")
+#' )
+#' churn_a <- attribute_churn_rate(panel, attribute = "state")
+#' churn_b <- attribute_churn_rate(panel_b, attribute = "state")
+#' format_proportion_comparison_prose(
+#'   n_a = churn_a$overall$n_changed, n_total_a = churn_a$overall$n_transitions,
+#'   n_b = churn_b$overall$n_changed, n_total_b = churn_b$overall$n_transitions,
+#'   label_a = "Source A", label_b = "Source B",
+#'   unit_label = "consecutive-year transitions", condition_label = "showed a changed value"
+#' )$comparison_sentence
+#' @seealso [attribute_spell_age()]; [format_proportion_comparison_prose()];
+#'   [attribute_coverage()] for the completeness side of comparing sources.
+#' @family no-gold-standard comparison
+#' @export
+attribute_churn_rate <- function(panel, attribute, id = "npi", year = "year", conf_level = 0.95) {
+  checkmate::assert_data_frame(panel, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  for (col in c(id, year, attribute)) {
+    if (!col %in% names(panel)) {
+      stop(sprintf("attribute_churn_rate: panel has no column '%s'", col), call. = FALSE)
+    }
+  }
+
+  out <- tibble::tibble(id = trimws(as.character(panel[[id]])))
+  if (any(is.na(out$id) | !nzchar(out$id))) {
+    stop("attribute_churn_rate: panel contains missing or empty id values", call. = FALSE)
+  }
+  out$year <- .parse_whole_integer(panel[[year]], "attribute_churn_rate: year", allow_na = FALSE)
+  .assert_unique_keys(out, c("id", "year"), "attribute_churn_rate: panel")
+  v <- toupper(trimws(as.character(panel[[attribute]])))
+  out$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+  out <- out[order(out$id, out$year), , drop = FALSE]
+
+  groups <- split(out, out$id, drop = TRUE)
+  trans_list <- lapply(groups, function(g) {
+    n <- nrow(g)
+    if (n < 2L) return(NULL)
+    year_from <- g$year[1:(n - 1L)]
+    year_to <- g$year[2:n]
+    val_from <- g$value[1:(n - 1L)]
+    val_to <- g$value[2:n]
+    consec <- (year_to == year_from + 1L) & !is.na(val_from) & !is.na(val_to)
+    if (!any(consec)) return(NULL)
+    tibble::tibble(
+      id = g$id[1], year_from = year_from[consec], year_to = year_to[consec],
+      changed = val_from[consec] != val_to[consec]
+    )
+  })
+  transitions <- dplyr::bind_rows(trans_list)
+  if (nrow(transitions) == 0L) {
+    stop("attribute_churn_rate: no consecutive-year transitions with a non-missing value on both sides", call. = FALSE)
+  }
+
+  wci <- function(n_changed, n_total) {
+    ci <- wilson_ci(n_changed, n_total, conf_level = conf_level, as_percent = TRUE)
+    list(n_transitions = n_total, n_changed = n_changed,
+         pct = round(100 * n_changed / n_total, 1), ci_low = ci$ci_low, ci_high = ci$ci_high)
+  }
+
+  overall <- wci(sum(transitions$changed), nrow(transitions))
+
+  year_key <- paste(transitions$year_from, transitions$year_to, sep = "->")
+  by_year <- tibble::tibble(
+    year_from = as.integer(tapply(transitions$year_from, year_key, `[`, 1)),
+    year_to = as.integer(tapply(transitions$year_to, year_key, `[`, 1)),
+    n_transitions = as.integer(tapply(transitions$changed, year_key, length)),
+    n_changed = as.integer(tapply(transitions$changed, year_key, sum))
+  )
+  by_year <- by_year[order(by_year$year_from), , drop = FALSE]
+  by_year_ci <- wilson_ci(by_year$n_changed, by_year$n_transitions, conf_level = conf_level, as_percent = TRUE)
+  by_year$pct <- round(100 * by_year$n_changed / by_year$n_transitions, 1)
+  by_year$ci_low <- by_year_ci$ci_low
+  by_year$ci_high <- by_year_ci$ci_high
+
+  by_identifier <- tibble::tibble(
+    id = names(tapply(transitions$changed, transitions$id, length)),
+    n_transitions = as.integer(tapply(transitions$changed, transitions$id, length)),
+    n_changed = as.integer(tapply(transitions$changed, transitions$id, sum))
+  )
+
+  bucket <- cut(by_identifier$n_changed, breaks = c(-Inf, 0, 1, 2, Inf),
+                labels = c("0", "1", "2", "3+"), right = TRUE)
+  tab <- table(bucket)
+  change_count_distribution <- tibble::tibble(
+    n_changes = names(tab), n = as.integer(tab),
+    pct = round(100 * as.integer(tab) / nrow(by_identifier), 1)
+  )
+
+  list(
+    overall = overall,
+    by_year = tibble::as_tibble(by_year),
+    by_identifier = tibble::as_tibble(by_identifier),
+    change_count_distribution = change_count_distribution
+  )
+}
+
+#' Which source actually has data for more entity-years?
+#'
+#' A currency/completeness question, distinct from timing (does a source
+#' move first) or agreement (do sources say the same thing when both are
+#' present): among a defined set of entity-years that *should* be covered,
+#' how many does each source actually carry a non-missing value for? A
+#' source that leads every race but is only present for a fifth of the
+#' entity-years in question is a different kind of limitation than one that
+#' lags but is nearly always there.
+#'
+#' @details
+#' **The universe is supplied, not inferred, by default -- except when it
+#' isn't.** Coverage is only meaningful relative to a stated target (a
+#' cohort's NPI-years, a study's intended panel). If `universe` is `NULL`,
+#' this falls back to the union of every `(id, year)` pair present in *any*
+#' of `sources` -- convenient, but it silently inflates every source's
+#' apparent coverage toward the sources that already define the union (a
+#' source present nowhere outside its own rows trivially "covers" 100% of a
+#' universe built from itself). Passing an explicit `universe` -- the actual
+#' cohort being studied -- is recommended whenever one exists.
+#'
+#' **Presence means a non-missing `attribute` value**, not merely a row --
+#' consistent with every other function in this package ("presence is never
+#' inferred," see `README.md`'s Design rules). A row with an empty or `NA`
+#' value does not count as coverage.
+#'
+#' @param sources Named list of data frames, each with `id`, `year`, and
+#'   `attribute` columns -- same convention as
+#'   [attribute_consensus_tier()]/[attribute_source_corroboration()].
+#' @param attribute Name of the attribute column to check for a non-missing
+#'   value.
+#' @param universe Optional data frame of `(id, year)` pairs defining the
+#'   entity-years coverage is measured against. If `NULL` (default), uses
+#'   the union of `(id, year)` pairs across all of `sources` (see Details).
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param conf_level Confidence level for the Wilson intervals. Default
+#'   `0.95`.
+#' @return A list:
+#'   \describe{
+#'     \item{`overall`}{Tibble, one row per source, ordered by descending
+#'       `pct`: `source`, `n_covered`, `n_total` (size of `universe`),
+#'       `pct`, `ci_low`, `ci_high` (Wilson, via [wilson_ci()]). `n_covered`/
+#'       `n_total` from any two rows are exactly what
+#'       [format_proportion_comparison_prose()] expects for a direct,
+#'       statistically compared pairwise claim.}
+#'     \item{`by_year`}{Tibble, one row per `(source, year)` present in
+#'       `universe`: `source`, `year`, `n_covered`, `n_total`, `pct`,
+#'       `ci_low`, `ci_high`.}
+#'   }
+#' @examples
+#' nppes <- data.frame(npi = c("1", "1", "2"), year = c(2022, 2023, 2022), state = c("CO", "CO", "NM"))
+#' dac <- data.frame(npi = c("1"), year = c(2022), state = c("CO"))
+#' universe <- data.frame(npi = c("1", "1", "2"), year = c(2022, 2023, 2022))
+#' cov <- attribute_coverage(list(nppes = nppes, dac = dac), attribute = "state", universe = universe)
+#' cov$overall
+#' @seealso [attribute_churn_rate()] for the volatility side of comparing
+#'   sources; [format_proportion_comparison_prose()]; [wilson_ci()].
+#' @family no-gold-standard comparison
+#' @export
+attribute_coverage <- function(sources, attribute, universe = NULL,
+                                id = "npi", year = "year", conf_level = 0.95) {
+  checkmate::assert_list(sources, min.len = 1, names = "unique")
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+
+  clean_source <- function(x, label) {
+    checkmate::assert_data_frame(x)
+    for (col in c(id, year, attribute)) {
+      if (!col %in% names(x)) {
+        stop(sprintf("attribute_coverage: source '%s' has no column '%s'", label, col), call. = FALSE)
+      }
+    }
+    res <- tibble::tibble(
+      id = trimws(as.character(x[[id]])),
+      year = .parse_whole_integer(x[[year]], sprintf("attribute_coverage: source '%s' year", label), allow_na = FALSE)
+    )
+    v <- toupper(trimws(as.character(x[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res[!is.na(res$id) & nzchar(res$id), , drop = FALSE]
+  }
+
+  nm <- names(sources)
+  cleaned <- lapply(nm, function(s) clean_source(sources[[s]], s))
+  names(cleaned) <- nm
+
+  if (is.null(universe)) {
+    universe <- unique(dplyr::bind_rows(lapply(cleaned, function(x) x[, c("id", "year")])))
+  } else {
+    checkmate::assert_data_frame(universe, min.rows = 1)
+    for (col in c(id, year)) {
+      if (!col %in% names(universe)) {
+        stop(sprintf("attribute_coverage: universe has no column '%s'", col), call. = FALSE)
+      }
+    }
+    universe <- tibble::tibble(
+      id = trimws(as.character(universe[[id]])),
+      year = .parse_whole_integer(universe[[year]], "attribute_coverage: universe year", allow_na = FALSE)
+    )
+    universe <- unique(universe[!is.na(universe$id) & nzchar(universe$id), , drop = FALSE])
+  }
+  n_total <- nrow(universe)
+  if (n_total == 0L) {
+    stop("attribute_coverage: universe has zero distinct (id, year) pairs", call. = FALSE)
+  }
+
+  overall_rows <- lapply(nm, function(s) {
+    cov <- cleaned[[s]]
+    cov <- cov[!is.na(cov$value), c("id", "year"), drop = FALSE]
+    m <- merge(universe, cov, by = c("id", "year"))
+    n_covered <- nrow(m)
+    ci <- wilson_ci(n_covered, n_total, conf_level = conf_level, as_percent = TRUE)
+    tibble::tibble(source = s, n_covered = n_covered, n_total = n_total,
+                   pct = round(100 * n_covered / n_total, 1), ci_low = ci$ci_low, ci_high = ci$ci_high)
+  })
+  overall <- dplyr::bind_rows(overall_rows)
+  overall <- overall[order(-overall$pct), , drop = FALSE]
+
+  by_year_rows <- lapply(nm, function(s) {
+    cov <- cleaned[[s]]
+    cov <- cov[!is.na(cov$value), c("id", "year"), drop = FALSE]
+    years <- sort(unique(universe$year))
+    sub_rows <- lapply(years, function(yr) {
+      u_yr <- universe[universe$year == yr, , drop = FALSE]
+      n_tot_yr <- nrow(u_yr)
+      n_cov_yr <- nrow(merge(u_yr, cov[cov$year == yr, , drop = FALSE], by = c("id", "year")))
+      tibble::tibble(source = s, year = yr, n_covered = n_cov_yr, n_total = n_tot_yr)
+    })
+    dplyr::bind_rows(sub_rows)
+  })
+  by_year <- dplyr::bind_rows(by_year_rows)
+  by_year_ci <- wilson_ci(by_year$n_covered, by_year$n_total, conf_level = conf_level, as_percent = TRUE)
+  by_year$pct <- round(100 * by_year$n_covered / by_year$n_total, 1)
+  by_year$ci_low <- by_year_ci$ci_low
+  by_year$ci_high <- by_year_ci$ci_high
+
+  list(overall = tibble::as_tibble(overall), by_year = tibble::as_tibble(by_year))
+}
+
 #' Approach 1: Longitudinal lead-lag panel matrix between two registries
 #'
 #' Without a gold-standard registry, a single-year disagreement between Source A

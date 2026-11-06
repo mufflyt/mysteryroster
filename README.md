@@ -367,6 +367,8 @@ available before it is actually implemented.
 | Cascade stages with both denominators (of attempted, of prior stage), weighted or not | `validation_cascade()` |
 | Pairwise cross-source agreement on a shared attribute, no gold standard, freshness-tuned by each source's own date | `attribute_agreement()`, `attribute_agreement_summary()`, `record_age_years()`, `record_age_band()`, `classify_record_staleness()` |
 | Empirical staleness (consecutive-year spell age) from a multi-year panel alone | `attribute_spell_age()` |
+| How often one source's own value changes year to year, independent of whether it's right | `attribute_churn_rate()` |
+| Which source actually has data for more entity-years, against a defined universe | `attribute_coverage()` |
 | Longitudinal lead-lag: which source moves first, adopts, or reverts, with an optional cross-sectional back-check | `attribute_lead_lag_matrix()` |
 | How many years until one source adopts the other's disputed value -- median/IQR/mean/CI, in a manuscript sentence | `attribute_lead_lag_duration()` |
 | Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |

@@ -1,5 +1,22 @@
 # mysteryroster (development version)
 
+* Added `attribute_churn_rate()` and `attribute_coverage()`: two more
+  dimensions for comparing sources, distinct from timing and agreement.
+  `attribute_churn_rate()` measures how often a single source's own value
+  changes year to year, independent of whether the change is "right" --
+  overall, by transition year, and by identifier (with a 0/1/2/3+
+  change-count distribution, so a source whose churn is driven by a
+  handful of volatile identifiers is distinguishable from one that churns
+  evenly). Its `overall$n_changed`/`overall$n_transitions` feed directly
+  into `format_proportion_comparison_prose()` for a two-source comparison
+  with a p-value -- no separate wrapper needed. `attribute_coverage()`
+  measures which source actually has a non-missing value for more
+  entity-years, against an explicit (or, with a documented caveat,
+  inferred) universe -- ranked across any number of sources at once, with
+  a by-year breakdown. Both follow this package's existing conventions
+  (Wilson CIs throughout, "presence is never inferred" -- a missing value
+  is never counted as coverage, named-list-of-sources shape matching
+  `attribute_consensus_tier()`/`attribute_source_corroboration()`).
 * Added `attribute_lead_lag_duration()`: extends
   `attribute_lead_lag_matrix()`'s multi-year convergence tracking (which only
   answers *whether* a source eventually adopts the other's disputed value)
