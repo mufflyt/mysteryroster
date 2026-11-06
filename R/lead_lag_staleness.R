@@ -413,6 +413,230 @@ attribute_lead_lag_matrix <- function(source_a, source_b, attributes,
   tibble::as_tibble(dplyr::bind_rows(rows))
 }
 
+#' How many years until one source adopts the other's disputed value?
+#'
+#' [attribute_lead_lag_matrix()]'s multi-year convergence columns
+#' (`b_adopts_a_multi_n`/`pct`, `a_reverts_b_multi_n`/`pct`) answer whether a
+#' source eventually adopts the other's `base_year` value -- never how long
+#' that takes. This answers the duration question: for every identifier
+#' discordant at `base_year`, the number of years until each direction's
+#' *first* adoption (not just whether one ever occurs), summarized as
+#' n/median/IQR/mean/SD/CI for each direction, plus a manuscript sentence for
+#' each -- the basis for saying one source is, say, "typically about a year
+#' and a half ahead of" another, instead of only "adopts more often."
+#'
+#' @details
+#' **Years, not months.** This package's longitudinal sources are annual
+#' snapshots -- a value is only known "as of year `Y`," never to a specific
+#' date -- so years is the finest unit these panels can honestly support.
+#' Reporting a month-level lag from year-only data would overclaim the
+#' panels' actual precision; a source with real calendar dates (not just an
+#' annual snapshot) is a different, separate kind of comparison.
+#'
+#' **First adoption, not any adoption.** `attribute_lead_lag_matrix()`'s
+#' `..._multi_pct` counts an identifier if the adopted value appears in *any*
+#' later year. This function instead finds the *earliest* later year it
+#' appears, because a duration has to measure from a specific point -- "ever,
+#' eventually" has no length.
+#'
+#' **The mean's CI assumes the duration distribution is reasonably
+#' well-behaved for a t-interval** (not literally normal -- year-counts are
+#' discrete and often right-skewed with a handful of identifiers). The
+#' median and IQR are reported alongside specifically so a heavily skewed
+#' distribution is visible rather than hidden behind a mean and CI alone.
+#' `ci_low`/`ci_high` are `NA` when fewer than 2 identifiers adopt (no spread
+#' to estimate from).
+#'
+#' @param source_a,source_b Longitudinal data frames with `id`, `year`, and
+#'   `attribute`, same shape as [attribute_lead_lag_matrix()]'s `source_a`/
+#'   `source_b` (one row per `(id, year)` each).
+#' @param attribute Single attribute column name to evaluate (not a vector --
+#'   call once per attribute for more than one).
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param base_year Baseline year for discordance. If `NULL` (default), the
+#'   earliest year shared by both sources that has a follow-up year -- same
+#'   resolution rule as [attribute_lead_lag_matrix()].
+#' @param source_a_label,source_b_label Short names substituted into the
+#'   sentences, e.g. `"CMS Open Payments"` / `"NPPES"`.
+#' @param conf_level Confidence level for the mean's t-interval. Default
+#'   `0.95`.
+#' @return A list:
+#'   \describe{
+#'     \item{`base_year`}{The base year used.}
+#'     \item{`disc_base_n`}{Identifiers with both sources present and
+#'       disagreeing at `base_year`.}
+#'     \item{`b_adopts`}{List: `years` (integer vector, one entry per
+#'       identifier that ever adopts `source_a`'s base-year value, the
+#'       number of years until its *first* occurrence), and `n`, `pct` (of
+#'       `disc_base_n`), `median`, `p25`, `p75`, `mean`, `sd`, `ci_low`,
+#'       `ci_high`.}
+#'     \item{`a_reverts`}{Same shape as `b_adopts`, for `source_a` reverting
+#'       to `source_b`'s base-year value.}
+#'     \item{`b_adopts_sentence`,`a_reverts_sentence`}{One manuscript
+#'       sentence each.}
+#'     \item{`combined_text`}{Both sentences joined with a space.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "1", "1", "2", "2", "2"),
+#'   year = c(2020, 2021, 2022, 2023, 2020, 2021, 2022),
+#'   state = c("CO", "CO", "CO", "CO", "NM", "NM", "TX")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "1", "1", "2", "2", "2"),
+#'   year = c(2020, 2021, 2022, 2023, 2020, 2021, 2022),
+#'   state = c("NM", "NM", "CO", "CO", "NM", "TX", "TX")
+#' )
+#' dur <- attribute_lead_lag_duration(a, b, attribute = "state", base_year = 2020,
+#'                                     source_a_label = "Source A", source_b_label = "Source B")
+#' dur$combined_text
+#' @seealso [attribute_lead_lag_matrix()] for the whether/how-often version
+#'   this extends; `vignette("lead-lag-staleness")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_lead_lag_duration <- function(source_a, source_b, attribute,
+                                         id = "npi", year = "year", base_year = NULL,
+                                         source_a_label = "Source A", source_b_label = "Source B",
+                                         conf_level = 0.95) {
+  checkmate::assert_data_frame(source_a, min.rows = 1)
+  checkmate::assert_data_frame(source_b, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_string(source_a_label, min.chars = 1)
+  checkmate::assert_string(source_b_label, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+
+  for (col in c(id, year, attribute)) {
+    if (!col %in% names(source_a)) {
+      stop(sprintf("attribute_lead_lag_duration: source_a has no column '%s'", col), call. = FALSE)
+    }
+    if (!col %in% names(source_b)) {
+      stop(sprintf("attribute_lead_lag_duration: source_b has no column '%s'", col), call. = FALSE)
+    }
+  }
+
+  clean_df <- function(df, label) {
+    res <- tibble::tibble(id = trimws(as.character(df[[id]])))
+    if (any(is.na(res$id) | !nzchar(res$id))) {
+      stop(sprintf("attribute_lead_lag_duration: %s has missing or empty id values", label), call. = FALSE)
+    }
+    res$year <- .parse_whole_integer(df[[year]], sprintf("attribute_lead_lag_duration: %s year", label), allow_na = FALSE)
+    .assert_unique_keys(res, c("id", "year"), sprintf("attribute_lead_lag_duration: %s", label))
+    v <- toupper(trimws(as.character(df[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res
+  }
+
+  da <- clean_df(source_a, "source_a")
+  db <- clean_df(source_b, "source_b")
+
+  shared_years <- sort(intersect(unique(da$year), unique(db$year)))
+  if (is.null(base_year)) {
+    cand <- shared_years[shared_years < max(shared_years)]
+    base_year <- if (length(cand)) min(cand) else min(shared_years)
+  }
+  base_year <- as.integer(base_year)
+
+  a_base <- da[da$year == base_year & !is.na(da$value), c("id", "value"), drop = FALSE]
+  names(a_base)[2] <- "a_value"
+  b_base <- db[db$year == base_year & !is.na(db$value), c("id", "value"), drop = FALSE]
+  names(b_base)[2] <- "b_value"
+  base_joined <- merge(a_base, b_base, by = "id")
+  d_base <- base_joined[base_joined$a_value != base_joined$b_value, , drop = FALSE]
+  disc_base_n <- nrow(d_base)
+
+  first_adoption_years <- function(future_source, target_ids_values, target_col) {
+    # target_ids_values: data frame with id + the value each id must eventually match
+    fut <- future_source[future_source$year > base_year & future_source$id %in% target_ids_values$id,
+                          c("id", "year", "value"), drop = FALSE]
+    if (nrow(fut) == 0L) return(integer(0))
+    m <- merge(fut, target_ids_values, by = "id")
+    hit <- m[!is.na(m$value) & m$value == m[[target_col]], c("id", "year"), drop = FALSE]
+    if (nrow(hit) == 0L) return(integer(0))
+    first_year <- tapply(hit$year, hit$id, min)
+    as.integer(first_year) - base_year
+  }
+
+  summarize_duration <- function(years_vec, denom) {
+    n <- length(years_vec)
+    pct <- if (denom > 0L) round(100 * n / denom, 1) else NA_real_
+    if (n == 0L) {
+      return(list(years = years_vec, n = 0L, pct = pct, median = NA_real_, p25 = NA_real_, p75 = NA_real_,
+                  mean = NA_real_, sd = NA_real_, ci_low = NA_real_, ci_high = NA_real_))
+    }
+    med <- stats::median(years_vec)
+    qs <- stats::quantile(years_vec, c(0.25, 0.75), type = 7, names = FALSE)
+    m <- mean(years_vec)
+    s <- if (n >= 2L) stats::sd(years_vec) else NA_real_
+    if (n >= 2L && !is.na(s) && s > 0) {
+      tcrit <- stats::qt(1 - (1 - conf_level) / 2, df = n - 1L)
+      se <- s / sqrt(n)
+      ci_low <- m - tcrit * se
+      ci_high <- m + tcrit * se
+    } else {
+      ci_low <- NA_real_
+      ci_high <- NA_real_
+    }
+    list(years = years_vec, n = n, pct = pct, median = med, p25 = unname(qs[1]), p75 = unname(qs[2]),
+         mean = round(m, 2), sd = if (is.na(s)) NA_real_ else round(s, 2),
+         ci_low = if (is.na(ci_low)) NA_real_ else round(ci_low, 2),
+         ci_high = if (is.na(ci_high)) NA_real_ else round(ci_high, 2))
+  }
+
+  fmt1 <- function(x) if (is.na(x)) "NA" else sprintf("%.1f", x)
+  conf_pct <- round(100 * conf_level)
+
+  noun_id <- function(n) if (n == 1L) "identifier" else "identifiers"
+
+  sentence_for <- function(d, leader_label, follower_label, verb) {
+    if (disc_base_n == 0L) {
+      return(sprintf(
+        "No identifiers had both %s and %s present and disagreeing in %d, so no adoption timing could be measured.",
+        source_a_label, source_b_label, base_year
+      ))
+    }
+    if (d$n == 0L) {
+      return(sprintf(
+        "Of %d %s where %s and %s disagreed in %d, %s never %s %s's %d value in any later year.",
+        disc_base_n, noun_id(disc_base_n), source_a_label, source_b_label, base_year, follower_label, verb, leader_label, base_year
+      ))
+    }
+    ci_part <- if (is.na(d$ci_low)) "" else sprintf(", %d%% CI %s-%s years", conf_pct, fmt1(d$ci_low), fmt1(d$ci_high))
+    sprintf(
+      paste0(
+        "Of %d %s where %s and %s disagreed in %d, %d (%.1f%%) %s %s %s's %d value, ",
+        "after a median of %s years (IQR %s-%s; mean %s years%s)."
+      ),
+      disc_base_n, noun_id(disc_base_n), source_a_label, source_b_label, base_year, d$n, d$pct, follower_label, verb, leader_label, base_year,
+      fmt1(d$median), fmt1(d$p25), fmt1(d$p75), fmt1(d$mean), ci_part
+    )
+  }
+
+  if (disc_base_n == 0L) {
+    b_adopts <- summarize_duration(integer(0), 0L)
+    a_reverts <- summarize_duration(integer(0), 0L)
+  } else {
+    b_adopts_years <- first_adoption_years(db, d_base[, c("id", "a_value")], "a_value")
+    a_reverts_years <- first_adoption_years(da, d_base[, c("id", "b_value")], "b_value")
+    b_adopts <- summarize_duration(b_adopts_years, disc_base_n)
+    a_reverts <- summarize_duration(a_reverts_years, disc_base_n)
+  }
+
+  b_adopts_sentence <- sentence_for(b_adopts, source_a_label, source_b_label, "adopted")
+  a_reverts_sentence <- sentence_for(a_reverts, source_b_label, source_a_label, "reverted to")
+
+  list(
+    base_year = base_year,
+    disc_base_n = disc_base_n,
+    b_adopts = b_adopts,
+    a_reverts = a_reverts,
+    b_adopts_sentence = b_adopts_sentence,
+    a_reverts_sentence = a_reverts_sentence,
+    combined_text = paste(b_adopts_sentence, a_reverts_sentence)
+  )
+}
+
 #' Approach 2: Attribute agreement stratified by empirical spell age or career tenure
 #'
 #' Tests whether cross-registry disagreement is driven by accumulated staleness

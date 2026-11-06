@@ -368,6 +368,7 @@ available before it is actually implemented.
 | Pairwise cross-source agreement on a shared attribute, no gold standard, freshness-tuned by each source's own date | `attribute_agreement()`, `attribute_agreement_summary()`, `record_age_years()`, `record_age_band()`, `classify_record_staleness()` |
 | Empirical staleness (consecutive-year spell age) from a multi-year panel alone | `attribute_spell_age()` |
 | Longitudinal lead-lag: which source moves first, adopts, or reverts, with an optional cross-sectional back-check | `attribute_lead_lag_matrix()` |
+| How many years until one source adopts the other's disputed value -- median/IQR/mean/CI, in a manuscript sentence | `attribute_lead_lag_duration()` |
 | Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |
 | Administrative enrollment arrival/departure timing around a panel move | `enrollment_move_lead_lag()` |
 | Manuscript-ready paragraphs from the three lead-lag approaches above | `format_no_gold_standard_prose()` |

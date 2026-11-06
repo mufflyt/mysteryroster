@@ -1,5 +1,17 @@
 # mysteryroster (development version)
 
+* Added `attribute_lead_lag_duration()`: extends
+  `attribute_lead_lag_matrix()`'s multi-year convergence tracking (which only
+  answers *whether* a source eventually adopts the other's disputed value)
+  with *how long* that takes -- the earliest later year each identifier's
+  adoption/reversion first occurs, summarized as n/median/IQR/mean/SD/CI per
+  direction, plus a manuscript sentence for each (`"NPPES adopted CMS DAC's
+  2020 value after a median of 2.0 years (IQR 1.0-3.0; mean 2.1, 95% CI
+  1.7-2.5 years)"`). Deliberately reports years, not months: this package's
+  longitudinal sources are annual snapshots, so years is the finest unit the
+  data can honestly support -- a month-level lag between two sources that
+  both carry real calendar dates (not just annual snapshots) is a different,
+  separate kind of comparison, out of scope here and documented as such.
 * Reworked `format_proportion_comparison_prose()`'s sentences (and
   `attribute_truth_fusion_prose()`'s, which builds on it) to be clearer and
   more complete, per explicit feedback on the first version below. Two
