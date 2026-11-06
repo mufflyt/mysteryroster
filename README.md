@@ -44,7 +44,7 @@ remotes::install_github("mufflyt/mysteryroster")
   reconciled against one synthetic call log.
 - `vignette("lead-lag-staleness")` -- the three longitudinal approaches
   below, first on a three-NPI toy example and then on a simulated
-  1,500-clinician panel with five figures, including the full
+  1,500-clinician panel with eight figures, including the full
   manuscript-paragraph output of `format_no_gold_standard_prose()`.
 - `vignette("consensus-and-corroboration")` -- beyond pairwise, with
   three or more sources: how much of the group agrees, whether that
@@ -203,6 +203,16 @@ happens to a disagreement one year later. Bottom left (Approach 2):
 agreement by how long Source B's value has sat unchanged. Bottom right
 (Approach 3): enrollment arrival and departure dates relative to the
 panel move.*
+
+<p align="center">
+<img src="man/figures/lead-lag-staleness-fig-lead-heatmap-1.png" width="70%" alt="Four-by-four heatmap of the mean number of years each row source shows a clinician's move before each column source. Open Payments is ahead of every other source and the board source is behind every other source, by up to about three years." />
+</p>
+
+*How many years ahead or behind? For every pair of four simulated
+sources, the mean number of years the row source shows a clinician's
+move before the column source. Only moves both sources eventually show
+are counted. `vignette("lead-lag-staleness")` adds a shift-and-match
+curve and catch-up curves for the same sources.*
 
 None of the three claims a source is correct -- only that it moved first,
 that disagreement tracks a measurable staleness clock, or that an
