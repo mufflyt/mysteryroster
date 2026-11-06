@@ -398,8 +398,33 @@ methods_text <- paste(
 ```
 
 ```{r manuscript-results}
+# Duration findings get a median-only sentence here, deliberately dropping the mean/SD/CI
+# attribute_lead_lag_duration()'s own sentence reports elsewhere in this vignette (see
+# Timing, above). Years-to-catch-up is exactly the kind of right-skewed, sometimes-censored
+# duration data where the mean is pulled around by a long tail and the median is the honest,
+# standard summary -- the same reason clinical time-to-event reporting leads with the median,
+# not the mean. IQR is kept because it is the median's own natural spread, not a competing
+# summary statistic.
+median_only_duration_sentence <- function(d, disc_base_n, leader_label, follower_label, verb, base_year) {
+  if (d$n == 0L) {
+    return(sprintf(
+      "Of %d identifiers where %s and %s disagreed in %d, %s never %s %s's %d value in any later year.",
+      disc_base_n, leader_label, follower_label, base_year, follower_label, verb, leader_label, base_year
+    ))
+  }
+  sprintf(
+    "Of %d identifiers where %s and %s disagreed in %d, %d (%.1f%%) %s %s %s's %d value, with a median of %.1f years (IQR %.1f-%.1f).",
+    disc_base_n, leader_label, follower_label, base_year, d$n, d$pct, follower_label, verb, leader_label, base_year,
+    d$median, d$p25, d$p75
+  )
+}
+duration_sentence <- paste(
+  median_only_duration_sentence(dur$b_adopts, dur$disc_base_n, "NPPES", "DAC/PECOS", "adopted", 2019L),
+  median_only_duration_sentence(dur$a_reverts, dur$disc_base_n, "DAC/PECOS", "NPPES", "reverted to", 2019L)
+)
+
 results_text <- paste(
-  dur$combined_text,
+  duration_sentence,
   agreement_sentence,
   covariate_sentence,
   churn_sentence,
