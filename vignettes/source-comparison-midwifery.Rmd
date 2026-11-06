@@ -15,6 +15,7 @@ knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height
 library(mysteryroster)
 backends <- attribute_truth_backends()
 crowdkit_available <- isTRUE(backends$available[backends$backend == "crowd_kit"])
+reliability_sentence <- NULL # set later only if crowd_kit is available (see Weight, below)
 ```
 
 The other vignettes in this package each demonstrate one comparison at a time. This one asks
@@ -172,7 +173,11 @@ agr <- attribute_agreement(list(nppes = nppes, dac_pecos = dac_pecos_combined), 
 agr_summary <- attribute_agreement_summary(agr)
 as.data.frame(agr_summary)[, c("year", "n_compared", "n_agree", "pct_agree")]
 
-wilson_ci(sum(agr$agree), nrow(agr), as_percent = TRUE)
+agreement_sentence <- format_proportion_comparison_prose(
+  n_a = sum(agr$agree), n_total_a = nrow(agr), label_a = "NPPES vs. DAC/PECOS, pooled across all years",
+  unit_label = "entity-years", condition_label = "agreed on state"
+)$sentence_a
+agreement_sentence
 ```
 
 Overall agreement, with a Wilson interval the same way every proportion in this package's docs
@@ -188,6 +193,16 @@ abc <- attribute_agreement_by_covariate(
   comparison_label = "NPPES vs DAC/PECOS (2024)"
 )
 as.data.frame(abc)
+
+rural_row <- abc[abc$stratum == "rural", ]
+urban_row <- abc[abc$stratum == "urban", ]
+covariate_sentence <- format_proportion_comparison_prose(
+  n_a = round(rural_row$agree_pct / 100 * rural_row$n), n_total_a = rural_row$n,
+  n_b = round(urban_row$agree_pct / 100 * urban_row$n), n_total_b = urban_row$n,
+  label_a = "rural clinicians", label_b = "urban clinicians",
+  unit_label = "2024 entity-years", condition_label = "had agreeing NPPES and DAC/PECOS state"
+)$comparison_sentence
+covariate_sentence
 ```
 
 Rural clinicians' DAC/PECOS records agree with NPPES noticeably less often than urban
@@ -218,12 +233,13 @@ churn_nppes <- attribute_churn_rate(nppes, attribute = "state")
 churn_tmsis <- attribute_churn_rate(tmsis_long, attribute = "state")
 c(nppes_churn_pct = churn_nppes$overall$pct, tmsis_churn_pct = churn_tmsis$overall$pct)
 
-format_proportion_comparison_prose(
+churn_sentence <- format_proportion_comparison_prose(
   n_a = churn_nppes$overall$n_changed, n_total_a = churn_nppes$overall$n_transitions,
   n_b = churn_tmsis$overall$n_changed, n_total_b = churn_tmsis$overall$n_transitions,
   label_a = "NPPES", label_b = "T-MSIS",
   unit_label = "consecutive-year transitions", condition_label = "showed a changed state"
 )$comparison_sentence
+churn_sentence
 ```
 
 ```{r fig-churn, fig.alt = "Grouped bar chart comparing NPPES and T-MSIS churn rate: NPPES changes state in roughly 9 percent of consecutive-year transitions, T-MSIS in roughly 70 percent."}
@@ -253,10 +269,11 @@ cov <- attribute_coverage(
 )
 as.data.frame(cov$overall)
 
-format_ranking_prose(
+coverage_sentence <- format_ranking_prose(
   group = cov$overall$source, value = cov$overall$pct, n = cov$overall$n_total,
   value_label = "coverage of the NPPES universe", fmt = "%.1f", suffix = "%"
 )$sentence
+coverage_sentence
 ```
 
 ```{r fig-coverage, fig.alt = "Bar chart ranking four sources by percent coverage of the NPPES universe of entity-years: NPPES 100 percent, DAC/PECOS about 77 percent, T-MSIS about 63 percent, Open Payments about 25 percent."}
@@ -283,11 +300,12 @@ corrob <- attribute_source_corroboration(
 )
 as.data.frame(corrob)[, c("source", "led_n", "corrected_n", "opportunities_n", "lead_rate")]
 
-format_ranking_prose(
+lead_sentence <- format_ranking_prose(
   group = corrob$source, value = 100 * corrob$lead_rate, n = corrob$opportunities_n,
   value_label = "lead rate (how often the ecosystem converges toward this source)",
   fmt = "%.1f", suffix = "%"
 )$sentence
+lead_sentence
 
 ooo <- attribute_odd_one_out(
   list(nppes = nppes, dac_pecos = dac_pecos_combined, open_payments = open_payments, tmsis = tmsis_long),
@@ -296,10 +314,11 @@ ooo <- attribute_odd_one_out(
 ooo_rate <- attribute_odd_one_out_rate(ooo)
 as.data.frame(ooo_rate)
 
-format_ranking_prose(
+odd_sentence <- format_ranking_prose(
   group = ooo_rate$source, value = 100 * ooo_rate$odd_rate, n = ooo_rate$n_eligible,
   value_label = "odd-one-out rate", fmt = "%.1f", suffix = "%"
 )$sentence
+odd_sentence
 ```
 
 T-MSIS has by far the lowest `lead_rate` -- other sources essentially never converge toward
@@ -323,12 +342,14 @@ claims_all <- rbind(
   to_claims(open_payments, "open_payments"), to_claims(tmsis_long, "tmsis")
 )
 maj <- attribute_truth_fusion(claims_all, method = "majority")
-attribute_truth_fusion_prose(maj, result_label = "the simulated panel")$combined_text
+weight_sentence <- attribute_truth_fusion_prose(maj, result_label = "the simulated panel")$combined_text
+weight_sentence
 ```
 
 ```{r weight-ds, eval = crowdkit_available}
 ds <- suppressWarnings(attribute_truth_fusion(claims_all, method = "dawid_skene"))
-attribute_truth_fusion_prose(ds, result_label = "the simulated panel")$reliability_sentence
+reliability_sentence <- attribute_truth_fusion_prose(ds, result_label = "the simulated panel")$reliability_sentence
+reliability_sentence
 ```
 
 `majority` abstains on a real share of entity-years -- exactly the structural ceiling
@@ -339,6 +360,71 @@ weighted method like `dawid_skene` can resolve those ties and report a *learned*
 ranking -- the real, verified version of this exact ranking (T-MSIS lowest, NPPES highest) is
 in `docs/midwifery-evidence-ledger-results.md` S4, independently confirmed from the
 `~/midwifery` session's own output files, not just asserted.
+
+## Writing this up for a manuscript
+
+Every sentence printed above was built to be quoted directly, not paraphrased first -- that is
+the entire premise of `format_proportion_comparison_prose()`, `format_ranking_prose()`,
+`attribute_lead_lag_duration()`, and `attribute_truth_fusion_prose()`. So a Methods/Results
+write-up for this comparison is not a re-derivation; it is concatenation, done here with
+`paste()`, not by hand:
+
+```{r manuscript-methods}
+methods_text <- paste(
+  "We compared four administrative sources believed to capture a clinician's practice-state",
+  "location -- a self-reported federal registry (NPPES), a combined enrollment-derived registry",
+  "(DAC/PECOS), a payment-transparency registry (Open Payments), and a state Medicaid enrollment",
+  "extract (T-MSIS) -- across eight dimensions, each targeting a question the others do not",
+  sprintf("answer, using the mysteryroster R package (version %s).", utils::packageVersion("mysteryroster")),
+  "Sources known to share upstream lineage (DAC and PECOS) were first collapsed to a single vote",
+  "when they agreed and excluded when they disagreed, rather than counted as two independent",
+  "observations of one underlying record (attribute_claims_collapse_lineage()). Longitudinal",
+  "lag direction, how often a lagging source's value is eventually adopted, and the time that",
+  "takes (median years, interquartile range, 95% CI) were computed", "(attribute_lead_lag_matrix(),",
+  "attribute_lead_lag_duration()). Pairwise agreement was computed with a 95% Wilson interval",
+  "both pooled and stratified by a clinician-level covariate, since a pooled estimate can mask",
+  "covariate-driven heterogeneity (attribute_agreement(), attribute_agreement_by_covariate()).",
+  "Each source's internal volatility (churn: the proportion of consecutive annual observations",
+  "showing a changed value, independent of which source was correct) and completeness (coverage:",
+  "the proportion of a defined entity-year universe with any non-missing value) were computed",
+  "separately, since neither implies the other (attribute_churn_rate(), attribute_coverage()).",
+  "Ecosystem convergence (which source's value other sources tend to adopt after a disagreement)",
+  "and lone-dissenter frequency (how often one source is the sole outlier among 3+) were computed",
+  "to characterize trust independent of coverage (attribute_source_corroboration(),",
+  "attribute_odd_one_out_rate()). Finally, a majority-vote and, where available, a",
+  "Dawid-Skene-weighted truth-fusion model were fit to the pooled claims to characterize",
+  "abstention and learned source reliability (attribute_truth_fusion())."
+)
+```
+
+```{r manuscript-results}
+results_text <- paste(
+  dur$combined_text,
+  agreement_sentence,
+  covariate_sentence,
+  churn_sentence,
+  coverage_sentence,
+  lead_sentence,
+  odd_sentence,
+  weight_sentence,
+  if (!is.null(reliability_sentence)) reliability_sentence else
+    "(The learned-reliability ranking is omitted here because the optional crowd_kit backend is not configured in the environment this vignette was rendered in; see docs/midwifery-evidence-ledger-results.md S4 for the real, already-verified version of this ranking.)"
+)
+```
+
+```{r manuscript-print, results = "asis"}
+cat("**Methods.** ", methods_text, "\n\n**Results.** ", results_text, sep = "")
+```
+
+**Limitations, written the same way any other paragraph in this document is -- plainly, not as
+boilerplate to skip past.** Every number above comes from a simulated panel calibrated to, but
+not reproducing, real published findings (see the intro and "What this vignette does and does
+not show," below); a manuscript reporting *real* data would replace each sentence above with the
+identical function called on the real claims table, and the text would update automatically --
+that is the actual point of building these as functions rather than one-off `sprintf()` calls.
+None of the eight comparisons above establishes which source is correct for any clinician-year;
+they establish only the sources' relationships to each other, and a methods section built this
+way should say so explicitly, not imply otherwise by omission.
 
 ## What this vignette does and does not show
 
