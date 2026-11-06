@@ -1,5 +1,20 @@
 # mysteryroster (development version)
 
+* Added `attribute_claims_collapse_lineage()`, generalizing the
+  `dac_pecos_combined` merge rule from `docs/midwifery-ablation-findings.md`
+  (agree -> one vote; disagree -> no vote; one present -> use it) from one
+  hardcoded pair to any declared group of same-lineage `source_id`s, so a
+  future lineage-sharing source doesn't need the rule re-implemented ad hoc.
+  Added alongside `docs/midwifery-evidence-ledger-design.md`, a design spec
+  and source-by-source verdict table (grounded in an audit of
+  `~/midwifery`'s existing extraction infrastructure) for expanding the
+  midwifery evidence ledger beyond the original three sources -- CMS
+  T-MSIS Medicaid enrollment segments are the one clearly new,
+  independently-lineaged, properly-dated candidate found; hospital facility
+  affiliations are addable only under a separate attribute, never as a
+  practice-address vote. No real data has been loaded under this yet: that
+  requires reading `~/midwifery`'s artifacts directly, on hold while a
+  separate, live, in-progress build in that repository is running.
 * Strengthened `vignette("truth-fusion-case-study-midwifery")` with a
   second real example (NPPES, a combined DAC/PECOS source, and CMS Open
   Payments -- public transparency data by design, so real NPIs are shown,
