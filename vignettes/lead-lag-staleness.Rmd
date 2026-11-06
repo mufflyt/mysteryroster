@@ -23,10 +23,13 @@ library(mysteryroster)
 `attribute_agreement()` (see `vignette("registry-overlap")`) answers a
 single-year question: do two sources agree on an attribute right now?
 It is deliberately silent on *why* they disagree. This vignette covers
-three complementary approaches that use **time itself** -- repeated
+four complementary approaches that use **time itself** -- repeated
 annual snapshots, not a single cross-section -- to say which source is
 leading and which is lagging, still without ever assuming either one
-is a gold standard.
+is a gold standard: three correlative approaches (lead-lag transitions,
+spell-age-stratified agreement, and administrative enrollment timing),
+plus a fourth, `attribute_catch_up_curve()`, that treats the same
+question as a formal right-censored survival analysis.
 
 The motivating case throughout: a certifying-board roster carries no
 address at all, so two external, equally fallible sources (a
@@ -221,6 +224,157 @@ that enrollment interval does not start until March 2024 -- the same
 calendar year, not ahead of it. `interval_end` dates at or past
 `open_end_cutoff` (default `2099-01-01`) are treated as still active,
 never as a real termination date.
+
+## Approach 4: Kaplan-Meier catch-up curves
+
+The three approaches above all ask some version of "did Source B's
+value change to match Source A's, and when." `attribute_catch_up_curve()`
+asks the same question the way a clinical survival analysis would:
+treat a source's eventual agreement as the "event," and estimate the
+distribution of time-to-event with the same right-censoring machinery
+used for time-to-recurrence or time-to-death -- an identifier a source
+has not yet caught up to stays correctly "at risk" of doing so for as
+long as that source's own follow-up lasts, rather than being silently
+dropped (the real limitation `attribute_lead_lag_duration()`'s median
+has) or counted as a permanent failure.
+
+```{r catch-up-setup}
+source_a <- data.frame(
+  npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+  state = c("CO", "CO", "NM", "TX", "TX", "TX")
+)
+source_b <- data.frame(
+  npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+  state = c("CO", "NM", "NM", "TX", "GA", "GA")
+)
+cu <- attribute_catch_up_curve(list(a = source_a, b = source_b), attribute = "state")
+cu$curve
+cu$median_horizon
+```
+
+NPI 1's move to New Mexico is detected by Source A in 2022; Source B
+had already reported it a year earlier, in 2021. NPI 2's move to
+Georgia is detected by Source B in 2022; Source A never shows it at
+all within the panel. Pooled across both identifiers, Source A's
+median time to catch up is 1 year; Source B's is 0, because Source B
+is the one that supplied the earliest reference date for the New
+Mexico event, and it was never tested against a date it did not set
+itself.
+
+### A source can get credit for an event it defined itself
+
+That last sentence is the problem, not an aside. By default
+(`reference = "pooled"`), every source's own detected arrivals are
+pooled to find each event's reference date -- so whichever source
+happens to detect a change earliest is automatically "caught up" to it
+at horizon 0, not because it is fast, but because it supplied the
+clock it is being measured against. On a real five-source comparison
+this was not a rare edge case: 66-85% of the events a source resolved
+immediately were ones that source itself had helped define.
+
+`reference = "exclude_self"` removes this by scoring each source only
+against events *some other* source detected independently:
+
+```{r catch-up-exclude-self}
+cu_excl <- attribute_catch_up_curve(
+  list(a = source_a, b = source_b), attribute = "state", reference = "exclude_self"
+)
+cu_excl$median_horizon
+cu_excl$n_unanchored
+```
+
+Source B's *reported* median does not move here -- it is still 0 --
+but that is the point, not a counterexample. `n_unanchored` shows
+Source B had one event (the Georgia arrival) with no detector besides
+itself; once that event is dropped, Source B's median is computed from
+a single remaining event rather than two, visible in `median_n_at_risk`
+falling from 2 to 1. A fast-looking median built on a single,
+self-detected event is not evidence of speed; `reference =
+"exclude_self"` cannot always change the number, but it always shows
+how much of it was self-supplied, which is the number worth checking
+before repeating it. When two sources
+share upstream provenance (for example a facility-affiliation extract
+derived from the same file as an enrollment source), pass
+`lineage_groups` so one cannot "confirm" the other's events either:
+
+```{r catch-up-lineage, eval = FALSE}
+attribute_catch_up_curve(
+  sources, attribute = "state", reference = "exclude_self",
+  lineage_groups = list(dac_family = c("dac_pecos", "facility_affiliation"))
+)
+```
+
+### A correct median can still be an imprecise one
+
+`median_horizon` is the first horizon at which a source's curve
+crosses 50%. Because the Kaplan-Meier risk set shrinks at later
+horizons, a curve approaching that line gradually can sit within a
+point or two of it for several consecutive horizons on an
+already-small and shrinking sample -- where one more event tips the
+reported median by several years, even though nothing about the
+calculation was wrong. `median_ci_low`/`median_ci_high` (a
+Brookmeyer-Crowley interval, the same log-log Greenwood method
+`survival::survfit()` uses by default) and `median_n_at_risk` exist to
+surface exactly this:
+
+```{r catch-up-ci}
+source_a2 <- data.frame(npi = c("1", "1", "2", "2", "3", "3", "4", "4"),
+                         year = rep(2019:2020, 4), state = c("X", "NM", "X", "NM", "X", "NM", "X", "NM"))
+source_b2 <- data.frame(
+  npi = c("1", "1", "1", "1", "2", "2", "2", "2", "3", "3", "3", "3", "4", "4", "4", "4"),
+  year = rep(2020:2023, 4),
+  state = c("X", "NM", "NM", "NM", "X", "X", "NM", "NM", "X", "X", "X", "X", "X", "X", "NM", "NM")
+)
+cu2 <- attribute_catch_up_curve(list(a = source_a2, b = source_b2), attribute = "state")
+cu2$curve[cu2$curve$source == "b", ]
+cu2$median_horizon[cu2$median_horizon$source == "b", ]
+```
+
+Source B's point-estimate median is 2 years, but its 95% confidence
+interval is 1 year to not estimable within the horizons observed, on a
+risk set that has already shrunk to 3 identifiers by the time the
+curve crosses 50%. This is a real, if small-scale, example of a
+pattern seen on a real five-source administrative comparison during
+this package's own development: a source's reported median of 16
+years turned out to hover within one percentage point of the 50% line
+for three consecutive horizons on a risk set of 49, with a single
+additional event enough to have moved the reported number to 13
+instead. The point estimate was not wrong; reporting it without an
+interval was.
+
+### Turning this into manuscript text
+
+`attribute_catch_up_curve_prose()` ranks the sources that resolve,
+writes an honest sentence (percent still unresolved, immediately and
+at a chosen horizon) for any source that never does, and reports each
+resolved source's confidence interval and at-risk count rather than a
+bare number:
+
+```{r catch-up-prose}
+attribute_catch_up_curve_prose(
+  cu_excl, display_label = c(a = "Source A", b = "Source B")
+)$sentence
+```
+
+Pass `register = "clinical"` for plain-language prose with no
+abbreviations and no em dashes, intended for a clinical-journal
+Methods/Results section rather than a technical report -- the caller
+is still responsible for passing clinically-appropriate `display_label`
+values (e.g. `"the national provider directory"` rather than
+`"nppes"`); the parameter changes sentence structure, not domain
+vocabulary the package has no way to know:
+
+```{r catch-up-prose-clinical}
+attribute_catch_up_curve_prose(
+  cu_excl, display_label = c(a = "the first registry", b = "the second registry"),
+  register = "clinical"
+)$sentence
+```
+
+As with the other three approaches, none of this says which source is
+*correct* -- only how long it took one source to independently
+corroborate a value another already had, and how much confidence that
+estimate deserves.
 
 ## At scale: a simulated panel, in four figures
 

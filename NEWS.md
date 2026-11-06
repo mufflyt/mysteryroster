@@ -1,5 +1,22 @@
 # mysteryroster (development version)
 
+* Added a confidence interval to `attribute_catch_up_curve()`'s `median_horizon`:
+  `median_ci_low`/`median_ci_high` (the Brookmeyer-Crowley interval, via the log-log
+  transform of Greenwood's formula, the same method `survival::survfit()` uses by
+  default) and `median_n_at_risk` (the risk-set size at the horizon where the point
+  estimate crosses 50%). `curve` itself also gains a pointwise `ci_low`/`ci_high` at
+  every horizon. Found while demonstrating `attribute_catch_up_curve_prose()`'s new
+  clinical register on real data: the Medicaid enrollment file's reported median of 16
+  years sits on a risk set of just 49 events, hovering within one point of the 50%
+  threshold from horizon 13 through 15 before a single additional event tips it to 16 --
+  a one-case difference that would have reported 13 instead. The number was not wrong,
+  but reporting it bare, with no interval, hid how little it should be trusted; the
+  correct interval is (12, not estimable). Verified both against an independent hand
+  calculation and against `survival::survfit()` fed the equivalent left-truncated,
+  right-censored individual-level data, matching to the decimal at every horizon tested
+  and for the median and its interval. `attribute_catch_up_curve_prose()` now reports
+  this alongside each resolved source's median in both registers, rather than a bare
+  point estimate.
 * Added `register = c("technical", "clinical")` to `format_ranking_prose()` and
   `attribute_catch_up_curve_prose()`. `"clinical"` produces plain-language narrative
   sentences with no abbreviations and no em dashes ("Among the 2 groups compared, the

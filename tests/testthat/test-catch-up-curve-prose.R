@@ -110,6 +110,66 @@ test_that("attribute_catch_up_curve_prose's n_events uses the true pooled total 
   expect_equal(p$n_events, 3L)
 })
 
+test_that("attribute_catch_up_curve_prose reports each resolved source's confidence interval and at-risk count", {
+  cu <- make_cu()
+  p <- attribute_catch_up_curve_prose(cu)
+  # a's median_ci_high is NA (never crosses within the observed horizons) -- grammar must
+  # not trail a bare "years" after the "not estimable" text, and singular/plural must be
+  # correct for both the bounded (b: 0 to 0 years) and open-ended (a: 1 year to not
+  # estimable) cases.
+  expect_match(p$sentence, "a: 95% CI 1 year to not estimable \\(n at risk at crossing = 2\\)\\.")
+  expect_match(p$sentence, "b: 95% CI 0 to 0 years \\(n at risk at crossing = 2\\)\\.")
+  expect_false(grepl("not estimable within the period observed years", p$sentence, fixed = TRUE))
+  expect_false(grepl("not estimable years", p$sentence, fixed = TRUE)) # no dangling "years" right after "not estimable"
+})
+
+test_that("attribute_catch_up_curve_prose's register = 'clinical' reports the confidence interval in plain language", {
+  cu <- make_cu()
+  p <- attribute_catch_up_curve_prose(cu, register = "clinical")
+  expect_match(p$sentence, "This estimate for a was based on 2 events still being tracked at the time the median was reached, with a 95% confidence interval of 1 year, with no upper bound estimable within the period observed\\.")
+  expect_match(p$sentence, "This estimate for b was based on 2 events still being tracked at the time the median was reached, with a 95% confidence interval of 0 to 0 years\\.")
+  expect_false(grepl("—", p$sentence))
+})
+
+test_that("attribute_catch_up_curve_prose's register = 'clinical' uses singular 'event' when median_n_at_risk is 1", {
+  # a detects id 1's NM arrival at 2021 (its own data) AND id 2's GA arrival at 2021 --
+  # under exclude_self, a's own events are unanchored by definition, but b independently
+  # detects id 1's NM arrival too (at 2022), so the NM event survives for a (anchored via
+  # b) while the GA event does not (only a ever detected it). a is left scored against
+  # exactly 1 event, so its confidence-interval sentence must say "1 event", not "1 events".
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "GA"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "TX")) # never shows GA
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state", reference = "exclude_self")
+  expect_equal(cu$median_horizon$median_n_at_risk[cu$median_horizon$source == "a"], 1L)
+  p <- attribute_catch_up_curve_prose(cu, register = "clinical")
+  expect_match(p$sentence, "was based on 1 event still being tracked", fixed = TRUE)
+  expect_false(grepl("1 events", p$sentence, fixed = TRUE))
+})
+
+test_that("attribute_catch_up_curve_prose's ci_level only changes the displayed label, not the computation", {
+  cu <- make_cu()
+  p90 <- attribute_catch_up_curve_prose(cu, ci_level = 0.90)
+  expect_match(p90$sentence, "90% CI")
+  expect_false(grepl("95% CI", p90$sentence))
+})
+
+test_that("attribute_catch_up_curve_prose skips confidence-interval reporting gracefully when cu lacks the CI columns", {
+  cu_old_shape <- list(
+    curve = data.frame(source = c("a", "a"), horizon = c(0L, 1L), n_at_risk = c(2L, 2L),
+                       n_events = c(0L, 2L), pct_not_yet_shown = c(100, 0)),
+    median_horizon = data.frame(source = "a", median_horizon = 1L)
+  )
+  p <- attribute_catch_up_curve_prose(cu_old_shape)
+  expect_false(grepl("CI", p$sentence))
+})
+
+test_that("attribute_catch_up_curve_prose validates ci_level", {
+  cu <- make_cu()
+  expect_error(attribute_catch_up_curve_prose(cu, ci_level = 1.5), "Assertion on 'ci_level' failed")
+})
+
 test_that("attribute_catch_up_curve_prose validates its inputs", {
   expect_error(attribute_catch_up_curve_prose(list(curve = data.frame())),
                "median_horizon")
