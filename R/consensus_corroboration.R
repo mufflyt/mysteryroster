@@ -643,6 +643,11 @@ wilson_ci <- function(n_agree, n_compared, conf_level = 0.95, as_percent = FALSE
   checkmate::assert_numeric(n_agree, lower = 0)
   checkmate::assert_numeric(n_compared)
   checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("wilson_ci: conf_level must be strictly between 0 and 1 (0 and 1 are degenerate -- ",
+         "1 produces an undefined z-score, NaN bounds; 0 produces a zero-width interval ",
+         "equal to the point estimate, never a real confidence interval)", call. = FALSE)
+  }
   checkmate::assert_flag(as_percent)
   if (length(n_agree) != length(n_compared)) {
     stop("wilson_ci: n_agree and n_compared must be the same length", call. = FALSE)

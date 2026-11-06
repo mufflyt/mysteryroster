@@ -143,9 +143,75 @@ test_that("attribute_truth_fusion_prose adds a full reliability ranking when sou
   # all three sources named, in reliability order
   expect_match(out$reliability_sentence, "nppes \\(0\\.900\\), op \\(0\\.600\\), dac \\(0\\.400\\)")
   expect_equal(nrow(out$reliability_table), 3)
-  expect_match(out$combined_text, "ranked, highest to lowest")
+  expect_match(out$combined_text, "Ranked by learned source reliability")
 })
 
 test_that("attribute_truth_fusion_prose requires a mysteryroster_truth object", {
   expect_error(attribute_truth_fusion_prose(data.frame(x = 1)), "class")
+})
+
+test_that("[red-team] attribute_truth_fusion_prose discloses a source excluded from reliability ranking for NA reliability", {
+  # Found by a saboteur: a source present in source_diagnostics with NA
+  # reliability (e.g. isolated in a disconnected graph component) used to
+  # silently vanish from the ranking with no trace -- reading as if only the
+  # remaining sources existed, rather than one with indeterminate reliability.
+  fake_fit <- structure(
+    list(
+      predictions = data.frame(entity_id = c("1", "2"), reference_year = 2024, abstained = c(FALSE, TRUE)),
+      candidate_scores = data.frame(),
+      source_diagnostics = data.frame(
+        source_id = c("nppes", "nppes", "dac", "dac", "isolated", "isolated"),
+        true_label = c("CO", "NY", "CO", "NY", "CO", "NY"),
+        reliability_score = c(0.9, 0.9, 0.4, 0.4, NA, NA)
+      ),
+      model_diagnostics = data.frame(method = "dawid_skene"),
+      claims = data.frame()
+    ),
+    class = "mysteryroster_truth"
+  )
+  out <- attribute_truth_fusion_prose(fake_fit, result_label = "fake")
+  expect_equal(nrow(out$reliability_table), 2) # only the 2 estimable sources ranked
+  expect_match(out$reliability_sentence, "1 source with no estimable reliability \\(isolated\\) excluded")
+})
+
+# --- format_ranking_prose/format_proportion_comparison_prose saboteur regressions, shared root cause ---
+
+test_that("[red-team] wilson_ci rejects degenerate conf_level (0 or 1) instead of returning NaN bounds", {
+  # Found by a saboteur: conf_level = 1 made qnorm(1) = Inf, propagating NaN
+  # all the way into a rendered sentence ("100% CI NaN-NaN%"). conf_level = 0
+  # didn't error, but silently returned a zero-width, statistically
+  # meaningless interval. Both are now rejected explicitly.
+  expect_error(wilson_ci(5, 10, conf_level = 1), "strictly between 0 and 1")
+  expect_error(wilson_ci(5, 10, conf_level = 0), "strictly between 0 and 1")
+  expect_error(format_proportion_comparison_prose(n_a = 5, n_total_a = 10, conf_level = 1),
+               "strictly between 0 and 1")
+  expect_error(attribute_lead_lag_duration(
+    data.frame(npi = "1", year = 2020:2021, state = c("CO", "CO")),
+    data.frame(npi = "1", year = 2020:2021, state = c("NM", "NM")),
+    attribute = "state", base_year = 2020L, conf_level = 1
+  ), "strictly between 0 and 1")
+})
+
+test_that("[red-team] format_proportion_comparison_prose rejects a whitespace-only label", {
+  # Found by a saboteur: checkmate::assert_string(x, min.chars = 1) accepts
+  # "   " (3 real characters, all whitespace), producing "In   , 10 of..." --
+  # grammatically broken with no indication why.
+  expect_error(format_proportion_comparison_prose(n_a = 1, n_total_a = 2, label_a = "   "),
+               "empty or whitespace-only")
+  expect_error(format_proportion_comparison_prose(n_a = 1, n_total_a = 2, unit_label = "  "),
+               "empty or whitespace-only")
+})
+
+test_that("[red-team] format_proportion_comparison_prose marks a degenerate two-proportion test as not computable throughout, with no negative-zero CI", {
+  # Found by a saboteur: 0/1 vs 0/1 makes stats::prop.test() return without
+  # erroring, but with p.value/statistic = NaN (not NA) and a conf.int that
+  # rendered as a nonsensical "95% CI -0.0 to -0.0%" (IEEE negative zero from
+  # -100 * 0) even though the test itself was already flagged not computable.
+  r <- format_proportion_comparison_prose(n_a = 0, n_total_a = 1, n_b = 0, n_total_b = 1)
+  expect_true(identical(r$p_value, NA_real_)) # not raw NaN
+  expect_true(is.na(r$diff_ci_low))
+  expect_true(is.na(r$diff_ci_high))
+  expect_match(r$comparison_sentence, "CI not computable")
+  expect_no_match(r$comparison_sentence, "-0\\.0")
+  expect_match(r$comparison_sentence, "p not computable")
 })

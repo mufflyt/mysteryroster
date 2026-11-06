@@ -385,6 +385,7 @@ available before it is actually implemented.
 | Predict a value by majority vote, or an optional Dawid-Skene-family or TruthFinder-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
 | Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
 | Manuscript-ready sentence (count, %, Wilson CI) for one proportion, or two compared via a two-proportion chi-squared test (statistic, df, p-value, and a CI for the difference) | `format_proportion_comparison_prose()` |
+| Manuscript-ready sentence ranking 2+ groups by any numeric value (coverage, lead rate, odd-one-out rate, reliability...), with ties flagged rather than hidden behind a false strict order | `format_ranking_prose()` |
 | Same, pulled directly from one or two `attribute_truth_fusion()` results, plus a full source-reliability ranking sentence | `attribute_truth_fusion_prose()` |
 
 ## Design rules

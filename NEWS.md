@@ -1,5 +1,38 @@
 # mysteryroster (development version)
 
+* Added `format_ranking_prose()`, the N-way counterpart to
+  `format_proportion_comparison_prose()`'s one-or-two-group case: given a
+  value per named group (coverage, lead rate, odd-one-out rate, learned
+  reliability -- anything), returns a ranked table and a manuscript sentence,
+  with same-displayed-value ties explicitly flagged rather than presented as
+  a false strict order. `attribute_truth_fusion_prose()`'s reliability
+  ranking now uses it internally instead of duplicating the same logic.
+  Added `vignette("source-comparison-midwifery")`, which runs all eight
+  no-gold-standard comparison dimensions this package now supports --
+  timing, agreement (pooled and covariate-stratified), staleness, churn,
+  coverage, convergence, independence, and weight -- end to end on one
+  simulated, midwifery-calibrated panel, demonstrating every prose
+  generator together rather than one function at a time.
+* Ran 20 new adversarial saboteurs (Part D of
+  `docs/saboteur-test-matrix.md`) against `format_proportion_comparison_prose()`,
+  `format_ranking_prose()`, `attribute_lead_lag_duration()`, and
+  `attribute_truth_fusion_prose()` for grammatical and statistical
+  correctness -- not just unit-tested in isolation, each one actually run
+  against the real functions before any fix. Found and fixed five real
+  bugs, each now a permanent `[red-team]` regression test: (1) `n` counts
+  in a ranking sentence could render with stray padding (`"n =     0"`)
+  from `format()`'s default width-alignment; (2) a degenerate two-proportion
+  test (e.g. 0/1 vs. 0/1) correctly marked its p-value "not computable" but
+  still rendered a nonsensical `"95% CI -0.0 to -0.0%"` from the same
+  untrustworthy fit; (3) `conf_level = 1` propagated a literal `NaN` into
+  rendered sentence text via `wilson_ci()`'s own `qnorm(1) = Inf` -- fixed
+  at the root in `wilson_ci()` itself (an existing, widely-used function),
+  so every caller is protected, not just the new prose functions;
+  (4) a whitespace-only label (`"   "`) passed `checkmate::assert_string(x,
+  min.chars = 1)` and produced a visibly broken sentence ("In   , 10
+  of..."); (5) a source with indeterminate reliability (e.g. isolated in a
+  disconnected graph component) used to vanish from a reliability ranking
+  with no trace, rather than being disclosed as excluded.
 * Added `attribute_churn_rate()` and `attribute_coverage()`: two more
   dimensions for comparing sources, distinct from timing and agreement.
   `attribute_churn_rate()` measures how often a single source's own value

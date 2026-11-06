@@ -1,0 +1,340 @@
+---
+title: "Comparing Sources Without a Gold Standard: The Full Toolkit on One Panel"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Comparing Sources Without a Gold Standard: The Full Toolkit on One Panel}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+```
+
+```{r setup}
+library(mysteryroster)
+backends <- attribute_truth_backends()
+crowdkit_available <- isTRUE(backends$available[backends$backend == "crowd_kit"])
+```
+
+The other vignettes in this package each demonstrate one comparison at a time. This one asks
+a different question: on a *single* panel, built once, how many genuinely different ways can
+these sources be compared -- timing, agreement, staleness, volatility, coverage, convergence,
+independence, and weight -- and what does each one actually add that the others don't?
+
+**The panel below is simulated, not real.** Real per-NPI midwifery data cannot appear in this
+package (see "What this vignette does and does not show"). It is *calibrated* to the real,
+already-published findings this package's other docs establish -- the disagreement rates, lag
+patterns, and reliability rankings below are chosen to land in the same neighborhood as the
+real numbers, not to reproduce them exactly. Every real number cited is explicitly marked as
+such and sourced to its doc.
+
+## Building one panel, once
+
+Four simulated sources, 250 synthetic clinicians (`"S0001"`-`"S0250"`, never real NPIs), 2017-2024,
+state-level only:
+
+- **NPPES** -- the reference panel. State changes ("moves") happen at a baseline 7%/year rate,
+  elevated to 16% for the 2017-to-2018 and 2023-to-2024 transitions specifically -- the same two
+  transitions `docs/midwifery-ablation-findings.md` and `docs/midwifery-evidence-ledger-results.md`
+  identify as real migration spikes in the actual cohort.
+- **DAC and PECOS** (raw, separate) -- each lags NPPES, with its own independent noise on top.
+  Rural clinicians' records lag 4 years; urban clinicians' lag 1 year -- a deliberate, calibrated
+  covariate effect (see Agreement, below), not sampling noise. Combined via
+  `attribute_claims_collapse_lineage()` below, same as the real project's `dac_pecos_combined`.
+- **Open Payments** -- sparse (~25% of entity-years), calibrated to the real cohort's observed
+  ~23% coverage (`docs/midwifery-evidence-ledger-results.md` S2: 807 of 3,556 touched NPI-years).
+- **T-MSIS** (Medicaid enrollment) -- moderate coverage (~65%), but only ~50% agreement with
+  NPPES when both are present -- calibrated directly to the real, verified finding that T-MSIS
+  agreed with NPPES only 50.3% of the time (`docs/midwifery-evidence-ledger-results.md` S2).
+
+```{r build-panel}
+set.seed(20261106)
+n <- 250L
+ids <- sprintf("S%04d", seq_len(n))
+years <- 2017:2024
+states <- c("CO", "NM", "TX", "NY", "CA", "WA", "OH", "GA")
+
+move_prob <- setNames(rep(0.07, length(years) - 1), paste0(years[-length(years)], "-", years[-1]))
+move_prob["2017-2018"] <- 0.16
+move_prob["2023-2024"] <- 0.16
+
+truth <- matrix(NA_character_, n, length(years))
+truth[, 1] <- sample(states, n, replace = TRUE)
+for (k in 2:length(years)) {
+  p <- move_prob[paste0(years[k - 1], "-", years[k])]
+  moved <- runif(n) < p
+  truth[, k] <- truth[, k - 1]
+  truth[moved, k] <- sapply(truth[moved, k - 1], function(s) sample(setdiff(states, s), 1))
+}
+
+practice_setting <- sample(c("rural", "urban"), n, replace = TRUE, prob = c(0.3, 0.7))
+lag_vec <- ifelse(practice_setting == "rural", 4L, 1L) # deliberate covariate effect
+noise_p <- 0.15
+
+make_dac_pecos_source <- function() {
+  m <- matrix(NA_character_, n, length(years)); m[, 1] <- truth[, 1]
+  for (k in 2:length(years)) {
+    lag_idx <- pmax(1L, k - lag_vec)
+    m[, k] <- truth[cbind(seq_len(n), lag_idx)]
+    noisy <- runif(n) < noise_p
+    m[noisy, k] <- sapply(m[noisy, k - 1], function(s) sample(setdiff(states, s), 1))
+  }
+  m
+}
+dac_raw <- make_dac_pecos_source()
+pecos_raw <- make_dac_pecos_source()
+
+op_present <- matrix(runif(n * length(years)) < 0.25, n, length(years))
+op <- matrix(NA_character_, n, length(years)); op[op_present] <- truth[op_present]
+
+tmsis_present <- matrix(runif(n * length(years)) < 0.65, n, length(years))
+tmsis <- matrix(NA_character_, n, length(years))
+agree_mask <- tmsis_present & (matrix(runif(n * length(years)), n, length(years)) < 0.50)
+tmsis[agree_mask] <- truth[agree_mask]
+disagree_mask <- tmsis_present & !agree_mask
+tmsis[disagree_mask] <- sapply(truth[disagree_mask], function(s) sample(setdiff(states, s), 1))
+
+to_long <- function(mat) {
+  df <- data.frame(npi = rep(ids, times = length(years)), year = rep(years, each = n),
+                    state = as.vector(mat), stringsAsFactors = FALSE)
+  df[!is.na(df$state), , drop = FALSE]
+}
+nppes <- to_long(truth)
+dac_raw_long <- to_long(dac_raw)
+pecos_raw_long <- to_long(pecos_raw)
+open_payments <- to_long(op)
+tmsis_long <- to_long(tmsis)
+c(nppes = nrow(nppes), dac = nrow(dac_raw_long), pecos = nrow(pecos_raw_long),
+  open_payments = nrow(open_payments), tmsis = nrow(tmsis_long))
+```
+
+## Independence: merging DAC and PECOS before they count as two votes
+
+DAC and PECOS share CMS/PECOS enrollment lineage in the real data
+(`docs/midwifery-ablation-findings.md` S1) -- here they're deliberately *built* that way, both
+derived from the same `truth` matrix. `attribute_claims_collapse_lineage()` is the general form
+of the "agree -> one vote; disagree -> no vote; one present -> use it" rule the real project's
+claims table already used:
+
+```{r collapse-lineage}
+to_claims <- function(df, source_name) {
+  transform(df, entity_id = npi, attribute = "practice_state", source_id = source_name,
+            claimed_value = state, reference_year = year)[
+              , c("entity_id", "attribute", "source_id", "claimed_value", "reference_year")]
+}
+claims_dac_pecos <- rbind(to_claims(dac_raw_long, "dac"), to_claims(pecos_raw_long, "pecos"))
+collapsed <- attribute_claims_collapse_lineage(
+  claims_dac_pecos, lineage_groups = list(dac_pecos_combined = c("dac", "pecos"))
+)
+attr(collapsed, "report")
+
+dac_pecos_combined <- collapsed[collapsed$source_id == "dac_pecos_combined",
+                                  c("entity_id", "claimed_value", "reference_year")]
+names(dac_pecos_combined) <- c("npi", "state", "year")
+```
+
+DAC and PECOS disagree on about a quarter of the entity-years where both have a claim (the
+`entity_attribute_years_dropped_conflict` count above) -- close to the real cohort's own
+26.6% DAC/PECOS disagreement rate despite shared lineage
+(`docs/midwifery-ablation-findings.md` S1), even though these two sources were built from one
+shared `truth` matrix by construction. Shared lineage does not mean the two copies agree.
+
+## Timing: who moves first, how often it resolves, how long it takes
+
+```{r timing}
+ll <- attribute_lead_lag_matrix(nppes, dac_pecos_combined, attributes = "state", base_year = 2019L)
+as.data.frame(ll)[, c("a_breaks_concordance_first", "b_breaks_concordance_first",
+                        "n_discordant_at_t", "b_adopts_a_at_t1_pct",
+                        "disc_base_n", "b_adopts_a_multi_pct", "a_reverts_b_multi_pct")]
+
+dur <- attribute_lead_lag_duration(
+  nppes, dac_pecos_combined, attribute = "state", base_year = 2019L,
+  source_a_label = "NPPES", source_b_label = "DAC/PECOS"
+)
+dur$combined_text
+```
+
+Three distinct timing questions, three distinct answers: **direction** -- NPPES breaks
+concordance first far more often than DAC/PECOS does (`a_breaks_concordance_first` far exceeds
+`b_breaks_concordance_first`), consistent with DAC/PECOS being the lagging copy by construction.
+**How often it resolves** -- of the identifiers disagreeing with NPPES in 2019, the large
+majority of DAC/PECOS's eventual matches do happen (`b_adopts_a_multi_pct`), while NPPES almost
+never reverts to DAC/PECOS's version. **How long it takes** -- `attribute_lead_lag_duration()`
+adds the piece neither of the above states: a *median* number of years until that adoption
+actually happens, pulled up by the rural clinicians' 4-year lag mixed in with the urban
+clinicians' 1-year lag.
+
+## Agreement: do they say the same thing, and does that depend on who you ask
+
+```{r agreement}
+agr <- attribute_agreement(list(nppes = nppes, dac_pecos = dac_pecos_combined), attribute = "state")
+agr_summary <- attribute_agreement_summary(agr)
+as.data.frame(agr_summary)[, c("year", "n_compared", "n_agree", "pct_agree")]
+
+wilson_ci(sum(agr$agree), nrow(agr), as_percent = TRUE)
+```
+
+Overall agreement, with a Wilson interval the same way every proportion in this package's docs
+is reported -- but a single pooled number hides the covariate effect built into this panel on
+purpose:
+
+```{r agreement-covariate}
+nppes_2024 <- nppes[nppes$year == 2024, c("npi", "state")]
+dac_2024 <- dac_pecos_combined[dac_pecos_combined$year == 2024, c("npi", "state")]
+covdf <- data.frame(npi = ids, setting = practice_setting)
+abc <- attribute_agreement_by_covariate(
+  nppes_2024, dac_2024, covdf, attribute = "state", covariate = "setting",
+  comparison_label = "NPPES vs DAC/PECOS (2024)"
+)
+as.data.frame(abc)
+```
+
+Rural clinicians' DAC/PECOS records agree with NPPES noticeably less often than urban
+clinicians' -- exactly the 4-year-vs-1-year lag built into the panel, made visible only by
+stratifying. The pooled 2024 agreement rate alone would never have surfaced this; it is the
+point of `attribute_agreement_by_covariate()` and `attribute_agreement_by_spell_age()`
+(demonstrated on a different panel in `vignette("lead-lag-staleness")`) specifically.
+
+## Staleness: how long has a value sat unchanged
+
+```{r staleness}
+sa <- attribute_spell_age(nppes, attribute = "state")
+table(sa$spell_age_years)
+```
+
+Most NPPES entity-years have a spell age of 0-2 years (the value was set recently, or the panel
+itself is young at that point), with a long tail out to 7 years for clinicians whose state
+never changed across the whole simulated panel. `classify_record_staleness()` and
+`record_age_years()`/`record_age_band()` answer a related but distinct question -- given two
+records' own *last-updated dates* (not panel years), which one is provably older information --
+demonstrated in full in `vignette("attribute-agreement")`, not repeated here since this panel
+has no per-record update timestamps to show it with.
+
+## Volatility/churn: how often a source's own value flips, regardless of direction
+
+```{r churn}
+churn_nppes <- attribute_churn_rate(nppes, attribute = "state")
+churn_tmsis <- attribute_churn_rate(tmsis_long, attribute = "state")
+c(nppes_churn_pct = churn_nppes$overall$pct, tmsis_churn_pct = churn_tmsis$overall$pct)
+
+format_proportion_comparison_prose(
+  n_a = churn_nppes$overall$n_changed, n_total_a = churn_nppes$overall$n_transitions,
+  n_b = churn_tmsis$overall$n_changed, n_total_b = churn_tmsis$overall$n_transitions,
+  label_a = "NPPES", label_b = "T-MSIS",
+  unit_label = "consecutive-year transitions", condition_label = "showed a changed state"
+)$comparison_sentence
+```
+
+```{r fig-churn, fig.alt = "Grouped bar chart comparing NPPES and T-MSIS churn rate: NPPES changes state in roughly 9 percent of consecutive-year transitions, T-MSIS in roughly 70 percent."}
+churn_tbl <- c(NPPES = churn_nppes$overall$pct, `T-MSIS` = churn_tmsis$overall$pct)
+op <- par(mar = c(4, 4, 3, 1))
+mid <- barplot(churn_tbl, col = c("#1F2A33", "#C8553D"), border = NA, ylim = c(0, 100), las = 1,
+               ylab = "% of transitions with a changed value",
+               main = "Churn rate: how often does each source's own value flip?", cex.main = 1)
+text(mid, churn_tbl, sprintf("%.1f%%", churn_tbl), pos = 3)
+par(op)
+```
+
+T-MSIS changes its reported state on roughly 70% of consecutive-year transitions, versus
+roughly 9% for NPPES -- a dramatic, highly significant difference, and notably this says
+nothing yet about which one is *right*. It says T-MSIS is simply far less stable, which is
+itself informative: a source that flips this often is a weak foundation for inferring a real
+move, independent of the ~50% NPPES-agreement rate already established for the real T-MSIS data.
+
+## Coverage: which source actually has data for more entity-years
+
+```{r coverage}
+universe <- unique(nppes[, c("npi", "year")])
+cov <- attribute_coverage(
+  list(nppes = nppes, dac_pecos_combined = dac_pecos_combined,
+       open_payments = open_payments, tmsis = tmsis_long),
+  attribute = "state", universe = universe
+)
+as.data.frame(cov$overall)
+```
+
+```{r fig-coverage, fig.alt = "Bar chart ranking four sources by percent coverage of the NPPES universe of entity-years: NPPES 100 percent, DAC/PECOS about 77 percent, T-MSIS about 63 percent, Open Payments about 25 percent."}
+cov_tbl <- setNames(cov$overall$pct, cov$overall$source)
+op <- par(mar = c(7, 4, 3, 1))
+barplot(cov_tbl, col = "#8AA29E", border = NA, ylim = c(0, 100), las = 2,
+        ylab = "% of universe entity-years covered",
+        main = "Coverage: which source actually has the data?", cex.main = 1)
+par(op)
+```
+
+T-MSIS and Open Payments both rank low on coverage *and* (for T-MSIS) high on churn -- two
+separate limitations that compound: T-MSIS is both less complete and less stable than NPPES or
+DAC/PECOS, not just one or the other. Open Payments is the sparsest (~25% of entity-years,
+matching the real cohort's own ~23% figure cited above) but, as the next section shows, is not
+thereby the least trustworthy of what it does cover.
+
+## Convergence: which source does everyone else trust, and who's the outlier
+
+```{r convergence}
+corrob <- attribute_source_corroboration(
+  list(nppes = nppes, dac_pecos = dac_pecos_combined, open_payments = open_payments, tmsis = tmsis_long),
+  attributes = "state"
+)
+as.data.frame(corrob)[, c("source", "led_n", "corrected_n", "opportunities_n", "lead_rate")]
+
+ooo <- attribute_odd_one_out(
+  list(nppes = nppes, dac_pecos = dac_pecos_combined, open_payments = open_payments, tmsis = tmsis_long),
+  attribute = "state"
+)
+as.data.frame(attribute_odd_one_out_rate(ooo))
+```
+
+T-MSIS has by far the lowest `lead_rate` -- other sources essentially never converge toward
+its value after a disagreement -- and by far the highest odd-one-out rate, meaning when 3+
+sources disagree, T-MSIS is disproportionately the lone dissenter rather than part of a
+contested pair. Open Payments, despite covering the fewest entity-years, has a *high* lead
+rate on the ones it does cover: a reminder from this function's own documentation that "a
+source that leads is informative; a source that never leads is not thereby correct." Sparse
+and trusted are not opposites.
+
+## Weight: when a method is forced to pick one value
+
+```{r weight}
+claims_all <- rbind(
+  to_claims(nppes, "nppes"), to_claims(dac_pecos_combined, "dac_pecos_combined"),
+  to_claims(open_payments, "open_payments"), to_claims(tmsis_long, "tmsis")
+)
+maj <- attribute_truth_fusion(claims_all, method = "majority")
+attribute_truth_fusion_prose(maj, result_label = "the simulated panel")$combined_text
+```
+
+```{r weight-ds, eval = crowdkit_available}
+ds <- suppressWarnings(attribute_truth_fusion(claims_all, method = "dawid_skene"))
+attribute_truth_fusion_prose(ds, result_label = "the simulated panel")$reliability_sentence
+```
+
+`majority` abstains on a real share of entity-years -- exactly the structural ceiling
+`vignette("truth-fusion-case-study-midwifery")` documents for two-source panels, now showing up
+on a four-source one too whenever the vote splits evenly. Where `crowd_kit` is available (not
+guaranteed in every environment this vignette renders in -- see that chunk's `eval` guard), a
+weighted method like `dawid_skene` can resolve those ties and report a *learned* reliability
+ranking -- the real, verified version of this exact ranking (T-MSIS lowest, NPPES highest) is
+in `docs/midwifery-evidence-ledger-results.md` S4, independently confirmed from the
+`~/midwifery` session's own output files, not just asserted.
+
+## What this vignette does and does not show
+
+It shows eight genuinely distinct ways to compare sources without a gold standard, run end to
+end on one coherent, internally-consistent simulated panel: direction and duration of timing,
+pooled and covariate-stratified agreement, empirical staleness, churn independent of accuracy,
+completeness against a defined universe, ecosystem convergence and lone-dissenter detection,
+lineage-aware independence, and learned reliability under a forced choice. It shows that these
+are not redundant: T-MSIS ranks worst on coverage, churn, convergence, *and* learned
+reliability in this panel, but a sparse, low-coverage source (Open Payments) can still be
+highly trusted on what it does cover -- a distinction only a convergence measure like
+`attribute_source_corroboration()` surfaces, not coverage or churn alone.
+
+It does **not** show real midwifery data. Every number above comes from a simulated panel,
+seeded and calibrated to land near real, already-published findings
+(`docs/midwifery-ablation-findings.md`, `docs/midwifery-evidence-ledger-results.md`) but never
+claiming to reproduce them exactly -- real per-NPI data for this comparison lives outside this
+package, by design, the same boundary every other midwifery-case-study doc and vignette in this
+package observes. It does not establish which source is *correct* for any simulated or real
+clinician -- no gold standard exists here either, by construction; every comparison above is
+relative, the same honest limitation `docs/validation-protocol.md` documents for the real data.

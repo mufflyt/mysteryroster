@@ -19,6 +19,17 @@
   as.integer(num)
 }
 
+# checkmate::assert_string(x, min.chars = 1) accepts "   " (3 characters, all
+# whitespace) -- real enough to pass that check, but a sentence built around
+# it reads as broken ("In   , 10 of 20..."). Catches what min.chars alone
+# cannot.
+.assert_nonblank_string <- function(x, label) {
+  checkmate::assert_string(x, min.chars = 1)
+  if (!nzchar(trimws(x))) {
+    stop(sprintf("%s must not be empty or whitespace-only", label), call. = FALSE)
+  }
+}
+
 #' Empirical spell age of an attribute across a longitudinal panel
 #'
 #' When a registry does not carry a reliable per-field `last_updated` timestamp
@@ -805,9 +816,12 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
   checkmate::assert_string(attribute, min.chars = 1)
   checkmate::assert_string(id, min.chars = 1)
   checkmate::assert_string(year, min.chars = 1)
-  checkmate::assert_string(source_a_label, min.chars = 1)
-  checkmate::assert_string(source_b_label, min.chars = 1)
+  .assert_nonblank_string(source_a_label, "attribute_lead_lag_duration: source_a_label")
+  .assert_nonblank_string(source_b_label, "attribute_lead_lag_duration: source_b_label")
   checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("attribute_lead_lag_duration: conf_level must be strictly between 0 and 1", call. = FALSE)
+  }
 
   for (col in c(id, year, attribute)) {
     if (!col %in% names(source_a)) {

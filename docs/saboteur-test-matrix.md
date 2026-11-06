@@ -1,16 +1,25 @@
-# Saboteur test matrix: Part A (validation protocol), Part B (Phase 3 backend), Part C (QA process)
+# Saboteur test matrix: Part A (validation protocol), Part B (Phase 3 backend), Part C (QA process), Part D (manuscript prose)
 
 "Saboteur" here follows the truth-discovery literature's own usage: an adversarial source, scenario,
 or process failure deliberately constructed to corrupt a result while still looking legitimate on the
 surface. Part A's saboteurs attack the *experimental design* in `docs/validation-protocol.md`; Part
 B's attack `attribute_truth_fusion()`'s actual inference code via crafted claims; Part C's attack the
-*testing/CI process* that is supposed to catch both.
+*testing/CI process* that is supposed to catch both; Part D's attack the manuscript-prose generators
+(`format_proportion_comparison_prose()`, `format_ranking_prose()`, `attribute_lead_lag_duration()`,
+`attribute_truth_fusion_prose()`) for grammatical and statistical correctness.
 
-**Status: all 60 executed; 19 of Part B's scenarios are now permanent regression tests (16 for
-`majority`/`dawid_skene`, plus 3 added later to give `truthdiscovery` the same mirror/targeted-
-saboteur/disconnected-graph coverage `dawid_skene` already had -- the disconnected-graph one found
-a genuine, confirmed behavioral difference: `sums` does not exhibit `dawid_skene`'s flat-tie bug on
-the identical fixture, verified directly rather than assumed to generalize).** Part A was
+**Status: all 80 executed; 19 of Part B's scenarios and 5 of Part D's are now permanent regression
+tests. Part D found five real bugs on first contact (zero-padded sample sizes, inconsistent
+"not computable" handling between a degenerate test's p-value and its confidence interval,
+`conf_level = 1` propagating a literal `NaN` into rendered text, a whitespace-only label slipping
+past `min.chars = 1`, and a source with indeterminate reliability silently vanishing from a ranking
+sentence instead of being disclosed as excluded) -- all fixed at the root, not patched around, with
+the `wilson_ci()` fix protecting every existing caller of that function, not just the new ones.
+Of Part B's 19 permanent tests, 16 cover `majority`/`dawid_skene`, plus 3 added later to give
+`truthdiscovery` the same mirror/targeted-saboteur/disconnected-graph coverage `dawid_skene`
+already had -- the disconnected-graph one found a genuine, confirmed behavioral difference: `sums`
+does not exhibit `dawid_skene`'s flat-tie bug on the identical fixture, verified directly rather
+than assumed to generalize.** Part A was
 audited against the protocol document's actual text; Part B was first run as real adversarial claims
 data in a one-off live R session, then the most load-bearing scenarios (plus several new ones found
 while writing them up as tests) were committed to `tests/testthat/test-truth-fusion.R` under the
@@ -167,6 +176,59 @@ permanent tests, or open items requiring a judgment call before any further code
     this Python library's sparse output still behave the way I verified it does") run once by hand and
     never turned into a test — a future dependency upgrade that changes that behavior would go uncaught.
 
+## Part D — 20 saboteurs against manuscript-prose generation (grammar + statistics)
+
+Targets `format_proportion_comparison_prose()`, `format_ranking_prose()`,
+`attribute_lead_lag_duration()`, and `attribute_truth_fusion_prose()` -- the functions that turn a
+number into a sentence a manuscript can quote directly. A grammatically broken or statistically
+misleading sentence from these is worse than no sentence at all, because it reads as authoritative.
+
+1. **Tied ranking values.** Two groups display identical rounded percentages under
+   `format_ranking_prose()` -- does the sentence present a false strict order without flagging it?
+2. **Single-group ranking attempt.** Only one group passed to `format_ranking_prose()` -- does it
+   error clearly, or silently produce a "ranking" of one thing?
+3. **Duplicate group names.** Two entries share the same group label with different values -- does
+   the sentence silently list the name twice without flagging the collision?
+4. **All-identical values, no ties flagged.** Every group has the exact same value -- does the
+   sentence read as if there's a meaningful order when there isn't one at all?
+5. **NA value smuggled into a ranking.** One group's value is `NA` -- does it get silently ranked
+   (sorted to the top or bottom by R's own `NA` handling) instead of rejected outright?
+6. **Zero-count group diluting a ranking.** A group with `n = 0` ranked alongside groups with large
+   `n`, implying equal statistical weight to a non-estimate -- and does the displayed `n` itself
+   render cleanly, not padded with artifact whitespace?
+7. **Wildly unequal sample sizes, same displayed rate.** Group A: 3/5 (60%); Group B: 3,000/5,000
+   (60%) -- does the comparison sentence show `n` so the reader isn't misled into treating these as
+   equally precise?
+8. **`n_a = 0` boundary proportion.** 0 of N -- does the Wilson CI/sentence report a real, non-
+   degenerate interval rather than something nonsensical?
+9. **`n_a = n_total_a` boundary proportion.** 100% exactly -- same check at the other extreme.
+10. **`n_total = 1`, tiny denominator.** A single-entity-year proportion stated with apparent
+    precision ("100.0%...") -- does the CI actually show the real (very wide) uncertainty?
+11. **`prop.test()` degenerate without erroring.** 0/1 vs. 0/1 -- `prop.test()` returns `NaN`
+    p-value/statistic without throwing, and a conf.int that may still look like real numbers. Does
+    the sentence consistently mark the *whole* test "not computable," not just the p-value?
+12. **Difference sign flip.** When group A's rate exceeds group B's (or vice versa), does "a
+    difference of X percentage points" report the correct sign, consistently?
+13. **Format-string injection via a label.** A label containing literal `%s`/`%d`-like text, or a
+    raw `%` -- does `sprintf()` choke, misinterpret, or silently drop part of the sentence?
+14. **Whitespace-only label.** `label_a = "   "` -- does `min.chars = 1` actually reject it, or does
+    a blank-looking label slip through into "In   , 10 of 20..."?
+15. **`conf_level` at the boundary (0 or 1).** Degenerate confidence levels -- does the interval
+    still render as real numbers, or leak `NaN`/a meaningless zero-width interval into the sentence?
+16. **Floating-point-equal values from different arithmetic paths.** Two values that are genuinely,
+    exactly equal but computed via different code paths -- confirmed still tied, not spuriously split
+    apart by a floating-point representation difference.
+17. **Singular/plural at `n = 1`.** `attribute_lead_lag_duration()` with exactly one discordant
+    identifier -- "1 identifier", never "1 identifiers".
+18. **Non-integer-but-whole `base_year`.** `base_year = 2020.0` (a double, not an integer literal)
+    passed to `attribute_lead_lag_duration()` -- does `%d`-style formatting break or print a decimal?
+19. **Fractional count mistaken for a real count.** `n_a = 10.5` (e.g. an accidentally-passed mean
+    instead of a true count) -- does `checkmate::assert_count()` actually reject it?
+20. **Source with indeterminate reliability silently dropped from a ranking.** A source present in
+    `source_diagnostics` with `NA` reliability (e.g. isolated in a disconnected graph component) --
+    does `attribute_truth_fusion_prose()`'s ranking sentence disclose that exclusion, or does the
+    source just vanish with no trace, reading as if it never contributed at all?
+
 ## Execution results: Part A (audit against the protocol document's actual text)
 
 Checked each of the 20 against `docs/validation-protocol.md` as written, not as intended.
@@ -267,6 +329,57 @@ observations with no safe unilateral fix):**
 - **#1, #3–9, #13, #15–20:** not independently exercised this round (would require deliberately
   breaking a probe, introducing a stale snapshot, or auditing commit history for force-pushes) —
   open items, not confirmed either way.
+
+## Execution results: Part D (real adversarial calls against the real prose functions)
+
+Ran all 20 as actual function calls, not a thought experiment -- each one executed directly against
+`format_proportion_comparison_prose()`, `format_ranking_prose()`, `attribute_lead_lag_duration()`,
+and `attribute_truth_fusion_prose()` before any fix, to see the real output first.
+
+**Five real bugs found and fixed (code + permanent `[red-team]` regression tests in
+`tests/testthat/test-ranking-prose.R` and `tests/testthat/test-truth-fusion-prose.R`):**
+
+- **#6 (zero-count dilution) also surfaced a formatting bug, not just a weighting question:**
+  `format(c(0, 5000), big.mark = ",")` right-pads to equal width by default, so `n = 0` rendered as
+  `"n =     0"` (four stray leading spaces) inside the sentence. Fixed with `trim = TRUE`.
+- **#11 (degenerate `prop.test()`) found inconsistent "not computable" handling:** `prop.test(c(0,
+  0), c(1, 1))` returns without erroring, but `p.value`/`statistic` come back `NaN` (not `NA`) and
+  `conf.int` still holds numeric-looking bounds. The p-value path already caught this correctly
+  (`is.na(NaN)` is `TRUE` in R), but the confidence-interval path did not -- it rendered
+  `"95% CI -0.0 to -0.0%"`, a nonsensical interval from the same degenerate fit the p-value had
+  already been flagged as untrustworthy. Fixed: when the test is not computable, the CI is now
+  marked not computable too, consistently, not just the p-value.
+- **#15 (`conf_level` boundary) found the single most severe bug of the twenty:** `conf_level = 1`
+  made `wilson_ci()`'s internal `qnorm(1)` evaluate to `Inf`, propagating all the way into a
+  rendered sentence as `"100% CI NaN-NaN%"` -- a literal `NaN` in manuscript-quotable text.
+  `conf_level = 0` didn't error, but silently returned a zero-width interval equal to the point
+  estimate, which is never a real confidence interval. Fixed at the root: `wilson_ci()` itself (an
+  existing, widely-used function, not just the new prose functions built on it) now rejects
+  `conf_level` outside the open interval `(0, 1)`, so every caller -- not just the ones audited
+  here -- is protected.
+- **#14 (whitespace-only label) found a real gap `min.chars = 1` cannot catch:**
+  `checkmate::assert_string(x, min.chars = 1)` accepts `"   "` (3 real characters, all whitespace),
+  producing `"In   , 10 of 20..."` -- grammatically broken with no indication why. Fixed with a new
+  shared internal helper, `.assert_nonblank_string()`, applied to every label parameter across all
+  four functions (`label_a`/`label_b`/`unit_label`/`condition_label`, `value_label`,
+  `source_a_label`/`source_b_label`).
+- **#20 (indeterminate reliability silently dropped) found a real completeness gap, not a crash:**
+  a source present in `attribute_truth_fusion()`'s own `source_diagnostics` with `NA` reliability
+  (for example isolated in a disconnected graph component, per that function's own documented
+  `n_disconnected_components` caveat) used to vanish from `attribute_truth_fusion_prose()`'s
+  ranking sentence with zero trace -- reading as if only the remaining sources existed. Fixed: the
+  sentence now explicitly names any source excluded this way and how many.
+
+**Fifteen items ran clean on the first try, already correctly defended:**
+
+- #1-#5, #7-#10, #12, #13, #16-#19 all produced correct, clearly-worded output with no code change
+  needed -- including #13 (format-string-like text in a label is never re-interpreted by `sprintf()`,
+  since only the *format string* argument is parsed for `%` specifiers, not substituted values) and
+  #19 (`checkmate::assert_count()` already rejects a fractional count like `10.5` outright).
+
+Full detail, exact before/after output for each of the five fixed items, and the permanent test
+names: `tests/testthat/test-ranking-prose.R`, `tests/testthat/test-truth-fusion-prose.R` (search
+`[red-team]`).
 
 ## Part B script (as actually run)
 

@@ -620,6 +620,10 @@ print.mysteryroster_truth <- function(x, ...) {
   invisible(x)
 }
 
+# IEEE 754 negative zero (e.g. from -100 * 0) is mathematically 0 but prints
+# as "-0.0" -- confusing in a sentence that never intends a signed zero.
+.no_neg_zero <- function(x) ifelse(!is.na(x) & x == 0, 0, x)
+
 #' Manuscript-ready prose for one proportion, or two compared, with statistics
 #'
 #' Every result reported in this package's own case-study docs (Wilson
@@ -715,10 +719,14 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
   if (n_a > n_total_a) {
     stop("format_proportion_comparison_prose: n_a cannot exceed n_total_a", call. = FALSE)
   }
-  checkmate::assert_string(label_a, min.chars = 1)
-  checkmate::assert_string(unit_label, min.chars = 1)
-  checkmate::assert_string(condition_label, min.chars = 1)
+  .assert_nonblank_string(label_a, "format_proportion_comparison_prose: label_a")
+  .assert_nonblank_string(unit_label, "format_proportion_comparison_prose: unit_label")
+  .assert_nonblank_string(condition_label, "format_proportion_comparison_prose: condition_label")
   checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("format_proportion_comparison_prose: conf_level must be strictly between 0 and 1",
+         call. = FALSE)
+  }
   has_b <- !is.null(n_b) || !is.null(n_total_b)
   if (has_b) {
     checkmate::assert_count(n_b)
@@ -726,7 +734,7 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
     if (n_b > n_total_b) {
       stop("format_proportion_comparison_prose: n_b cannot exceed n_total_b", call. = FALSE)
     }
-    checkmate::assert_string(label_b, min.chars = 1)
+    .assert_nonblank_string(label_b, "format_proportion_comparison_prose: label_b")
   }
 
   fmt_n <- function(x) format(x, big.mark = ",")
@@ -757,15 +765,30 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
       suppressWarnings(stats::prop.test(c(n_a, n_b), c(n_total_a, n_total_b))),
       error = function(e) NULL
     )
-    p_value <- if (is.null(pt)) NA_real_ else pt$p.value
-    statistic <- if (is.null(pt)) NA_real_ else unname(pt$statistic)
-    df <- if (is.null(pt)) NA_real_ else unname(pt$parameter)
-    diff_pct <- round(pct_b - pct_a, 1)
+    # prop.test() can return without erroring yet still be degenerate (e.g. 0/1
+    # vs 0/1): p.value/statistic come back NaN, not NA, and conf.int can still
+    # hold numeric-looking but untrustworthy bounds. Treat NaN as NA (is.na()
+    # catches both) and, when the test itself is not computable, don't report
+    # its CI either -- a CI from the same degenerate fit is not more trustworthy
+    # than its own p-value just because it rendered as numbers.
+    p_value <- if (is.null(pt) || is.na(pt$p.value)) NA_real_ else pt$p.value
+    statistic <- if (is.null(pt) || is.na(p_value)) NA_real_ else unname(pt$statistic)
+    df <- if (is.null(pt) || is.na(p_value)) NA_real_ else unname(pt$parameter)
+    diff_pct <- .no_neg_zero(round(pct_b - pct_a, 1))
     # prop.test()'s conf.int is for prop[1] - prop[2] (i.e. a - b); re-signed
     # to b - a, in percentage points, so a positive difference always means
-    # "b is higher", matching diff_pct's own sign.
-    diff_ci_low <- if (is.null(pt)) NA_real_ else round(-100 * pt$conf.int[2], 1)
-    diff_ci_high <- if (is.null(pt)) NA_real_ else round(-100 * pt$conf.int[1], 1)
+    # "b is higher", matching diff_pct's own sign. 0 * -100 is IEEE negative
+    # zero, which would otherwise display as a confusing "-0.0" -- cleaned here.
+    diff_ci_low <- if (is.null(pt) || is.na(p_value)) {
+      NA_real_
+    } else {
+      .no_neg_zero(round(-100 * pt$conf.int[2], 1))
+    }
+    diff_ci_high <- if (is.null(pt) || is.na(p_value)) {
+      NA_real_
+    } else {
+      .no_neg_zero(round(-100 * pt$conf.int[1], 1))
+    }
     p_fmt <- if (is.na(p_value)) {
       "not computable"
     } else if (p_value < 0.001) {
@@ -778,15 +801,19 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
     } else {
       sprintf("chi-squared(%d, N = %s) = %.2f", as.integer(df), fmt_n(n_total_a + n_total_b), statistic)
     }
+    ci_fmt <- if (is.na(diff_ci_low)) {
+      "CI not computable"
+    } else {
+      sprintf("%d%% CI %.1f to %.1f", conf_pct, diff_ci_low, diff_ci_high)
+    }
     comparison_sentence <- sprintf(
       paste0(
         "%.1f%% of %s %s in %s (%s/%s), compared with %.1f%% in %s (%s/%s) -- ",
-        "a difference of %.1f percentage points (%s%% CI %.1f to %.1f; ",
-        "two-proportion %s, p %s)."
+        "a difference of %.1f percentage points (%s; two-proportion %s, p %s)."
       ),
       pct_a, unit_label, condition_label, label_a, fmt_n(n_a), fmt_n(n_total_a),
       pct_b, label_b, fmt_n(n_b), fmt_n(n_total_b),
-      diff_pct, conf_pct, diff_ci_low, diff_ci_high, stat_fmt, p_fmt
+      diff_pct, ci_fmt, stat_fmt, p_fmt
     )
     out$b <- list(n = n_b, n_total = n_total_b, pct = pct_b, ci_low = ci_b$ci_low, ci_high = ci_b$ci_high, label = label_b)
     out$sentence_b <- sentence_b
@@ -801,6 +828,113 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
   }
 
   out
+}
+
+#' Manuscript-ready prose for ranking 2+ groups by a numeric value
+#'
+#' [format_proportion_comparison_prose()] handles one proportion, or two compared. Several of
+#' this package's own outputs are neither -- [attribute_coverage()]'s per-source coverage,
+#' [attribute_source_corroboration()]'s per-source `lead_rate`, [attribute_odd_one_out_rate()]'s
+#' per-source `odd_rate`, [attribute_truth_fusion()]'s per-source `reliability_score` -- an
+#' N-way ranking, not a single comparison. This is that general case: given a value per named
+#' group, return a ranked table and a sentence, instead of every caller re-deriving
+#' `order()`/`sprintf()`/`paste(collapse = ", ")` by hand.
+#'
+#' @details
+#' **Ties are never silently hidden behind a strict order.** Two groups whose *rounded* display
+#' values are equal are flagged in the sentence as tied, even if their underlying unrounded
+#' values differ (which would otherwise rank them in an order the reader has no way to see is
+#' not arbitrary -- "A ranked above B" when both display as `"84.5%"` reads as a claim the
+#' sentence cannot back up). Ties are detected on the *rounded* (displayed) value, per `fmt`.
+#'
+#' **Sample size, shown whenever given.** Ranking a rate computed from `n = 5` beside one from
+#' `n = 5,000` as if they carry equal weight is a real way to mislead; passing `n` includes each
+#' group's count in both the table and the sentence so that is never hidden.
+#'
+#' **Every group must have a real value.** `NA` values, duplicate group names, and fewer than 2
+#' groups all stop the call rather than silently producing a sentence that reads like a real
+#' ranking but isn't one -- a "ranking" of one thing, or with a missing entry, is not a ranking.
+#'
+#' @param group Character vector of group names, length 2+, no duplicates.
+#' @param value Numeric vector, same length as `group`, the quantity being ranked. No `NA`s.
+#' @param n Optional integer vector, same length as `group`: the sample size behind each
+#'   `value`, shown in the table and sentence when supplied.
+#' @param value_label What `value` measures, used in the sentence (e.g. `"coverage"`,
+#'   `"learned reliability"`, `"lead rate"`). Default `"value"`.
+#' @param fmt `sprintf()` format for displaying `value`. Default `"%.1f"`.
+#' @param suffix Appended to each displayed value with no space (e.g. `"%"`). Default `""`.
+#' @param decreasing Rank highest value first (`TRUE`, default) or lowest first (`FALSE`) --
+#'   this only changes display order, never which group "wins" anything; `value_label`/context
+#'   is what tells the reader whether higher is better.
+#' @return A list: `table` (tibble, `group`, `value`, and `n` if supplied, in rank order),
+#'   `highest`, `lowest` (each a list: `group`, `value`, `n`), `ties` (character vector of
+#'   group names involved in a display-value tie, empty if none), and `sentence`.
+#' @examples
+#' format_ranking_prose(
+#'   group = c("nppes", "dac_pecos_combined", "open_payments", "tmsis"),
+#'   value = c(100, 77.2, 25.4, 63.4), n = c(2000, 2000, 2000, 2000),
+#'   value_label = "coverage", fmt = "%.1f", suffix = "%"
+#' )$sentence
+#' @seealso [format_proportion_comparison_prose()] for one or two groups;
+#'   [attribute_truth_fusion_prose()], which uses this internally for its reliability ranking.
+#' @family truth fusion
+#' @export
+format_ranking_prose <- function(group, value, n = NULL, value_label = "value",
+                                  fmt = "%.1f", suffix = "", decreasing = TRUE) {
+  checkmate::assert_character(group, min.len = 2, any.missing = FALSE)
+  if (any(!nzchar(trimws(group)))) {
+    stop("format_ranking_prose: group contains an empty or whitespace-only name", call. = FALSE)
+  }
+  if (anyDuplicated(group) > 0L) {
+    stop(sprintf("format_ranking_prose: duplicate group name(s): %s",
+                 paste(unique(group[duplicated(group)]), collapse = ", ")), call. = FALSE)
+  }
+  checkmate::assert_numeric(value, len = length(group), any.missing = FALSE)
+  if (!is.null(n)) {
+    checkmate::assert_integerish(n, len = length(group), lower = 0)
+  }
+  .assert_nonblank_string(value_label, "format_ranking_prose: value_label")
+  checkmate::assert_string(fmt, min.chars = 1)
+  checkmate::assert_flag(decreasing)
+
+  ord <- order(value, decreasing = decreasing)
+  group_o <- group[ord]; value_o <- value[ord]; n_o <- if (is.null(n)) NULL else as.integer(n)[ord]
+
+  disp <- sprintf(fmt, value_o)
+  tie_groups <- unique(unlist(lapply(split(group_o, disp), function(g) if (length(g) > 1L) g else NULL)))
+
+  entry_text <- if (is.null(n_o)) {
+    sprintf("%s (%s%s)", group_o, disp, suffix)
+  } else {
+    sprintf("%s (%s%s, n = %s)", group_o, disp, suffix, format(n_o, big.mark = ",", trim = TRUE))
+  }
+  tie_note <- if (length(tie_groups) > 0L) {
+    sprintf(" (tied: %s)", paste(tie_groups, collapse = ", "))
+  } else {
+    ""
+  }
+  sentence <- sprintf(
+    "Ranked by %s, %s to %s: %s.%s",
+    value_label, if (decreasing) "highest" else "lowest", if (decreasing) "lowest" else "highest",
+    paste(entry_text, collapse = ", "), tie_note
+  )
+
+  mk_extreme <- function(i) {
+    out <- list(group = group_o[i], value = value_o[i])
+    if (!is.null(n_o)) out$n <- n_o[i]
+    out
+  }
+
+  tbl <- tibble::tibble(group = group_o, value = value_o)
+  if (!is.null(n_o)) tbl$n <- n_o
+
+  list(
+    table = tbl,
+    highest = mk_extreme(1L),
+    lowest = mk_extreme(length(group_o)),
+    ties = tie_groups,
+    sentence = sentence
+  )
 }
 
 #' Manuscript-ready prose for an attribute_truth_fusion() result
@@ -870,18 +1004,30 @@ attribute_truth_fusion_prose <- function(result, compare_to = NULL,
 
   out$method <- result$model_diagnostics$method[1]
 
-  rel <- unique(result$source_diagnostics[, c("source_id", "reliability_score")])
-  rel <- rel[!is.na(rel$reliability_score), , drop = FALSE]
+  rel_all <- unique(result$source_diagnostics[, c("source_id", "reliability_score")])
+  rel <- rel_all[!is.na(rel_all$reliability_score), , drop = FALSE]
+  rel_na <- rel_all[is.na(rel_all$reliability_score), , drop = FALSE]
   if (nrow(rel) >= 2L) {
-    rel <- rel[order(-rel$reliability_score), , drop = FALSE]
-    ranked <- sprintf("%s (%.3f)", rel$source_id, rel$reliability_score)
-    reliability_sentence <- sprintf(
-      "Under `%s`, learned source reliability ranked, highest to lowest: %s.",
-      out$method, paste(ranked, collapse = ", ")
+    rk <- format_ranking_prose(
+      group = rel$source_id, value = rel$reliability_score,
+      value_label = sprintf("learned source reliability under `%s`", out$method), fmt = "%.3f"
     )
-    out$reliability_table <- rel
-    out$reliability_sentence <- reliability_sentence
-    out$combined_text <- paste(out$combined_text, reliability_sentence)
+    out$reliability_table <- rk$table
+    out$reliability_sentence <- paste0(toupper(substring(rk$sentence, 1, 1)), substring(rk$sentence, 2))
+    # A source present in source_diagnostics with NA reliability (for example
+    # isolated in a disconnected graph component, per attribute_truth_fusion()'s
+    # own n_disconnected_components caveat) must never just vanish from this
+    # ranking with no trace -- that reads as "only these sources contributed"
+    # when a real one did, with an indeterminate reliability.
+    if (nrow(rel_na) > 0L) {
+      out$reliability_sentence <- paste0(
+        out$reliability_sentence,
+        sprintf(" %d source%s with no estimable reliability (%s) excluded from this ranking.",
+                nrow(rel_na), if (nrow(rel_na) == 1L) "" else "s",
+                paste(rel_na$source_id, collapse = ", "))
+      )
+    }
+    out$combined_text <- paste(out$combined_text, out$reliability_sentence)
   }
 
   out
