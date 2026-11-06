@@ -1,5 +1,28 @@
 # mysteryroster (development version)
 
+* Added `docs/midwifery-evidence-ledger-results.md`: Steps 2-4 of the
+  evidence-ledger expansion plan, actually run against real data (all
+  aggregate counts, no person-level values) rather than left as a design
+  spec. The exact frozen 1,806-case/3,556-NPI-year cohort was independently
+  re-derived from `~/midwifery`'s own extraction scripts and verified to
+  match the published ablation numbers (small drift noted and explained:
+  the auxiliary DAC/PECOS/Open-Payments source files have been updated
+  since the original computation). Real T-MSIS Medicaid enrollment claims
+  were added (1,339 usable, 515 NPI-years gaining evidence that had none
+  before) and found to agree with NPPES only ~50% of the time -- direct
+  empirical support for not treating enrollment as a practice address.
+  Adding T-MSIS *increases* majority-vote abstention on net (691 -> 759 of
+  3,556), asymmetrically by transition: abstention roughly doubles for the
+  2017-18 spike and decreases for 2023-24, corroborating -- via a completely
+  independent method -- the `~/midwifery` session's own finding (from
+  removing NPPES out of its full 219,536-entity-year panel) that the 2017-18
+  spike is substantially NPPES-dependent while 2023-24 is not. Facility
+  affiliations turned out to add zero claims to this specific cohort (its
+  6 transitions never touch 2026, the source's only dated year) -- a
+  year-range mismatch, not the uselessness the rescinded constraint 3
+  originally assumed. Weighted methods (dawid_skene, truthfinder, etc.)
+  remain unrun against the expanded table: crowd_kit/truthdiscovery aren't
+  configured in this R session.
 * Added `attribute_claims_collapse_lineage()`, generalizing the
   `dac_pecos_combined` merge rule from `docs/midwifery-ablation-findings.md`
   (agree -> one vote; disagree -> no vote; one present -> use it) from one

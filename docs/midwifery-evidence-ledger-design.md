@@ -134,15 +134,40 @@ constraints 4-6; those are schema-tagging and construction-time discipline
 properties a lineage-collapse function could detect from the claims table
 alone.
 
+## Update: Steps 2-4 actually run against real data
+
+See `docs/midwifery-evidence-ledger-results.md` for the real, aggregate-only
+results: the `~/midwifery` session cleared specific static artifacts
+file-by-file (coordinated live, cross-session), and the real 1,806-case
+cohort was rebuilt, extended with real T-MSIS claims, and re-fit under
+`majority`. Headline: facility affiliations turn out to contribute zero
+claims to *this specific* cohort (a year-range mismatch, not uselessness --
+see that doc's §1); T-MSIS adds genuine new coverage but agrees with NPPES
+only ~50% of the time, and *increases* majority-vote abstention on net,
+asymmetrically by transition in a way that corroborates the `~/midwifery`
+session's own NPPES-removal finding about the 2017-18 spike.
+
 ## Explicitly not done yet
 
-- No real data from any of the sources above has been loaded into a claims
-  table. That requires reading the actual `~/midwifery` artifacts, which is
-  on hold while that session's full-panel build is in progress.
-- Steps 3-6 of the full plan (information-gain measurement, the repeated
-  ablation experiment, the 2013-2026 panel reconstruction, the before/after
-  comparison table) all depend on that real ledger existing first and are
-  therefore also not started.
+- The weighted methods (`dawid_skene`, `truthfinder`, `one_coin_dawid_skene`,
+  `sums`, `average_log`, `investment`, `pooled_investment`) have not been run
+  against the expanded (+T-MSIS) claims table -- only `majority`, because
+  `crowd_kit`/`truthdiscovery` are not configured in the R session this was
+  run from. Majority treats every vote equally, so T-MSIS's ~50% NPPES
+  agreement rate necessarily reads as noise to it; a weighted method could
+  behave very differently. Needs either those backends configured here, or
+  the `~/midwifery` session (which has them working) running against this
+  same expanded claims table directly.
+- Step 5 (the full 2013-2026 annual panel reconstruction, NPPES-only vs.
+  expanded-evidence-inferred) has not been attempted on this cohort's side --
+  the `~/midwifery` session's own full-panel leave-one-source-out result
+  (removing NPPES from the 219,536-entity-year panel) is the closest existing
+  analogue and is cited directly in `docs/midwifery-evidence-ledger-results.md`
+  §3 rather than duplicated.
+- Step 6's formal before/after comparison table and technical appendix are
+  not yet written as a standalone deliverable -- the comparison exists in
+  prose form in `docs/midwifery-evidence-ledger-results.md`, not yet as the
+  structured table Step 6 calls for.
 - `attribute_claims_collapse_lineage()`'s tests (`tests/testthat/
   test-claims-lineage.R`) use synthetic fixtures only, by design -- they
   check the function's rule, not any real source's actual agreement rate.
