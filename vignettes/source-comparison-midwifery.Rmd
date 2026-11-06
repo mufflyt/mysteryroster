@@ -252,6 +252,11 @@ cov <- attribute_coverage(
   attribute = "state", universe = universe
 )
 as.data.frame(cov$overall)
+
+format_ranking_prose(
+  group = cov$overall$source, value = cov$overall$pct, n = cov$overall$n_total,
+  value_label = "coverage of the NPPES universe", fmt = "%.1f", suffix = "%"
+)$sentence
 ```
 
 ```{r fig-coverage, fig.alt = "Bar chart ranking four sources by percent coverage of the NPPES universe of entity-years: NPPES 100 percent, DAC/PECOS about 77 percent, T-MSIS about 63 percent, Open Payments about 25 percent."}
@@ -278,11 +283,23 @@ corrob <- attribute_source_corroboration(
 )
 as.data.frame(corrob)[, c("source", "led_n", "corrected_n", "opportunities_n", "lead_rate")]
 
+format_ranking_prose(
+  group = corrob$source, value = 100 * corrob$lead_rate, n = corrob$opportunities_n,
+  value_label = "lead rate (how often the ecosystem converges toward this source)",
+  fmt = "%.1f", suffix = "%"
+)$sentence
+
 ooo <- attribute_odd_one_out(
   list(nppes = nppes, dac_pecos = dac_pecos_combined, open_payments = open_payments, tmsis = tmsis_long),
   attribute = "state"
 )
-as.data.frame(attribute_odd_one_out_rate(ooo))
+ooo_rate <- attribute_odd_one_out_rate(ooo)
+as.data.frame(ooo_rate)
+
+format_ranking_prose(
+  group = ooo_rate$source, value = 100 * ooo_rate$odd_rate, n = ooo_rate$n_eligible,
+  value_label = "odd-one-out rate", fmt = "%.1f", suffix = "%"
+)$sentence
 ```
 
 T-MSIS has by far the lowest `lead_rate` -- other sources essentially never converge toward
@@ -292,6 +309,11 @@ contested pair. Open Payments, despite covering the fewest entity-years, has a *
 rate on the ones it does cover: a reminder from this function's own documentation that "a
 source that leads is informative; a source that never leads is not thereby correct." Sparse
 and trusted are not opposites.
+
+`format_ranking_prose()`'s lead-rate sentence also did something worth noticing on its own:
+it flagged `dac_pecos` and `open_payments` as **tied** at 100.0% rather than silently picking
+one to list first. Both genuinely display the same rounded value here -- exactly the case this
+function exists to catch rather than hide behind an arbitrary `order()` tie-break.
 
 ## Weight: when a method is forced to pick one value
 
