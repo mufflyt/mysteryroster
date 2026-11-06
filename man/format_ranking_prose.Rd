@@ -11,7 +11,8 @@ format_ranking_prose(
   value_label = "value",
   fmt = "\%.1f",
   suffix = "",
-  decreasing = TRUE
+  decreasing = TRUE,
+  register = c("technical", "clinical")
 )
 }
 \arguments{
@@ -32,6 +33,9 @@ format_ranking_prose(
 \item{decreasing}{Rank highest value first (\code{TRUE}, default) or lowest first (\code{FALSE}) --
 this only changes display order, never which group "wins" anything; \code{value_label}/context
 is what tells the reader whether higher is better.}
+
+\item{register}{\code{"technical"} (default) or \code{"clinical"} -- see Details. Affects \code{sentence}
+only.}
 }
 \value{
 A list: \code{table} (tibble, \code{group}, \code{value}, and \code{n} if supplied, in rank order),
@@ -61,12 +65,26 @@ group's count in both the table and the sentence so that is never hidden.
 \strong{Every group must have a real value.} \code{NA} values, duplicate group names, and fewer than 2
 groups all stop the call rather than silently producing a sentence that reads like a real
 ranking but isn't one -- a "ranking" of one thing, or with a missing entry, is not a ranking.
+
+\strong{\code{register} changes only \code{sentence}, never \code{table}/\code{highest}/\code{lowest}/\code{ties}.}
+\code{register = "technical"} (default) produces the terse, data-table-like sentence this
+function has always produced ("Ranked by X, highest to lowest: A (v), B (v)."). \code{register = "clinical"} instead produces a plain-language narrative sentence with no abbreviations and no
+em dashes, suitable for a clinical-journal Methods/Results section read by a non-technical
+audience -- the caller is still responsible for passing fully spelled-out, audience-
+appropriate \code{group} names (e.g. \code{"the national provider directory"}, not \code{"nppes"}); this
+function only controls sentence structure, not domain vocabulary it has no way to know.
 }
 \examples{
 format_ranking_prose(
   group = c("nppes", "dac_pecos_combined", "open_payments", "tmsis"),
   value = c(100, 77.2, 25.4, 63.4), n = c(2000, 2000, 2000, 2000),
   value_label = "coverage", fmt = "\%.1f", suffix = "\%"
+)$sentence
+
+format_ranking_prose(
+  group = c("the national provider directory", "the Medicare enrollment address source"),
+  value = c(1, 16), value_label = "median years to confirmation", fmt = "\%.0f",
+  decreasing = FALSE, register = "clinical"
 )$sentence
 }
 \seealso{

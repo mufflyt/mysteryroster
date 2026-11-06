@@ -8,7 +8,8 @@ attribute_catch_up_curve_prose(
   cu,
   display_label = NULL,
   unresolved_horizon = 5L,
-  decreasing = FALSE
+  decreasing = FALSE,
+  register = c("technical", "clinical")
 )
 }
 \arguments{
@@ -26,6 +27,15 @@ own maximum observed horizon if that is shorter.}
 \item{decreasing}{Passed to \code{\link[=format_ranking_prose]{format_ranking_prose()}} for the resolved-source ranking.
 Default \code{FALSE} (fastest catch-up first), the natural reading for a "years to catch
 up" value -- the opposite of that function's own default.}
+
+\item{register}{\code{"technical"} (default) produces this function's original terse
+sentences ("reached 50\% catch-up", "tracked arrivals"). \code{"clinical"} instead produces
+plain-language prose with no abbreviations and no em dashes, suitable for a clinical-
+journal Methods/Results section: "confirmed a change already reported by another
+source" rather than "caught up", "changes" rather than "arrivals". As with
+\code{\link[=format_ranking_prose]{format_ranking_prose()}}, the caller is still responsible for passing fully spelled-
+out \code{display_label} values in clinical register; this parameter controls sentence
+structure, not domain vocabulary.}
 }
 \value{
 A list:
@@ -77,6 +87,11 @@ b <- data.frame(
 )
 cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
 attribute_catch_up_curve_prose(cu, display_label = c(a = "Source A", b = "Source B"))$sentence
+
+attribute_catch_up_curve_prose(
+  cu, display_label = c(a = "the first registry", b = "the second registry"),
+  register = "clinical"
+)$sentence
 }
 \seealso{
 \code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}}; \code{\link[=format_ranking_prose]{format_ranking_prose()}}, used internally for the

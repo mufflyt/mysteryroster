@@ -1352,6 +1352,14 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
 #' @param decreasing Passed to [format_ranking_prose()] for the resolved-source ranking.
 #'   Default `FALSE` (fastest catch-up first), the natural reading for a "years to catch
 #'   up" value -- the opposite of that function's own default.
+#' @param register `"technical"` (default) produces this function's original terse
+#'   sentences ("reached 50% catch-up", "tracked arrivals"). `"clinical"` instead produces
+#'   plain-language prose with no abbreviations and no em dashes, suitable for a clinical-
+#'   journal Methods/Results section: "confirmed a change already reported by another
+#'   source" rather than "caught up", "changes" rather than "arrivals". As with
+#'   [format_ranking_prose()], the caller is still responsible for passing fully spelled-
+#'   out `display_label` values in clinical register; this parameter controls sentence
+#'   structure, not domain vocabulary.
 #' @return A list:
 #'   \describe{
 #'     \item{`n_events`}{Tracked arrivals pooled across all sources (`n_at_risk` at
@@ -1373,12 +1381,18 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
 #' )
 #' cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
 #' attribute_catch_up_curve_prose(cu, display_label = c(a = "Source A", b = "Source B"))$sentence
+#'
+#' attribute_catch_up_curve_prose(
+#'   cu, display_label = c(a = "the first registry", b = "the second registry"),
+#'   register = "clinical"
+#' )$sentence
 #' @seealso [attribute_catch_up_curve()]; [format_ranking_prose()], used internally for the
 #'   resolved-source ranking.
 #' @family no-gold-standard comparison
 #' @export
 attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_horizon = 5L,
-                                            decreasing = FALSE) {
+                                            decreasing = FALSE, register = c("technical", "clinical")) {
+  register <- match.arg(register)
   checkmate::assert_list(cu, names = "unique")
   if (!all(c("curve", "median_horizon") %in% names(cu))) {
     stop("attribute_catch_up_curve_prose: cu must have 'curve' and 'median_horizon' elements, as returned by attribute_catch_up_curve()", call. = FALSE)
@@ -1404,24 +1418,45 @@ attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_
   label_for <- function(s) if (!is.null(display_label) && s %in% names(display_label)) display_label[[s]] else s
 
   nm <- unique(as.character(median_horizon$source))
-  n_events <- max(curve$n_at_risk[curve$horizon == 0], na.rm = TRUE)
+  # cu$n_tracked (present on every real attribute_catch_up_curve() result) is the true,
+  # reference-mode-independent pooled total. Falling back to the largest single source's
+  # own horizon-0 risk-set size only happens to equal that total under reference = "pooled",
+  # where every source starts with an identical, unfiltered risk set; under "exclude_self",
+  # each source's own risk set is already reduced by its unanchored/uncovered exclusions, so
+  # the two are not interchangeable, and using the fallback there would understate the real
+  # number of tracked events.
+  n_events <- if (!is.null(cu$n_tracked)) {
+    cu$n_tracked
+  } else {
+    max(curve$n_at_risk[curve$horizon == 0], na.rm = TRUE)
+  }
 
   resolved <- median_horizon[!is.na(median_horizon$median_horizon), , drop = FALSE]
   unresolved_nm <- setdiff(nm, resolved$source)
+
+  clinical <- identical(register, "clinical")
+  value_label <- if (clinical) "median years to confirmation" else "median years to catch up"
 
   ranking <- NULL
   ranking_sentence <- NULL
   if (nrow(resolved) >= 2L) {
     ranking <- format_ranking_prose(
       group = vapply(resolved$source, label_for, character(1)), value = resolved$median_horizon,
-      value_label = "median years to catch up", fmt = "%.0f", decreasing = decreasing
+      value_label = value_label, fmt = "%.0f", decreasing = decreasing, register = register
     )
     ranking_sentence <- ranking$sentence
   } else if (nrow(resolved) == 1L) {
-    ranking_sentence <- sprintf(
-      "%s reached 50%% catch-up after a median of %.0f years.",
-      label_for(resolved$source[1]), resolved$median_horizon[1]
-    )
+    ranking_sentence <- if (clinical) {
+      sprintf(
+        "The estimated time for %s to confirm a change already reported by another source was %.0f years.",
+        label_for(resolved$source[1]), resolved$median_horizon[1]
+      )
+    } else {
+      sprintf(
+        "%s reached 50%% catch-up after a median of %.0f years.",
+        label_for(resolved$source[1]), resolved$median_horizon[1]
+      )
+    }
   }
 
   unresolved_rows <- lapply(unresolved_nm, function(s) {
@@ -1442,20 +1477,32 @@ attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_
 
   unresolved_sentences <- vapply(seq_len(nrow(unresolved)), function(i) {
     r <- unresolved[i, ]
-    sprintf(
-      "%s never reached 50%% catch-up within the observed panel (%.1f%% of tracked arrivals still not reflected immediately, %.1f%% still not reflected %d year%s later).",
-      label_for(r$source), r$pct_at_horizon_0, r$pct_at_horizon, r$horizon, if (r$horizon == 1L) "" else "s"
-    )
+    if (clinical) {
+      sprintf(
+        "%s did not reach confirmation for even half of the changes tracked within the period observed. At the time a change first appeared, %.1f%% had not yet been confirmed by this source; %.1f%% remained unconfirmed %d year%s later.",
+        label_for(r$source), r$pct_at_horizon_0, r$pct_at_horizon, r$horizon, if (r$horizon == 1L) "" else "s"
+      )
+    } else {
+      sprintf(
+        "%s never reached 50%% catch-up within the observed panel (%.1f%% of tracked arrivals still not reflected immediately, %.1f%% still not reflected %d year%s later).",
+        label_for(r$source), r$pct_at_horizon_0, r$pct_at_horizon, r$horizon, if (r$horizon == 1L) "" else "s"
+      )
+    }
   }, character(1))
 
+  intro_sentence <- if (clinical) {
+    sprintf("A total of %s change%s in the tracked value %s identified across %d source%s.",
+            format(n_events, big.mark = ","), if (n_events == 1L) "" else "s",
+            if (n_events == 1L) "was" else "were",
+            length(nm), if (length(nm) == 1L) "" else "s")
+  } else {
+    sprintf("We identified %s state-arrival event%s tracked across %d source%s.",
+            format(n_events, big.mark = ","), if (n_events == 1L) "" else "s",
+            length(nm), if (length(nm) == 1L) "" else "s")
+  }
+
   sentence <- paste(
-    c(
-      sprintf("We identified %s state-arrival event%s tracked across %d source%s.",
-              format(n_events, big.mark = ","), if (n_events == 1L) "" else "s",
-              length(nm), if (length(nm) == 1L) "" else "s"),
-      ranking_sentence,
-      unresolved_sentences
-    ),
+    c(intro_sentence, ranking_sentence, unresolved_sentences),
     collapse = " "
   )
 
