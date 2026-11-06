@@ -1,5 +1,21 @@
 # mysteryroster (development version)
 
+* Added `lineage_groups` to `attribute_catch_up_curve()`'s `reference = "exclude_self"`
+  mode (same convention as `attribute_claims_collapse_lineage()`'s own `lineage_groups`):
+  two sources derived from the same underlying file cannot independently confirm each
+  other's events just because their file names differ. Excluding "self" now excludes a
+  source's whole named lineage group. On the real midwifery data, grouping the facility-
+  affiliation extract with the DAC/PECOS source it is literally derived from (both come
+  from the same underlying CMS Doctors & Clinicians file) raised facility affiliation's
+  unconfirmed-event count from 18 to 1,533 of 3,029 (51%) -- its apparent independent
+  confirmation had been almost entirely circular. Medians were unaffected (the events that
+  remain genuinely anchored resolve at the same speed), but confidence in which events are
+  anchored at all drops sharply once shared provenance is accounted for.
+  Also added a synthetic regression test for a clinician with two separate round trips
+  through the same two values (CO -> TX -> CO -> TX): confirms, explicitly rather than by
+  inference, that only 2 distinct events are tracked (not the 3 genuine transitions that
+  occurred) -- the documented "repeated arrival" collapse limitation, now with a test
+  naming the exact scenario rather than only a simpler one-value case.
 * Fixed a third real validity problem in `attribute_catch_up_curve()`, found while
   investigating why Open Payments' `exclude_self` median catch-up (13 years) was still
   implausibly high after the censoring-window and circularity fixes below: a source's own
