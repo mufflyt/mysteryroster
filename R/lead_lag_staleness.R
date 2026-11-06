@@ -953,6 +953,189 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
   )
 }
 
+#' Kaplan-Meier-style catch-up curve: how long until a source shows a value another already has?
+#'
+#' [attribute_lead_lag_duration()] answers a related question with a real limitation:
+#' its median/IQR is computed only over identifiers that *eventually* resolve within the
+#' observed panel -- one discordant at `base_year` who never catches up simply disappears
+#' from that summary, understating how long a slow source actually takes. This answers the
+#' same family of question the way time-to-event analysis is built to: as a proper
+#' right-censored Kaplan-Meier survival curve, where a value never (yet) shown by a source
+#' stays correctly "at risk" of eventually being shown for as long as that identifier's own
+#' follow-up window lasts, then drops out once follow-up runs out -- never silently excluded,
+#' never miscounted as "never".
+#'
+#' Ported and generalized from a `tyler.muffly`/Devin-AI co-authored exploratory analysis
+#' (`vignette("lead-lag-staleness")`'s "How many years ahead or behind?" section, commit
+#' `5892254` on branch `devin/1793847201-lead-lag-years-ahead`) -- the censoring-aware
+#' survival-curve mechanics are that work's own real methodological contribution, ported here
+#' as a tested, documented, reusable function instead of inline, panel-specific vignette code.
+#'
+#' @details
+#' **What counts as "a value arriving".** For each source independently, an identifier's
+#' *arrival* at a value is a consecutive-year transition (year `t` to `t + 1`, no calendar-year
+#' gap -- the same convention [attribute_churn_rate()]/[attribute_spell_age()] use) where the
+#' value changes. An identifier's first observed year in a source is never itself an arrival
+#' (there is no prior value to differ from).
+#'
+#' **What defines one "event" to track catch-up for.** Every source's arrivals are pooled, and
+#' each distinct `(id, value)` pair's event `start` is the *earliest* year *any* source shows
+#' that identifier arriving at that value. This means a value an identifier returns to a second
+#' time, years after an earlier departure and return, is **not** treated as a second, distinct
+#' event -- it collapses into the same `(id, value)` event as the first occurrence anywhere
+#' that value was ever seen for that identifier. For this package's ordinary use (tracking
+#' arrival at a value, not every individual spell), this is the right simplification; it is not
+#' silent -- a value visited more than once by the same identifier is a known, accepted
+#' limitation of this function, not an oversight.
+#'
+#' **Censoring.** At each `horizon` (years since an event's `start`), a source's risk set
+#' excludes any event whose own follow-up (`max(year) - start`, using the *latest* year observed
+#' anywhere across all sources) is shorter than `horizon` -- that event is **censored**, not
+#' counted as "never shown". An identifier a source never shows at all remains at risk for as
+#' long as its own follow-up lasts, exactly like a patient lost to follow-up in a clinical
+#' survival analysis, not treated as an immediate or permanent failure.
+#'
+#' @param sources Named list of longitudinal data frames (2+), each with `id`, `year`, and
+#'   `attribute` columns -- same convention as [attribute_coverage()]/
+#'   [attribute_source_corroboration()].
+#' @param attribute Name of the attribute column to track (e.g. `"state"`).
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param max_horizon Maximum years since an event's `start` to evaluate. If `NULL` (default),
+#'   the full span of years present across all sources (`max(year) - min(year)`).
+#' @return A list:
+#'   \describe{
+#'     \item{`curve`}{Tibble, one row per `(source, horizon)`: `n_at_risk`, `n_events` (first
+#'       shown at exactly this horizon), `pct_not_yet_shown` (the Kaplan-Meier survival
+#'       estimate, `100` at `horizon = 0` by construction, non-increasing within a source).}
+#'     \item{`median_horizon`}{Tibble, one row per source: the smallest `horizon` at which
+#'       `pct_not_yet_shown <= 50`, or `NA` if the curve never crosses 50% within
+#'       `max_horizon` -- a source that never reaches its median catch-up time within the
+#'       observed panel, reported as `NA`, not a misleadingly small number.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "CO", "NM", "TX", "TX", "TX")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "NM", "NM", "TX", "TX", "NM")
+#' )
+#' cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+#' cu$curve
+#' cu$median_horizon
+#' # Rank sources by how fast they typically catch up (lower is faster):
+#' format_ranking_prose(
+#'   group = cu$median_horizon$source, value = cu$median_horizon$median_horizon,
+#'   value_label = "median years to catch up", fmt = "%.0f", decreasing = FALSE
+#' )$sentence
+#' @seealso [attribute_lead_lag_duration()] for the simpler, non-censoring-aware version this
+#'   complements; [format_ranking_prose()] to rank `median_horizon` across sources.
+#' @family no-gold-standard comparison
+#' @export
+attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "year", max_horizon = NULL) {
+  checkmate::assert_list(sources, min.len = 2, names = "unique")
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  if (!is.null(max_horizon)) checkmate::assert_count(max_horizon, positive = TRUE)
+
+  nm <- names(sources)
+  clean_source <- function(x, label) {
+    checkmate::assert_data_frame(x)
+    for (col in c(id, year, attribute)) {
+      if (!col %in% names(x)) {
+        stop(sprintf("attribute_catch_up_curve: source '%s' has no column '%s'", label, col), call. = FALSE)
+      }
+    }
+    res <- tibble::tibble(
+      id = trimws(as.character(x[[id]])),
+      year = .parse_whole_integer(x[[year]], sprintf("attribute_catch_up_curve: source '%s' year", label), allow_na = FALSE)
+    )
+    v <- toupper(trimws(as.character(x[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res <- res[!is.na(res$id) & nzchar(res$id) & !is.na(res$value), , drop = FALSE]
+    .assert_unique_keys(res, c("id", "year"), sprintf("attribute_catch_up_curve: source '%s'", label))
+    res[order(res$id, res$year), , drop = FALSE]
+  }
+  cleaned <- lapply(nm, function(s) clean_source(sources[[s]], s))
+  names(cleaned) <- nm
+
+  # Each source's own arrivals: consecutive-year transitions where the value changed.
+  extract_events <- function(df) {
+    groups <- split(df, df$id, drop = TRUE)
+    rows <- lapply(groups, function(g) {
+      n <- nrow(g)
+      if (n < 2L) return(NULL)
+      prev_year <- g$year[1:(n - 1L)]; prev_val <- g$value[1:(n - 1L)]
+      this_year <- g$year[2:n]; this_val <- g$value[2:n]
+      consec <- this_year == prev_year + 1L
+      changed <- consec & (this_val != prev_val)
+      if (!any(changed)) return(NULL)
+      tibble::tibble(id = g$id[1], year = this_year[changed], value = this_val[changed])
+    })
+    dplyr::bind_rows(rows)
+  }
+  events <- lapply(cleaned, extract_events)
+  all_events <- dplyr::bind_rows(events)
+  if (nrow(all_events) == 0L) {
+    stop("attribute_catch_up_curve: no consecutive-year arrivals detected in any source", call. = FALSE)
+  }
+
+  first_seen <- stats::aggregate(year ~ id + value, all_events, min)
+  names(first_seen)[3] <- "start"
+
+  panel_min_year <- min(vapply(cleaned, function(x) min(x$year), integer(1)))
+  panel_max_year <- max(vapply(cleaned, function(x) max(x$year), integer(1)))
+  if (is.null(max_horizon)) max_horizon <- panel_max_year - panel_min_year
+  horizons <- 0:max_horizon
+
+  km_for_source <- function(ev_s) {
+    if (is.null(ev_s) || nrow(ev_s) == 0L) {
+      ev_s <- tibble::tibble(id = character(0), year = integer(0), value = character(0))
+    }
+    m <- merge(first_seen, ev_s, by = c("id", "value"), all.x = TRUE)
+    m$d <- m$year - m$start
+    m <- m[is.na(m$d) | m$d >= 0, , drop = FALSE]
+    m <- m[order(m$d), ]
+    m <- m[!duplicated(m[, c("id", "value", "start")]), , drop = FALSE]
+    follow_up <- panel_max_year - m$start
+
+    n_at_risk_vec <- integer(length(horizons))
+    n_events_vec <- integer(length(horizons))
+    surv_vec <- numeric(length(horizons))
+    s <- 1
+    for (i in seq_along(horizons)) {
+      h <- horizons[i]
+      at_risk <- (is.na(m$d) | m$d >= h) & follow_up >= h
+      n_at_risk <- sum(at_risk)
+      n_events <- sum(!is.na(m$d) & m$d == h)
+      n_at_risk_vec[i] <- n_at_risk
+      n_events_vec[i] <- n_events
+      if (n_at_risk > 0L) s <- s * (1 - n_events / n_at_risk)
+      surv_vec[i] <- 100 * s
+    }
+    tibble::tibble(horizon = horizons, n_at_risk = n_at_risk_vec, n_events = n_events_vec,
+                   pct_not_yet_shown = round(surv_vec, 1))
+  }
+
+  curve_rows <- lapply(nm, function(s) {
+    out <- km_for_source(events[[s]])
+    out$source <- s
+    out[, c("source", "horizon", "n_at_risk", "n_events", "pct_not_yet_shown")]
+  })
+  curve <- tibble::as_tibble(dplyr::bind_rows(curve_rows))
+
+  median_rows <- lapply(nm, function(s) {
+    cv <- curve[curve$source == s, ]
+    below <- cv$horizon[cv$pct_not_yet_shown <= 50]
+    tibble::tibble(source = s, median_horizon = if (length(below) > 0L) min(below) else NA_integer_)
+  })
+  median_horizon <- tibble::as_tibble(dplyr::bind_rows(median_rows))
+
+  list(curve = curve, median_horizon = median_horizon)
+}
+
 #' Approach 2: Attribute agreement stratified by empirical spell age or career tenure
 #'
 #' Tests whether cross-registry disagreement is driven by accumulated staleness

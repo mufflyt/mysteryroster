@@ -1,5 +1,26 @@
 # mysteryroster (development version)
 
+* Added `attribute_catch_up_curve()`: a proper right-censored Kaplan-Meier
+  survival estimate of how long each source takes to show a value another
+  source already has, across 2+ sources at once. Ported and generalized
+  from a `tyler.muffly`/Devin-AI co-authored exploratory analysis
+  (`vignette("lead-lag-staleness")`'s "How many years ahead or behind?"
+  section, commit `5892254` on branch
+  `devin/1793847201-lead-lag-years-ahead`) into a tested, documented,
+  reusable function. Fixes a real limitation `attribute_lead_lag_duration()`
+  has: its median/IQR is computed only over identifiers that *eventually*
+  resolve within the observed panel, so one that never catches up simply
+  disappears from the summary, understating how long a slow source
+  actually takes. `attribute_catch_up_curve()` instead treats an
+  unresolved identifier as correctly "at risk" for as long as its own
+  follow-up window lasts, then censors it out once that window closes --
+  never silently dropped, never miscounted as "never". `median_horizon`
+  is `NA`, not a fabricated number, when a source's curve never crosses
+  50% within the observed horizon. Composes with `format_ranking_prose()`
+  to rank sources by median catch-up time. Verified against two
+  hand-traced Kaplan-Meier calculations, including a dedicated censoring
+  test confirming an event near the panel's end correctly drops out of
+  the risk set rather than permanently dragging a source's curve down.
 * Ran 20 more adversarial saboteurs (Part E of `docs/saboteur-test-matrix.md`)
   against the prose generators, covering different attack vectors than Part
   D plus `attribute_churn_rate()`/`attribute_coverage()` (built this

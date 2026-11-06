@@ -371,6 +371,7 @@ available before it is actually implemented.
 | Which source actually has data for more entity-years, against a defined universe | `attribute_coverage()` |
 | Longitudinal lead-lag: which source moves first, adopts, or reverts, with an optional cross-sectional back-check | `attribute_lead_lag_matrix()` |
 | How many years until one source adopts the other's disputed value -- median/IQR/mean/CI, in a manuscript sentence | `attribute_lead_lag_duration()` |
+| Catch-up curves across 2+ sources at once, as a proper right-censored Kaplan-Meier survival estimate (never silently drops an identifier that hasn't caught up yet) | `attribute_catch_up_curve()` |
 | Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |
 | Administrative enrollment arrival/departure timing around a panel move | `enrollment_move_lead_lag()` |
 | Manuscript-ready paragraphs from the three lead-lag approaches above | `format_no_gold_standard_prose()` |
