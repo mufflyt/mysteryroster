@@ -262,6 +262,16 @@ abstain rather than guess. See `vignette("truth-fusion")`.
 
 ```r
 claims <- attribute_claims_validate(long_format_claims)  # entity_id/attribute/source_id/claimed_value/reference_year
+
+# Optional: if two or more source_ids share an upstream feed (a classic
+# case: a combined registry re-published under two different names), they
+# are not independent evidence. Collapse them to one vote first -- agree
+# -> one vote; disagree -> no vote; one present -> passed through -- rather
+# than let attribute_truth_fusion() count them twice.
+claims <- attribute_claims_collapse_lineage(claims, lineage_groups = list(
+  combined_registry = c("feed_a", "feed_b")
+))
+
 fusion_result <- attribute_truth_fusion(claims, method = "majority", abstain_threshold = 0.6)
 fusion_result$predictions        # predicted_value, model_score, abstained, abstention_reason
 fusion_result$candidate_scores   # every candidate value's vote share, ranked
@@ -344,6 +354,7 @@ available before it is actually implemented.
 | Agreement stratified by any covariate, not just spell age | `attribute_agreement_by_covariate()` |
 | Wilson confidence interval on an agreement/concordance rate | `wilson_ci()`, `attribute_agreement_add_ci()` |
 | Validate the long-format multi-source claim schema | `attribute_claims_validate()` |
+| Collapse a declared group of same-lineage sources (e.g. two feeds from one upstream record) to a single vote before fusion, instead of double-counting them as independent | `attribute_claims_collapse_lineage()` |
 | Predict a value by majority vote, or an optional Dawid-Skene-family or TruthFinder-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
 | Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
 
