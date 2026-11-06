@@ -145,19 +145,17 @@ claims to *this specific* cohort (a year-range mismatch, not uselessness --
 see that doc's §1); T-MSIS adds genuine new coverage but agrees with NPPES
 only ~50% of the time, and *increases* majority-vote abstention on net,
 asymmetrically by transition in a way that corroborates the `~/midwifery`
-session's own NPPES-removal finding about the 2017-18 spike.
+session's own NPPES-removal finding about the 2017-18 spike. The weighted
+methods (run by the `~/midwifery` session against the same claims table,
+verified here directly from its output files) tell a more mixed story:
+`dawid_skene`/`one_coin_dawid_skene` rank T-MSIS least reliable of the 4
+sources and move further from pure NPPES-restatement once it's added,
+while `truthfinder` barely distinguishes any of the 4 -- the same
+contradictory-reliability-ranking pattern as the original 3-source
+ablation, now extended rather than resolved.
 
 ## Explicitly not done yet
 
-- The weighted methods (`dawid_skene`, `truthfinder`, `one_coin_dawid_skene`,
-  `sums`, `average_log`, `investment`, `pooled_investment`) have not been run
-  against the expanded (+T-MSIS) claims table -- only `majority`, because
-  `crowd_kit`/`truthdiscovery` are not configured in the R session this was
-  run from. Majority treats every vote equally, so T-MSIS's ~50% NPPES
-  agreement rate necessarily reads as noise to it; a weighted method could
-  behave very differently. Needs either those backends configured here, or
-  the `~/midwifery` session (which has them working) running against this
-  same expanded claims table directly.
 - Step 5 (the full 2013-2026 annual panel reconstruction, NPPES-only vs.
   expanded-evidence-inferred) has not been attempted on this cohort's side --
   the `~/midwifery` session's own full-panel leave-one-source-out result

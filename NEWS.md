@@ -1,5 +1,23 @@
 # mysteryroster (development version)
 
+* The weighted methods flagged as unrun in the bullet below (dawid_skene,
+  one_coin_dawid_skene, sums, average_log, investment, pooled_investment,
+  truthfinder) were subsequently run by the `~/midwifery` session against
+  the same expanded claims table (crowd_kit/truthdiscovery still aren't
+  configured in this R session) and verified here directly from its output
+  files, not taken on report. A sanity check reproduced both the 691 and
+  759 majority baselines exactly from a from-scratch read of the handed-off
+  file. All 7 weighted methods abstain 0% of the time. T-MSIS's learned
+  reliability has no cross-method consensus: lowest-ranked of the 4 sources
+  by dawid_skene (0.551) and one_coin_dawid_skene (0.693), mid-pack by
+  average_log and truthfinder -- the same contradictory-reliability-ranking
+  finding the original 3-source ablation established, now extended to a 4th
+  source rather than resolved by adding one. Adding the 4th source also
+  nearly triples dawid_skene/truthfinder's agreement on majority's ties
+  (6.6% -> 19.1%) and drops dawid_skene's trust-NPPES share by about 18
+  points, a more encouraging signal than the majority-only result alone
+  suggested -- full detail in `docs/midwifery-evidence-ledger-results.md`
+  §4.
 * Added `docs/midwifery-evidence-ledger-results.md`: Steps 2-4 of the
   evidence-ledger expansion plan, actually run against real data (all
   aggregate counts, no person-level values) rather than left as a design

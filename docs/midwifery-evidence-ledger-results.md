@@ -121,26 +121,94 @@ weakly corroborated by evidence outside NPPES, and the 2023-24 spike is comparat
 well-corroborated.** Neither test alone would be conclusive; agreeing by two different
 routes is stronger than either.
 
-## 4. What this does and does not establish
+## 4. The weighted methods: run by the `~/midwifery` session, verified here directly
+
+`crowd_kit`/`truthdiscovery` are not configured in the R session this document's other
+numbers were computed from. Rather than leave this unrun, the expanded 4-source claims
+table (same schema `attribute_claims_validate()` expects) was handed to the `~/midwifery`
+session, which has both backends working, and asked to run all 7 remaining methods. Its
+output files were read directly here -- not just its summary -- before trusting any of
+the following numbers.
+
+**Sanity check passed first:** majority re-run on just the 3 original sources from that
+table gives 691/3,556 abstentions, exactly matching §0's baseline; the 4-source majority
+run gives 759/3,556, exactly matching §3. Both independently reproduced from a from-scratch
+read of the handed-off file, not copy-pasted.
+
+**Every one of the 7 weighted methods abstains 0% of the time** on this cohort (verified
+directly from each `predictions_*.csv`) -- the same pattern the original 3-source ablation
+found for `dawid_skene`/`truthfinder`, now holding for all 7 with a 4th source added. A
+weighted method almost always has enough signal to pick a winner even when plain majority
+ties.
+
+**T-MSIS's learned reliability has no consensus across methods** -- verified directly from
+each `source_diagnostics_*.csv`, not taken on report:
+
+| method | nppes | dac_pecos_combined | open_payments | tmsis_medicaid_enrollment |
+|---|---|---|---|---|
+| `dawid_skene` | 0.847 | 0.686 | 0.696 | **0.551 (lowest)** |
+| `one_coin_dawid_skene` | 0.785 | 0.770 | 0.824 | **0.693 (lowest)** |
+| `sums` | 1.000* | 0.504 | 0.135 | 0.294 |
+| `average_log` | 0.822 | 0.972 | 1.000* | 0.847 |
+| `investment` | 0* | 1e-4* | 1.000* | 0* |
+| `pooled_investment` | 1.000* | 4e-4* | 0.002* | 0* |
+| `truthfinder` | 0.614 | 0.641 | 0.674 | 0.635 |
+
+(`*` = degenerate 0/1-style split, consistent with what §2 of
+`docs/midwifery-ablation-findings.md` already flagged for `investment`/`pooled_investment`
+generally.)
+
+`dawid_skene` and `one_coin_dawid_skene` both rank T-MSIS *lowest* of the 4 sources --
+consistent with its measured 50.3% NPPES-agreement rate reading as noise to a method that
+actually learns reliability. `average_log` ranks it third but close behind
+`dac_pecos_combined` and ahead of `nppes`. `truthfinder` barely distinguishes any of the 4
+(a tight 0.61-0.67 cluster). This is the same "different methods learn contradictory
+reliability rankings for the same sources" finding `docs/midwifery-ablation-findings.md`
+§2 established for the original 3 sources, now extended to a 4th: adding a source doesn't
+resolve the disagreement about how much to trust it.
+
+**Does adding a weighted 4th source change how much `dawid_skene` and `truthfinder` agree
+with each other on `majority`'s ties, or how much `dawid_skene`'s resolution is just
+"trust NPPES"?** The same two checks `docs/midwifery-ablation-findings.md` §3-4 ran on the
+original 695 ties, re-run here on the new 759 (verified directly from the prediction
+files, joined against the expanded claims table's own `nppes` rows):
+
+| check | 3-source / 695 ties (original) | 4-source / 759 ties (this table) |
+|---|---|---|
+| `dawid_skene` vs. `truthfinder` agree on resolved value | 46 (6.6%) | 145 (19.1%) |
+| `dawid_skene`'s resolution equals NPPES's own claim | 97.6%* | 601 (79.2%) |
+
+(`*` the original figure was of the 678/695 single-remaining-source cases specifically,
+not all 695; the right-hand column here is of all 759.) Both numbers move in the direction
+"more real synthesis, less pure NPPES-restatement" once a 4th source is added -- agreement
+nearly triples, and the trust-NPPES share drops by about 18 points. This is a genuinely
+different, more encouraging signal than §3 of this document (which only tested `majority`)
+on its own would suggest: a weighted method given a genuinely independent 4th source
+does move away from reflexively trusting NPPES, even though that same 4th source
+increases plain-majority disagreement. The two results are not in tension -- majority
+counts votes, `dawid_skene` weighs them, and a low-weight dissenting source can create a
+majority tie while barely moving a Dawid-Skene posterior.
+
+## 5. What this does and does not establish
 
 It establishes: the facility-affiliation source is a real no-op for this specific cohort
 (year-range mismatch, not uselessness); T-MSIS adds genuine new coverage (515 NPI-years)
-but disagrees with the existing sources about as often as it agrees (50.3%); and under
-plain majority vote, that disagreement nets out to *more* abstention, not less, with a
-specific, asymmetric pattern across years that corroborates -- via an entirely independent
-method -- the `~/midwifery` session's own finding about the 2017-18 spike's NPPES-dependence.
+but disagrees with the existing sources about as often as it agrees (50.3%); under plain
+majority vote, that disagreement nets out to *more* abstention, not less, with a specific,
+asymmetric pattern across years that corroborates -- via an entirely independent method --
+the `~/midwifery` session's own finding about the 2017-18 spike's NPPES-dependence; and
+under the weighted methods, T-MSIS's low measured reliability is recognized by some
+(`dawid_skene`, `one_coin_dawid_skene`) but not others (`truthfinder`'s tight cluster),
+the same contradictory-rankings pattern the original 3-source ablation already found,
+now extended to a 4th source rather than resolved by adding one.
 
-It does **not** establish what `dawid_skene`, `truthfinder`, or any of the other weighted
-methods would do with this same expanded claims table -- those backends (`crowd_kit`,
-`truthdiscovery`) are not configured in the R session this was run from (checked directly:
-`attribute_truth_backends()` reports only `r_native`/`majority` available here), so only
-the unweighted vote was actually run. Weighted methods could behave very differently --
-majority treats every vote equally, so T-MSIS's 50/50 agreement rate necessarily reads as
-noise to it; a method that learns T-MSIS's actual reliability could discount it rather
-than let it create new ties. This is a real, stated limitation, not a result.
-
-It also does not yet repeat this for `one_coin_dawid_skene`, `sums`, `average_log`,
-`investment`, `pooled_investment`, or `truthfinder` on this specific 1,806-case cohort
-with T-MSIS added -- that requires either configuring those backends in this environment
-or asking the `~/midwifery` session (which has them working) to run against this expanded
-claims table directly.
+It does **not** establish that the expanded ledger is simply "better" -- `majority` and
+the weighted methods disagree about whether T-MSIS helps (more net disagreement under one,
+less NPPES-dependence and more cross-method agreement under the other), and no
+independently verified reference location exists for this cohort to adjudicate which
+reading is closer to the truth (the same limitation `docs/midwifery-ablation-findings.md`
+§0 and `docs/validation-protocol.md` already establish for the original 3-source case).
+Step 5 of the full plan (the annual 2013-2026 panel reconstruction comparing NPPES-only
+vs. expanded-evidence-inferred transitions) and Step 6's formal before/after table remain
+undone on this cohort's side; the `~/midwifery` session's own full-panel leave-one-out
+result is the closest existing analogue and is cited directly above rather than duplicated.
