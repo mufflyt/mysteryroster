@@ -889,12 +889,27 @@ format_ranking_prose <- function(group, value, n = NULL, value_label = "value",
     stop(sprintf("format_ranking_prose: duplicate group name(s): %s",
                  paste(unique(group[duplicated(group)]), collapse = ", ")), call. = FALSE)
   }
-  checkmate::assert_numeric(value, len = length(group), any.missing = FALSE)
+  checkmate::assert_numeric(value, len = length(group), any.missing = FALSE, finite = TRUE)
   if (!is.null(n)) {
     checkmate::assert_integerish(n, len = length(group), lower = 0)
   }
   .assert_nonblank_string(value_label, "format_ranking_prose: value_label")
   checkmate::assert_string(fmt, min.chars = 1)
+  if (!grepl("^%[-+ 0#]*[0-9]*(\\.[0-9]+)?[eEfgGaA]$", fmt)) {
+    # Deliberately excludes %d/%i/%o/%u/%x/%X: R's sprintf() requires those
+    # to receive a true integer, so a fractional `value` (the normal case for
+    # a rate or score) errors with a cryptic base-R message rather than this
+    # function's own clear one. %s is excluded because it bypasses decimal-
+    # place control entirely, leaking a value's full floating-point precision.
+    stop(sprintf(
+      paste0(
+        "format_ranking_prose: fmt ('%s') must be a floating-point sprintf() conversion ",
+        "(e.g. '%%.1f', '%%.3g', '%%e') -- '%%d'-family specifiers error on non-integer ",
+        "values, and '%%s' bypasses the decimal-place control this parameter exists for"
+      ),
+      fmt
+    ), call. = FALSE)
+  }
   checkmate::assert_flag(decreasing)
 
   ord <- order(value, decreasing = decreasing)
@@ -995,6 +1010,24 @@ attribute_truth_fusion_prose <- function(result, compare_to = NULL,
       label_a = result_label, label_b = compare_to_label,
       unit_label = "entity-years", condition_label = "were abstained", conf_level = conf_level
     )
+    # Two different fusion methods can both report "abstained" for reasons
+    # that are not the same quantity -- majority abstains on an exact vote
+    # tie, a weighted method abstains on a posterior below some threshold.
+    # Comparing their abstention rates as if interchangeable, with no
+    # disclosure the methods differ, is exactly the kind of apples-to-oranges
+    # read a reader has no way to catch from the sentence alone.
+    method_b <- compare_to$model_diagnostics$method[1]
+    method_a <- result$model_diagnostics$method[1]
+    if (!identical(method_a, method_b)) {
+      out$comparison_sentence <- paste0(
+        out$comparison_sentence,
+        sprintf(
+          " Note: %s used `%s` and %s used `%s` -- abstention is not necessarily comparable across different methods.",
+          result_label, method_a, compare_to_label, method_b
+        )
+      )
+      out$combined_text <- paste(out$sentence_a, out$sentence_b, out$comparison_sentence)
+    }
   } else {
     out <- format_proportion_comparison_prose(
       n_a = n_a, n_total_a = n_total_a, label_a = result_label,

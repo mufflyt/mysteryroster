@@ -215,3 +215,28 @@ test_that("[red-team] format_proportion_comparison_prose marks a degenerate two-
   expect_no_match(r$comparison_sentence, "-0\\.0")
   expect_match(r$comparison_sentence, "p not computable")
 })
+
+test_that("[red-team] attribute_truth_fusion_prose discloses when result and compare_to used different methods", {
+  # Found by a saboteur: comparing a "majority" fit's abstention rate against
+  # a "dawid_skene" fit's gave a clean-looking sentence with zero indication
+  # the two methods' abstention means different things (an exact vote tie vs.
+  # a posterior below some threshold) -- an apples-to-oranges read a reader
+  # has no way to catch from the sentence text alone.
+  claims <- data.frame(
+    entity_id = c("1", "1", "2", "2"), attribute = "state",
+    source_id = c("nppes", "dac", "nppes", "dac"),
+    claimed_value = c("CO", "CO", "NY", "NJ"), reference_year = 2024
+  )
+  fit_a <- suppressMessages(attribute_truth_fusion(claims, method = "majority"))
+  fit_b <- fit_a
+  fit_b$model_diagnostics$method <- "dawid_skene"
+  out <- attribute_truth_fusion_prose(fit_a, compare_to = fit_b, result_label = "A", compare_to_label = "B")
+  expect_match(out$comparison_sentence, "A used `majority` and B used `dawid_skene`")
+  expect_match(out$comparison_sentence, "not necessarily comparable across different methods")
+  expect_match(out$combined_text, "not necessarily comparable")
+
+  # same method on both sides: no spurious note
+  fit_c <- suppressMessages(attribute_truth_fusion(claims[claims$entity_id != "2", ], method = "majority"))
+  out2 <- attribute_truth_fusion_prose(fit_a, compare_to = fit_c, result_label = "A", compare_to_label = "C")
+  expect_no_match(out2$comparison_sentence, "Note:")
+})

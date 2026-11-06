@@ -1,5 +1,30 @@
 # mysteryroster (development version)
 
+* Ran 20 more adversarial saboteurs (Part E of `docs/saboteur-test-matrix.md`)
+  against the prose generators, covering different attack vectors than Part
+  D plus `attribute_churn_rate()`/`attribute_coverage()` (built this
+  session, not previously saboteur-tested). Found and fixed three real
+  bugs, each now a permanent `[red-team]` regression test: (1)
+  `format_ranking_prose()` ranked and printed a literal `Inf` if handed one
+  (e.g. from an upstream division-by-zero) -- `value` now requires
+  `finite = TRUE`; (2) `fmt = "%s"` let a value's full floating-point
+  precision leak into a sentence uncontrolled -- `fmt` is now restricted to
+  floating-point-safe sprintf conversions (`f`/`e`/`E`/`g`/`G`/`a`/`A`;
+  `%d`-family is deliberately excluded too, since R's `sprintf()` requires
+  those to receive a true integer and errors cryptically on a fractional
+  `value`); (3) `attribute_truth_fusion_prose()` compared two fits'
+  abstention rates with no disclosure when `result` and `compare_to` used
+  *different* fusion methods (whose abstention criteria aren't the same
+  quantity) -- the comparison sentence now names both methods whenever they
+  differ. While fixing (2), a fourth, self-referential bug was caught in
+  the fix's own error message: passing several separate string literals to
+  one `sprintf()` call doesn't concatenate them, silently producing a
+  garbled message -- fixed with `paste0()` before the single substitution,
+  in the same pass, not shipped. Seventeen of the twenty saboteurs were
+  already correctly defended, including the numeric-looking-group-name
+  ranking order (driven by value, never a string sort) and the
+  zero-overlap-universe coverage case (a real, honest 0% with a wide CI,
+  not a bug).
 * Added `format_ranking_prose()`, the N-way counterpart to
   `format_proportion_comparison_prose()`'s one-or-two-group case: given a
   value per named group (coverage, lead rate, odd-one-out rate, learned

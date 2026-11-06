@@ -1,20 +1,27 @@
-# Saboteur test matrix: Part A (validation protocol), Part B (Phase 3 backend), Part C (QA process), Part D (manuscript prose)
+# Saboteur test matrix: Part A (validation protocol), Part B (Phase 3 backend), Part C (QA process), Parts D-E (manuscript prose)
 
 "Saboteur" here follows the truth-discovery literature's own usage: an adversarial source, scenario,
 or process failure deliberately constructed to corrupt a result while still looking legitimate on the
 surface. Part A's saboteurs attack the *experimental design* in `docs/validation-protocol.md`; Part
 B's attack `attribute_truth_fusion()`'s actual inference code via crafted claims; Part C's attack the
-*testing/CI process* that is supposed to catch both; Part D's attack the manuscript-prose generators
-(`format_proportion_comparison_prose()`, `format_ranking_prose()`, `attribute_lead_lag_duration()`,
-`attribute_truth_fusion_prose()`) for grammatical and statistical correctness.
+*testing/CI process* that is supposed to catch both; Parts D and E attack the manuscript-prose
+generators (`format_proportion_comparison_prose()`, `format_ranking_prose()`,
+`attribute_lead_lag_duration()`, `attribute_truth_fusion_prose()`, plus Part E's additional coverage
+of `attribute_churn_rate()`/`attribute_coverage()`) for grammatical and statistical correctness.
 
-**Status: all 80 executed; 19 of Part B's scenarios and 5 of Part D's are now permanent regression
-tests. Part D found five real bugs on first contact (zero-padded sample sizes, inconsistent
-"not computable" handling between a degenerate test's p-value and its confidence interval,
-`conf_level = 1` propagating a literal `NaN` into rendered text, a whitespace-only label slipping
-past `min.chars = 1`, and a source with indeterminate reliability silently vanishing from a ranking
-sentence instead of being disclosed as excluded) -- all fixed at the root, not patched around, with
-the `wilson_ci()` fix protecting every existing caller of that function, not just the new ones.
+**Status: all 100 executed; 19 of Part B's scenarios and 8 of Parts D/E's are now permanent
+regression tests. Part D found five real bugs on first contact (zero-padded sample sizes,
+inconsistent "not computable" handling between a degenerate test's p-value and its confidence
+interval, `conf_level = 1` propagating a literal `NaN` into rendered text, a whitespace-only label
+slipping past `min.chars = 1`, and a source with indeterminate reliability silently vanishing from
+a ranking sentence instead of being disclosed as excluded). Part E found three more (an `Inf`
+value ranked and printed literally; `fmt = "%s"` leaking full floating-point precision into a
+sentence; two different fusion methods' abstention rates compared with no disclosure they're not
+the same quantity) -- and, while fixing the second of those, a *fourth*, self-referential bug: the
+fix's own error message passed four separate string literals to one `sprintf()` call, which
+doesn't concatenate them and silently produced a garbled message -- caught and fixed in the same
+pass, not shipped. All fixed at the root, not patched around, with the `wilson_ci()` fix protecting
+every existing caller of that function, not just the new ones.
 Of Part B's 19 permanent tests, 16 cover `majority`/`dawid_skene`, plus 3 added later to give
 `truthdiscovery` the same mirror/targeted-saboteur/disconnected-graph coverage `dawid_skene`
 already had -- the disconnected-graph one found a genuine, confirmed behavioral difference: `sums`
@@ -229,6 +236,63 @@ misleading sentence from these is worse than no sentence at all, because it read
     does `attribute_truth_fusion_prose()`'s ranking sentence disclose that exclusion, or does the
     source just vanish with no trace, reading as if it never contributed at all?
 
+## Part E — 20 more saboteurs against manuscript-prose generation (new attack vectors)
+
+Part D's 20 did not exhaust the attack surface. This round covers different vectors on the same
+four functions, plus `attribute_churn_rate()`/`attribute_coverage()` (built this session, never
+themselves saboteur-tested) since their output is exactly what feeds the ranking/comparison
+sentences in the first place.
+
+1. **Unicode/emoji group names.** `format_ranking_prose()` with non-ASCII or emoji group labels --
+   does ordering, tie detection, and `sprintf()` still work correctly?
+2. **Extremely large N (billions).** Does `format_proportion_comparison_prose()` still render a
+   sane CI and percentage, not an integer-overflow artifact?
+3. **Integer-type `value`.** `format_ranking_prose()` given `L`-suffixed integers instead of
+   doubles -- does `sprintf()` with a float specifier still work?
+4. **Numeric-looking group names (string-sort trap).** Groups named `"1"`, `"2"`, `"10"` -- is the
+   ranking order driven by `value` (correct) or does something fall back to R's default string
+   sort (`"1" < "10" < "2"`, wrong)?
+5. **Backtick in a label.** A label like `` "the `dawid_skene` fit" `` (deliberate Markdown code
+   span) -- does it survive into the sentence as intended, or does `sprintf()` mishandle it?
+6. **p-value at extreme smallness.** A maximally lopsided two-proportion comparison (e.g. 1/100,000
+   vs. 99,999/100,000) -- does the `p < 0.001` branch handle a p-value that underflows toward
+   machine-zero without producing `NA`/garbage?
+7. **`value` containing `Inf`.** An upstream division-by-zero bug hands `format_ranking_prose()` an
+   infinite value -- does it get ranked and printed literally ("A (Inf)"), or rejected?
+8. **`fmt` that is not a numeric specifier (`"%s"`).** Does a non-numeric `fmt` error clearly, or
+   silently let a value's full floating-point precision leak into the sentence uncontrolled?
+9. **`attribute_churn_rate()` on a single-identifier panel.** Does its `overall` still compose
+   correctly with `format_proportion_comparison_prose()` at this minimal scale?
+10. **`attribute_coverage()` universe with zero overlap with any source.** Every source shows 0%
+    coverage -- does it render as a real, honest 0% (with a correspondingly wide CI), not an error
+    or a silently-dropped row?
+11. **`attribute_coverage()` with `sources = list()`.** An empty source list -- clear rejection or a
+    downstream crash with a confusing message?
+12. **`attribute_coverage()` `universe` with duplicate `(id, year)` rows.** Does `n_total` inflate
+    from the duplication, double-counting one entity-year as if it were two?
+13. **`attribute_churn_rate()` change-count bucket boundary.** An identifier with *exactly* 2
+    changes -- does it fall into the `"2"` bucket or spill into `"3+"` from an off-by-one in `cut()`?
+14. **`attribute_lead_lag_duration()` with `base_year` as the panel's last year.** No later years
+    exist at all to search for adoption -- does the duration search handle an empty future-years
+    space gracefully, or error on a zero-row lookup?
+15. **Comparing a group to itself.** `format_proportion_comparison_prose()` with `n_a`/`n_total_a`
+    identical to `n_b`/`n_total_b` -- does it report a sensible "no difference" (`p = 1`), not `NA`
+    or a divide-by-zero artifact?
+16. **Maximal-variance comparison with wildly unequal totals.** 5/10 vs. 500,000/1,000,000, both at
+    50% -- does the chi-squared statistic stay well-defined at this specific variance-maximizing
+    point rather than producing `NA`/`Inf`?
+17. **`attribute_truth_fusion_prose()` comparing two fits that used *different methods*.** Does the
+    comparison sentence disclose that `result` and `compare_to` used different fusion methods
+    (whose "abstention" means different things), or present the two abstention rates as if directly
+    comparable with no caveat?
+18. **`format_ranking_prose()` with a negative `n`.** A negative sample size (a real bug upstream,
+    e.g. a miscomputed denominator) -- does validation reject it rather than silently ranking it?
+19. **`attribute_coverage()` source missing the `attribute` column entirely.** A malformed source
+    data frame -- clear error naming the missing column, or a cryptic downstream failure?
+20. **`attribute_churn_rate()` values differing only by case/whitespace.** `"CO"` vs. `" co "` --
+    confirmed *not* counted as a real change (both normalize to the same cleaned value), not a
+    spurious churn inflation from formatting noise alone.
+
 ## Execution results: Part A (audit against the protocol document's actual text)
 
 Checked each of the 20 against `docs/validation-protocol.md` as written, not as intended.
@@ -380,6 +444,50 @@ and `attribute_truth_fusion_prose()` before any fix, to see the real output firs
 Full detail, exact before/after output for each of the five fixed items, and the permanent test
 names: `tests/testthat/test-ranking-prose.R`, `tests/testthat/test-truth-fusion-prose.R` (search
 `[red-team]`).
+
+## Execution results: Part D continued -- Part E (20 new attack vectors, actually run)
+
+Same discipline as Part D: every scenario executed against the real functions first, fix only
+written after seeing the real (mis)behavior.
+
+**Three real findings, fixed, each now a permanent `[red-team]` regression test:**
+
+- **#7 (`Inf` value):** `format_ranking_prose()` happily ranked and printed `"A (Inf)"` -- a
+  literal `Inf` reaching manuscript-quotable text if an upstream division-by-zero ever produced
+  one. Fixed: `value` now requires `finite = TRUE` (rejects `Inf`/`-Inf`, same as the existing `NA`
+  rejection).
+- **#8 (`fmt = "%s"`), widened by a second bug found while fixing the first:** `fmt = "%s"` let a
+  value's full floating-point precision leak into a sentence uncontrolled (`"20.123456789%"`
+  instead of a controlled `"20.1%"`). The first fix attempt allowed any sprintf numeric-conversion
+  character, including `%d` -- which then crashed with a cryptic base-R error
+  (`"invalid format '%d'; use format %f, %e, %g or %a for numeric objects"`) on any non-integer
+  `value`, since R's `sprintf()` genuinely requires `%d` to receive a true integer. Narrowed to the
+  floating-point-safe specifiers only (`f`/`e`/`E`/`g`/`G`/`a`/`A`), which handle both whole and
+  fractional values without erroring. **A third, self-referential bug was found and fixed while
+  writing the *error message* for this fix:** passing four separate string literals to a single
+  `sprintf()` call doesn't concatenate them -- R treats the second argument as the substitution
+  value for the first string's own `%s`, silently producing a garbled, truncated error message
+  (confirmed directly: the first attempt's error text read `"fmt ('(e.g. ...)') must be..."`,  the
+  intended format string's own placeholder accidentally filled by the *next* string literal, not
+  `fmt`). Fixed with `paste0()` to build the message before the single `sprintf()` substitution --
+  exactly the class of saboteur this whole exercise exists to catch, caught here in the fix itself,
+  not shipped.
+- **#17 (method mismatch undisclosed):** `attribute_truth_fusion_prose()`'s comparison sentence
+  gave zero indication when `result` and `compare_to` used different fusion methods -- "50.0%
+  abstained under majority" and "50.0% abstained under dawid_skene" read as the same quantity
+  compared, when a majority tie and a weighted-method's below-threshold posterior are not the same
+  thing. Fixed: the comparison sentence now appends an explicit note naming both methods whenever
+  they differ, and stays silent (no spurious note) when they match.
+
+**Seventeen items ran clean on first contact, already correctly defended:** #1-#6, #9-#16, #18-#20
+-- including #4 (ranking order is driven by the numeric `value` argument, never group-name string
+sort, confirmed directly with groups named `"1"`/`"2"`/`"10"`), #10 (a universe with zero overlap
+renders an honest 0% with a correspondingly wide CI, not an error -- a legitimate finding, not a
+bug), and #12 (duplicate `(id, year)` rows in `universe` were already deduplicated by
+`attribute_coverage()`'s own existing `unique()` call, built in from the start of that function).
+
+Full detail and the permanent test names: `tests/testthat/test-ranking-prose.R`,
+`tests/testthat/test-truth-fusion-prose.R` (search `[red-team]`).
 
 ## Part B script (as actually run)
 

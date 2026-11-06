@@ -81,3 +81,28 @@ test_that("[red-team] format_ranking_prose does not pad n with leading spaces wh
   expect_match(r$sentence, "A \\(60\\.0%, n = 0\\)")
   expect_no_match(r$sentence, "n =\\s{2,}0")
 })
+
+test_that("[red-team] format_ranking_prose rejects Inf/-Inf instead of printing them into a sentence", {
+  # Found by a saboteur: an upstream division-by-zero or similar bug could
+  # hand this function Inf as a "value" -- it used to rank and print it
+  # literally ("A (Inf)") rather than flagging the input as broken.
+  expect_error(format_ranking_prose(c("A", "B"), c(Inf, 10)), "finite")
+  expect_error(format_ranking_prose(c("A", "B"), c(-Inf, 10)), "finite")
+})
+
+test_that("[red-team] format_ranking_prose requires a floating-point fmt, not %d or %s", {
+  # Found by a saboteur: fmt = "%s" let a value's full floating-point
+  # precision leak into a sentence uncontrolled (e.g. "20.123456789%"),
+  # defeating the whole point of the fmt parameter. fmt = "%d" passed an
+  # earlier version of this same validation (it IS a numeric conversion
+  # character) but then crashed with a cryptic base-R error on any
+  # non-integer value, since R's sprintf() requires %d to receive a true
+  # integer. Both are now rejected with one clear message naming why.
+  expect_error(format_ranking_prose(c("A", "B"), c(10.5, 20.3), fmt = "%s"),
+               "floating-point sprintf")
+  expect_error(format_ranking_prose(c("A", "B"), c(10.5, 20.3), fmt = "%d"),
+               "floating-point sprintf")
+  # valid floating-point specifiers still work
+  expect_silent(format_ranking_prose(c("A", "B"), c(10.5, 20.3), fmt = "%.3g"))
+  expect_silent(format_ranking_prose(c("A", "B"), c(10.5, 20.3), fmt = "%e"))
+})
