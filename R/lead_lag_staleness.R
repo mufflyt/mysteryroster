@@ -1058,6 +1058,17 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #'   defined. `"exclude_self"` scores each source only against events *other* sources
 #'   detected, removing that circularity at the cost of dropping events no other source
 #'   independently confirms (see `n_unanchored`).
+#' @param lineage_groups Only used when `reference = "exclude_self"`. Optional named list,
+#'   same convention as [attribute_claims_collapse_lineage()]'s own `lineage_groups`: each
+#'   element a character vector of `sources` names that share underlying provenance (e.g.
+#'   a facility-affiliation extract derived from the same upstream file as an enrollment
+#'   source). A source not named by any group is its own singleton group. Excluding "self"
+#'   then means excluding every member of the scored source's *whole group*, not just that
+#'   one source -- two sources that are really the same evidence re-exported under
+#'   different names cannot independently confirm each other's events, and treating them
+#'   as independent just because their files have different names reintroduces the
+#'   circularity `reference = "exclude_self"` exists to remove. Each source name may belong
+#'   to at most one group.
 #' @return A list:
 #'   \describe{
 #'     \item{`curve`}{Tibble, one row per `(source, horizon)`: `n_at_risk`, `n_events` (first
@@ -1077,8 +1088,9 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #'       year -- structural non-coverage, excluded from the risk set entirely rather than
 #'       left unresolved.}
 #'     \item{`n_unanchored`}{Only present when `reference = "exclude_self"`: tibble, one row
-#'       per source, the count of pooled events dropped for that source because no *other*
-#'       source independently detected them.}
+#'       per source, the count of pooled events dropped for that source because no source
+#'       outside its `lineage_groups` group (itself alone, if ungrouped) independently
+#'       detected them.}
 #'   }
 #' @examples
 #' a <- data.frame(
@@ -1102,7 +1114,7 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' @family no-gold-standard comparison
 #' @export
 attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "year", max_horizon = NULL,
-                                      reference = c("pooled", "exclude_self")) {
+                                      reference = c("pooled", "exclude_self"), lineage_groups = NULL) {
   reference <- match.arg(reference)
   checkmate::assert_list(sources, min.len = 2, names = "unique")
   checkmate::assert_string(attribute, min.chars = 1)
@@ -1111,6 +1123,25 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
   if (!is.null(max_horizon)) checkmate::assert_count(max_horizon, positive = TRUE)
 
   nm <- names(sources)
+
+  if (!is.null(lineage_groups)) {
+    checkmate::assert_list(lineage_groups, names = "unique")
+    group_members <- unlist(lineage_groups, use.names = FALSE)
+    if (anyDuplicated(group_members) > 0L) {
+      stop(sprintf("attribute_catch_up_curve: source(s) appear in more than one lineage group: %s",
+                   paste(unique(group_members[duplicated(group_members)]), collapse = ", ")), call. = FALSE)
+    }
+    unknown <- setdiff(group_members, nm)
+    if (length(unknown) > 0L) {
+      stop(sprintf("attribute_catch_up_curve: lineage_groups references unknown source(s): %s",
+                   paste(unknown, collapse = ", ")), call. = FALSE)
+    }
+  }
+  group_of <- function(s) {
+    if (is.null(lineage_groups)) return(s)
+    hit <- Filter(function(g) s %in% g, lineage_groups)
+    if (length(hit) == 0L) s else hit[[1]]
+  }
   clean_source <- function(x, label) {
     checkmate::assert_data_frame(x)
     for (col in c(id, year, attribute)) {
@@ -1178,7 +1209,7 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
     src <- cleaned[[s]]
     n_unanchored <- 0L
     if (identical(reference, "exclude_self")) {
-      other_events <- events[setdiff(nm, s)]
+      other_events <- events[setdiff(nm, group_of(s))]
       other_events <- other_events[!vapply(other_events, is.null, logical(1))]
       all_other <- dplyr::bind_rows(other_events)
       if (nrow(all_other) == 0L) {

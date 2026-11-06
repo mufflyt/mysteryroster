@@ -10,7 +10,8 @@ attribute_catch_up_curve(
   id = "npi",
   year = "year",
   max_horizon = NULL,
-  reference = c("pooled", "exclude_self")
+  reference = c("pooled", "exclude_self"),
+  lineage_groups = NULL
 )
 }
 \arguments{
@@ -30,6 +31,18 @@ each event's \code{start}, so a source can get credit for "catching up" to an ev
 defined. \code{"exclude_self"} scores each source only against events \emph{other} sources
 detected, removing that circularity at the cost of dropping events no other source
 independently confirms (see \code{n_unanchored}).}
+
+\item{lineage_groups}{Only used when \code{reference = "exclude_self"}. Optional named list,
+same convention as \code{\link[=attribute_claims_collapse_lineage]{attribute_claims_collapse_lineage()}}'s own \code{lineage_groups}: each
+element a character vector of \code{sources} names that share underlying provenance (e.g.
+a facility-affiliation extract derived from the same upstream file as an enrollment
+source). A source not named by any group is its own singleton group. Excluding "self"
+then means excluding every member of the scored source's \emph{whole group}, not just that
+one source -- two sources that are really the same evidence re-exported under
+different names cannot independently confirm each other's events, and treating them
+as independent just because their files have different names reintroduces the
+circularity \code{reference = "exclude_self"} exists to remove. Each source name may belong
+to at most one group.}
 }
 \value{
 A list:
@@ -51,8 +64,9 @@ for that source because the identifier has no record in that source at all, in a
 year -- structural non-coverage, excluded from the risk set entirely rather than
 left unresolved.}
 \item{\code{n_unanchored}}{Only present when \code{reference = "exclude_self"}: tibble, one row
-per source, the count of pooled events dropped for that source because no \emph{other}
-source independently detected them.}
+per source, the count of pooled events dropped for that source because no source
+outside its \code{lineage_groups} group (itself alone, if ungrouped) independently
+detected them.}
 }
 }
 \description{

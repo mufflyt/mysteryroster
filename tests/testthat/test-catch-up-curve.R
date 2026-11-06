@@ -189,6 +189,67 @@ test_that("attribute_catch_up_curve's reference = 'pooled' default matches prior
   expect_null(cu$n_unanchored)
 })
 
+test_that("attribute_catch_up_curve's lineage_groups excludes a source's whole evidence family under reference = 'exclude_self'", {
+  # id 1's NM arrival is detected by a and b. id 2's GA arrival is detected by b and c only
+  # -- a never detects it at all. b and c share underlying provenance (e.g. a
+  # facility-affiliation extract derived from the same upstream file as an enrollment
+  # source); grouping them means b can no longer use c (or vice versa) to "independently"
+  # confirm an event, even though c's own source_id differs from b's.
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "TX"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "GA", "GA"))
+  c <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "CO", "TX", "TX", "GA"))
+
+  # Without lineage_groups: b can use c to confirm id 2's event -- fully anchored.
+  cu_flat <- attribute_catch_up_curve(list(a = a, b = b, c = c), attribute = "state", reference = "exclude_self")
+  nu_flat <- cu_flat$n_unanchored
+  expect_equal(nu_flat$n_unanchored[nu_flat$source == "b"], 0L)
+
+  # With b and c grouped as one evidence family: b can no longer use c (its own group-mate)
+  # to confirm id 2's event, and a never detected it either -- now unanchored for b.
+  cu_grouped <- attribute_catch_up_curve(
+    list(a = a, b = b, c = c), attribute = "state", reference = "exclude_self",
+    lineage_groups = list(bc_family = c("b", "c"))
+  )
+  nu_grouped <- cu_grouped$n_unanchored
+  expect_equal(nu_grouped$n_unanchored[nu_grouped$source == "b"], 1L)
+  expect_equal(nu_grouped$n_unanchored[nu_grouped$source == "c"], 1L)
+  expect_equal(nu_grouped$n_unanchored[nu_grouped$source == "a"], 0L) # a is ungrouped, unaffected
+})
+
+test_that("attribute_catch_up_curve validates lineage_groups", {
+  a <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "CO"))
+  expect_error(
+    attribute_catch_up_curve(list(a = a, b = b), attribute = "state", reference = "exclude_self",
+                              lineage_groups = list(g1 = c("a", "b"), g2 = c("b"))),
+    "more than one lineage group"
+  )
+  expect_error(
+    attribute_catch_up_curve(list(a = a, b = b), attribute = "state", reference = "exclude_self",
+                              lineage_groups = list(g1 = c("a", "nonexistent"))),
+    "unknown source"
+  )
+})
+
+test_that("attribute_catch_up_curve collapses a repeated CO -> TX -> CO -> TX episode into one event per value", {
+  # The spec scenario: a clinician's own data makes two separate round trips through the
+  # same two values. Only 2 distinct (id, value) events are tracked (TX, CO), not the 3
+  # genuine transitions that actually occurred -- confirming, via an explicit synthetic
+  # case, the documented "repeated arrival" collapse limitation.
+  a <- data.frame(npi = "1", year = 2020:2023, state = c("CO", "TX", "CO", "TX"))
+  b <- data.frame(npi = "1", year = 2020:2023, state = c("CO", "CO", "CO", "CO")) # padding 2nd source
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  expect_equal(cu$n_tracked, 2L) # TX and CO, not 3 genuine transitions
+  ca <- cu$curve[cu$curve$source == "a", ]
+  # a resolves both of its own tracked values immediately (it's the only source detecting
+  # them), regardless of which of the two real TX episodes the pooled start collapsed to.
+  expect_equal(ca$n_at_risk[ca$horizon == 0], 2L)
+  expect_equal(ca$n_events[ca$horizon == 0], 2L)
+})
+
 test_that("attribute_catch_up_curve errors clearly when no source has any consecutive-year arrival", {
   a <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "NM")) # a gap, not consecutive
   b <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "CO"))
