@@ -91,6 +91,38 @@ test_that("attribute_catch_up_curve validates inputs", {
   )
 })
 
+test_that("attribute_catch_up_curve credits a source that shows the matching value after a multi-year gap in its own records", {
+  # a detects the arrival (CO -> NM, consecutive years) so the pooled event starts in 2021.
+  # b has no record at all in 2021-2023 and shows NM for the first time in 2024 -- a 4-year
+  # gap from b's own prior (2020) record, nowhere close to "consecutive". A naive rule
+  # requiring b's own transition to be consecutive would never credit this match at all,
+  # even though b plainly does show the correct value by 2024.
+  a <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = c(2020, 2024), state = c("CO", "NM"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  cb <- cu$curve[cu$curve$source == "b", ]
+  expect_equal(cb$pct_not_yet_shown, c(100, 100, 100, 0, 0))
+  expect_equal(cb$n_events, c(0, 0, 0, 1, 0))
+  expect_equal(cu$median_horizon$median_horizon[cu$median_horizon$source == "b"], 3L)
+})
+
+test_that("attribute_catch_up_curve does not drop an event from the risk set when a source's only matching record predates the event's start", {
+  # b happens to show "NM" in 2019, two years before the pooled event (detected via a) even
+  # starts in 2021 -- a coincidental earlier occurrence, unrelated to the tracked arrival.
+  # b never shows NM again (its only other record, in 2021, is a different value, and the
+  # 2019-2021 gap is not itself a consecutive-year transition, so b contributes no arrival
+  # event of its own). This must not count as catching up, but the event must also not
+  # silently vanish from b's risk set -- it stays at risk (not resolved) for its own
+  # follow-up window.
+  a <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = c(2019, 2021), state = c("NM", "CO"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  cb <- cu$curve[cu$curve$source == "b", ]
+  expect_equal(cb$pct_not_yet_shown, c(100, 100, 100))
+  expect_equal(cb$n_at_risk, c(1, 0, 0)) # retained in the risk set at horizon 0, not dropped
+  expect_true(is.na(cu$median_horizon$median_horizon[cu$median_horizon$source == "b"]))
+})
+
 test_that("attribute_catch_up_curve errors clearly when no source has any consecutive-year arrival", {
   a <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "NM")) # a gap, not consecutive
   b <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "CO"))
