@@ -619,3 +619,219 @@ print.mysteryroster_truth <- function(x, ...) {
   ))
   invisible(x)
 }
+
+#' Manuscript-ready prose for one proportion, or two compared, with statistics
+#'
+#' Every result reported in this package's own case-study docs (Wilson
+#' interval on a rate; two-proportion test comparing a rate before and after
+#' some change) was written by hand, the same few lines of `sprintf()` and
+#' `prop.test()` every time. This is that pattern as a reusable function: give
+#' it a count and a total (optionally a second count and total to compare
+#' against), get back the numbers *and* a drop-in sentence built from them,
+#' so copying a reported percentage out of a manuscript can't drift from the
+#' number a reviewer would recompute from the same inputs.
+#'
+#' @details
+#' **This does not replace statistical judgment.** It runs exactly one test
+#' (`stats::prop.test()`, two-sided, continuity-corrected) and one interval
+#' (Wilson, via [wilson_ci()]) -- the two defaults used throughout this
+#' package's own docs. A different design (one-sided, a different interval,
+#' a paired or stratified test) is not what this computes, and the sentence
+#' it returns says "two-proportion test" so that is never misread as more
+#' than it is.
+#'
+#' **p-values are never silently dropped.** If `prop.test()` cannot run (for
+#' example a `0`-total group), `p_value` is `NA` and `comparison_sentence`
+#' says so explicitly ("not computable") rather than omitting the test
+#' result or printing a misleading placeholder.
+#'
+#' @param n_a,n_total_a Count and total for the first (or only) proportion.
+#'   `n_a` cannot exceed `n_total_a`.
+#' @param n_b,n_total_b Optional count and total for a second proportion to
+#'   compare `n_a`/`n_total_a` against. Supply both or neither.
+#' @param label_a,label_b Short labels substituted into the sentences --
+#'   for example `"3-source baseline"` and `"+ T-MSIS"`. `label_b` is unused
+#'   if `n_b`/`n_total_b` are not supplied.
+#' @param quantity_label What is being counted, substituted into the
+#'   sentences as both the subject (title-cased) and in context -- for
+#'   example `"entity-years abstained"` or `"NPI-years with any
+#'   corroboration"`. Default `"cases"`.
+#' @param conf_level Confidence level for the Wilson interval(s). Default
+#'   `0.95`.
+#' @return A list: `a` (`n`, `n_total`, `pct`, `ci_low`, `ci_high`, `label`),
+#'   `sentence_a` (one sentence reporting `a` with its Wilson interval), and
+#'   `combined_text` (all sentences joined with spaces). When `n_b` is
+#'   supplied, also `b` (same shape as `a`), `sentence_b`, `p_value` (from
+#'   `prop.test()`, `NA` if not computable), and `comparison_sentence`.
+#' @examples
+#' format_proportion_comparison_prose(
+#'   n_a = 204, n_total_a = 1806, label_a = "this cohort",
+#'   quantity_label = "NPI-years with any external corroboration"
+#' )$sentence_a
+#'
+#' cmp <- format_proportion_comparison_prose(
+#'   n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
+#'   label_a = "3-source baseline", label_b = "+ T-MSIS",
+#'   quantity_label = "entity-years abstained"
+#' )
+#' cmp$comparison_sentence
+#' cmp$p_value
+#' @seealso [wilson_ci()]; [attribute_truth_fusion_prose()] for the
+#'   `mysteryroster_truth`-specific wrapper around this function.
+#' @family truth fusion
+#' @export
+format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_total_b = NULL,
+                                                label_a = "group A", label_b = "group B",
+                                                quantity_label = "cases", conf_level = 0.95) {
+  checkmate::assert_count(n_a)
+  checkmate::assert_count(n_total_a, positive = TRUE)
+  if (n_a > n_total_a) {
+    stop("format_proportion_comparison_prose: n_a cannot exceed n_total_a", call. = FALSE)
+  }
+  checkmate::assert_string(label_a, min.chars = 1)
+  checkmate::assert_string(quantity_label, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  has_b <- !is.null(n_b) || !is.null(n_total_b)
+  if (has_b) {
+    checkmate::assert_count(n_b)
+    checkmate::assert_count(n_total_b, positive = TRUE)
+    if (n_b > n_total_b) {
+      stop("format_proportion_comparison_prose: n_b cannot exceed n_total_b", call. = FALSE)
+    }
+    checkmate::assert_string(label_b, min.chars = 1)
+  }
+
+  fmt_n <- function(x) format(x, big.mark = ",")
+  conf_pct <- round(100 * conf_level)
+  one_sided_pct <- function(n, n_total) round(100 * n / n_total, 1)
+
+  ci_a <- wilson_ci(n_a, n_total_a, conf_level = conf_level, as_percent = TRUE)
+  pct_a <- one_sided_pct(n_a, n_total_a)
+  sentence_a <- sprintf(
+    "%s: %s of %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
+    label_a, fmt_n(n_a), fmt_n(n_total_a), quantity_label, pct_a, conf_pct, ci_a$ci_low, ci_a$ci_high
+  )
+
+  out <- list(
+    a = list(n = n_a, n_total = n_total_a, pct = pct_a, ci_low = ci_a$ci_low, ci_high = ci_a$ci_high, label = label_a),
+    sentence_a = sentence_a,
+    combined_text = sentence_a
+  )
+
+  if (has_b) {
+    ci_b <- wilson_ci(n_b, n_total_b, conf_level = conf_level, as_percent = TRUE)
+    pct_b <- one_sided_pct(n_b, n_total_b)
+    sentence_b <- sprintf(
+      "%s: %s of %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
+      label_b, fmt_n(n_b), fmt_n(n_total_b), quantity_label, pct_b, conf_pct, ci_b$ci_low, ci_b$ci_high
+    )
+    pt <- tryCatch(
+      suppressWarnings(stats::prop.test(c(n_a, n_b), c(n_total_a, n_total_b))),
+      error = function(e) NULL
+    )
+    p_value <- if (is.null(pt)) NA_real_ else pt$p.value
+    p_fmt <- if (is.na(p_value)) {
+      "not computable"
+    } else if (p_value < 0.001) {
+      "< 0.001"
+    } else {
+      sprintf("= %.3f", p_value)
+    }
+    comparison_sentence <- sprintf(
+      "%s was %.1f%% (%s/%s) for %s versus %.1f%% (%s/%s) for %s (two-proportion test, p %s).",
+      .title_case_first(quantity_label), pct_a, fmt_n(n_a), fmt_n(n_total_a), label_a,
+      pct_b, fmt_n(n_b), fmt_n(n_total_b), label_b, p_fmt
+    )
+    out$b <- list(n = n_b, n_total = n_total_b, pct = pct_b, ci_low = ci_b$ci_low, ci_high = ci_b$ci_high, label = label_b)
+    out$sentence_b <- sentence_b
+    out$p_value <- p_value
+    out$comparison_sentence <- comparison_sentence
+    out$combined_text <- paste(sentence_a, sentence_b, comparison_sentence)
+  }
+
+  out
+}
+
+.title_case_first <- function(x) {
+  paste0(toupper(substring(x, 1, 1)), substring(x, 2))
+}
+
+#' Manuscript-ready prose for an attribute_truth_fusion() result
+#'
+#' A thin wrapper around [format_proportion_comparison_prose()] specific to
+#' [attribute_truth_fusion()]'s own output: pulls the abstention count and
+#' total directly from a `mysteryroster_truth` object (and, if
+#' `source_diagnostics` has 2+ sources with a learned `reliability_score`,
+#' adds a sentence naming the highest- and lowest-ranked source) instead of
+#' asking the caller to extract those numbers by hand.
+#'
+#' @param result A `mysteryroster_truth` object (output of
+#'   [attribute_truth_fusion()]).
+#' @param compare_to Optional second `mysteryroster_truth` object -- for
+#'   example the same claims refit after adding a source, or a different
+#'   method on the same claims -- to compare `result`'s abstention rate
+#'   against via a two-proportion test. Its own `source_diagnostics` is not
+#'   used; only `result`'s is (see Details).
+#' @param result_label,compare_to_label Short labels substituted into the
+#'   sentences, same as [format_proportion_comparison_prose()]'s `label_a`/
+#'   `label_b`. Defaults `"this fit"` / `"the comparison fit"`.
+#' @param conf_level Confidence level for the Wilson interval(s). Default
+#'   `0.95`.
+#' @return Same shape as [format_proportion_comparison_prose()]'s return
+#'   (quantity_label fixed to `"entity-years abstained"`), plus `method`
+#'   (`result`'s method) and, when available, `reliability_table` (`result`'s
+#'   `source_diagnostics`, one row per source, highest reliability first)
+#'   and `reliability_sentence`, both folded into `combined_text`.
+#' @examples
+#' claims <- data.frame(
+#'   entity_id = c("1", "1", "2", "2"), attribute = "state",
+#'   source_id = c("nppes", "dac", "nppes", "dac"),
+#'   claimed_value = c("CO", "CO", "NY", "NJ"), reference_year = 2024
+#' )
+#' fit <- attribute_truth_fusion(claims, method = "majority")
+#' attribute_truth_fusion_prose(fit, result_label = "this example")$combined_text
+#' @seealso [format_proportion_comparison_prose()]; [attribute_truth_fusion()].
+#' @family truth fusion
+#' @export
+attribute_truth_fusion_prose <- function(result, compare_to = NULL,
+                                          result_label = "this fit",
+                                          compare_to_label = "the comparison fit",
+                                          conf_level = 0.95) {
+  checkmate::assert_class(result, "mysteryroster_truth")
+  n_total_a <- nrow(result$predictions)
+  n_a <- sum(result$predictions$abstained)
+
+  if (!is.null(compare_to)) {
+    checkmate::assert_class(compare_to, "mysteryroster_truth")
+    n_total_b <- nrow(compare_to$predictions)
+    n_b <- sum(compare_to$predictions$abstained)
+    out <- format_proportion_comparison_prose(
+      n_a = n_a, n_total_a = n_total_a, n_b = n_b, n_total_b = n_total_b,
+      label_a = result_label, label_b = compare_to_label,
+      quantity_label = "entity-years abstained", conf_level = conf_level
+    )
+  } else {
+    out <- format_proportion_comparison_prose(
+      n_a = n_a, n_total_a = n_total_a, label_a = result_label,
+      quantity_label = "entity-years abstained", conf_level = conf_level
+    )
+  }
+
+  out$method <- result$model_diagnostics$method[1]
+
+  rel <- unique(result$source_diagnostics[, c("source_id", "reliability_score")])
+  rel <- rel[!is.na(rel$reliability_score), , drop = FALSE]
+  if (nrow(rel) >= 2L) {
+    rel <- rel[order(-rel$reliability_score), , drop = FALSE]
+    reliability_sentence <- sprintf(
+      "Under `%s`, learned source reliability ranked %s highest (%.3f) and %s lowest (%.3f).",
+      out$method, rel$source_id[1], rel$reliability_score[1],
+      rel$source_id[nrow(rel)], rel$reliability_score[nrow(rel)]
+    )
+    out$reliability_table <- rel
+    out$reliability_sentence <- reliability_sentence
+    out$combined_text <- paste(out$combined_text, reliability_sentence)
+  }
+
+  out
+}

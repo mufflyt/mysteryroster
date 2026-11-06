@@ -224,6 +224,42 @@ found for the original three sources, not resolved by adding a fourth.
   or break ties; `dawid_skene` weighs them, and having already learned T-MSIS is the
   least reliable source, moves toward genuine multi-source synthesis instead.
 
+## Turning those numbers into manuscript text, live
+
+Every sentence above with a count, a percentage, and a Wilson interval, or a
+two-proportion comparison, was written by hand the way this package's other
+case-study docs are -- `sprintf()` and `prop.test()` copied and re-derived
+each time. `format_proportion_comparison_prose()` is that same pattern as a
+reusable function, run here on the real published counts (no NPI-level data
+involved -- just the two integers each side of the fraction above):
+
+```{r prose-abstention}
+abstention_prose <- format_proportion_comparison_prose(
+  n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
+  label_a = "3-source baseline", label_b = "+ T-MSIS (4 sources)",
+  quantity_label = "entity-years abstained under majority vote"
+)
+abstention_prose$comparison_sentence
+abstention_prose$p_value
+```
+
+That p-value is new information, not something already published above --
+the headline bullets only ever reported the per-year breakdown, never this
+pooled two-proportion test across all 3,556. `attribute_truth_fusion_prose()`
+does the same thing directly from an `attribute_truth_fusion()` result,
+without extracting `n`/`n_abstained` by hand first, and adds a
+reliability-ranking sentence when `source_diagnostics` has one to report:
+
+```{r prose-direct}
+claims_small <- data.frame(
+  entity_id = c("1", "1", "1", "2", "2"), attribute = "state",
+  source_id = c("nppes", "dac_pecos_combined", "tmsis_medicaid_enrollment", "nppes", "dac_pecos_combined"),
+  claimed_value = c("CO", "CO", "NM", "NY", "NJ"), reference_year = 2024
+)
+fit_small <- attribute_truth_fusion(claims_small, method = "majority")
+attribute_truth_fusion_prose(fit_small, result_label = "this toy fit")$combined_text
+```
+
 **The cross-check that made this worth doing.** A completely separate analysis, built
 independently, ran the opposite experiment on the full 2013-2026, 219,536-entity-year
 panel: instead of *adding* T-MSIS to this 1,806-case cohort, it *removed* NPPES entirely

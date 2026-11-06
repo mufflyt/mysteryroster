@@ -1,5 +1,19 @@
 # mysteryroster (development version)
 
+* Added `format_proportion_comparison_prose()` and
+  `attribute_truth_fusion_prose()`: manuscript-ready sentences (count, %,
+  Wilson CI, and -- for two proportions -- a two-proportion test with a
+  p-value) generated directly from the numbers, instead of hand-writing
+  `sprintf()`/`prop.test()` the way every case-study doc in this package so
+  far has. `format_proportion_comparison_prose()` works on any count/total
+  pair (abstention rate, corroboration rate, agreement rate, anything);
+  `attribute_truth_fusion_prose()` is a thin wrapper that pulls the
+  abstention count and, when present, a reliability-ranking sentence
+  directly from one or two `attribute_truth_fusion()` results. Verified
+  against this package's own already-published numbers before shipping:
+  reproduces `docs/midwifery-ablation-findings.md`'s 204/1,806 (11.3%, CI
+  9.9-12.8%) and `docs/midwifery-evidence-ledger-results.md`'s 691 vs. 759
+  of 3,556 comparison exactly.
 * Added `man/figures/truth-discovery-abstention-vs-reliability.png` -- a
   conceptual diagram contrasting abstention (a per-entity-year decision)
   with source reliability (a per-source property learned across many

@@ -295,6 +295,11 @@ fusion_result <- attribute_truth_fusion(claims, method = "majority", abstain_thr
 fusion_result$predictions        # predicted_value, model_score, abstained, abstention_reason
 fusion_result$candidate_scores   # every candidate value's vote share, ranked
 attribute_truth_backends()       # which methods/backends are actually available right now
+
+# A manuscript-ready sentence (count, %, Wilson CI) straight from the fit --
+# compare_to another attribute_truth_fusion() result for a two-proportion
+# test (p-value included) between, say, a baseline and an expanded claims table.
+attribute_truth_fusion_prose(fusion_result, result_label = "this fit")$combined_text
 ```
 
 `method = "majority"` is entirely in R, with no dependency beyond this
@@ -376,6 +381,8 @@ available before it is actually implemented.
 | Collapse a declared group of same-lineage sources (e.g. two feeds from one upstream record) to a single vote before fusion, instead of double-counting them as independent | `attribute_claims_collapse_lineage()` |
 | Predict a value by majority vote, or an optional Dawid-Skene-family or TruthFinder-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
 | Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
+| Manuscript-ready sentence (count, %, Wilson CI) for one proportion, or two compared with a p-value | `format_proportion_comparison_prose()` |
+| Same, pulled directly from one or two `attribute_truth_fusion()` results, plus a reliability-ranking sentence | `attribute_truth_fusion_prose()` |
 
 ## Design rules
 
