@@ -1,5 +1,28 @@
 # mysteryroster (development version)
 
+* Reworked `format_proportion_comparison_prose()`'s sentences (and
+  `attribute_truth_fusion_prose()`'s, which builds on it) to be clearer and
+  more complete, per explicit feedback on the first version below. Two
+  changes: (1) `quantity_label` (one free-text phrase) is replaced by
+  `unit_label` (a plural noun, e.g. `"entity-years"`) and `condition_label`
+  (a verb phrase, e.g. `"were abstained"`), because a single label read as a
+  sentence fragment whenever it was phrased as a noun rather than a
+  predicate -- the old `"this cohort: 204 of 1,806 NPI-years with any
+  external corroboration (11.3%...)"` had no verb; splitting the two always
+  produces a complete sentence (`"In this cohort, 204 of 1,806 NPI-years had
+  any external corroboration (11.3%...)."`). (2) The comparison sentence now
+  reports the difference in percentage points with its own 95% CI (signed
+  consistently, from the same `prop.test()` call, at no extra computation
+  cost) and the full chi-squared statistic with degrees of freedom and total
+  N (`"chi-squared(1, N = 7,112) = 3.89, p = 0.049"`), not just a bare
+  p-value -- the standard form a manuscript expects. Caught a real bug while
+  rewriting the template (one extra, unused `%s` placeholder caused
+  `sprintf()` to error on every two-group call) before it shipped.
+  `attribute_truth_fusion_prose()`'s reliability sentence now lists the full
+  ranking of every source, not just the highest and lowest. This is a
+  breaking change to `format_proportion_comparison_prose()`'s signature
+  (`quantity_label` no longer exists); the function was added in the
+  previous entry below and has no outside callers yet.
 * Added `format_proportion_comparison_prose()` and
   `attribute_truth_fusion_prose()`: manuscript-ready sentences (count, %,
   Wilson CI, and -- for two proportions -- a two-proportion test with a

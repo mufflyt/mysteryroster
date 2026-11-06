@@ -627,18 +627,35 @@ print.mysteryroster_truth <- function(x, ...) {
 #' some change) was written by hand, the same few lines of `sprintf()` and
 #' `prop.test()` every time. This is that pattern as a reusable function: give
 #' it a count and a total (optionally a second count and total to compare
-#' against), get back the numbers *and* a drop-in sentence built from them,
-#' so copying a reported percentage out of a manuscript can't drift from the
-#' number a reviewer would recompute from the same inputs.
+#' against), get back the numbers *and* a drop-in, grammatically complete
+#' sentence built from them, so copying a reported percentage out of a
+#' manuscript can't drift from the number a reviewer would recompute from the
+#' same inputs.
 #'
 #' @details
+#' **Why two label arguments per group.** A single free-text label (as an
+#' earlier version of this function used) reads fine as "204 of 1,806
+#' entity-years abstained" but produces a sentence fragment, not a sentence,
+#' for anything phrased as a noun rather than a predicate ("204 of 1,806
+#' NPI-years with any external corroboration" has no verb). Splitting the
+#' thing being counted (`unit_label`, a plural noun: `"entity-years"`,
+#' `"NPI-years"`) from what is true of it (`condition_label`, a verb phrase:
+#' `"were abstained"`, `"had any external corroboration"`) makes every
+#' generated sentence grammatically complete regardless of wording.
+#'
 #' **This does not replace statistical judgment.** It runs exactly one test
 #' (`stats::prop.test()`, two-sided, continuity-corrected) and one interval
 #' (Wilson, via [wilson_ci()]) -- the two defaults used throughout this
 #' package's own docs. A different design (one-sided, a different interval,
 #' a paired or stratified test) is not what this computes, and the sentence
-#' it returns says "two-proportion test" so that is never misread as more
-#' than it is.
+#' it returns spells out the exact test (`"two-proportion chi-squared test
+#' with continuity correction"`) so that is never misread as more than it is.
+#' The comparison sentence also reports the difference in percentage points
+#' with its own 95% CI (from the same `prop.test()` call, re-signed so a
+#' positive difference always means `b` is higher than `a`) and the test
+#' statistic with degrees of freedom and total N, in the
+#' "chi-squared(df, N = ...) = ..., p = ..." form a manuscript expects --
+#' not just a bare p-value.
 #'
 #' **p-values are never silently dropped.** If `prop.test()` cannot run (for
 #' example a `0`-total group), `p_value` is `NA` and `comparison_sentence`
@@ -649,30 +666,39 @@ print.mysteryroster_truth <- function(x, ...) {
 #'   `n_a` cannot exceed `n_total_a`.
 #' @param n_b,n_total_b Optional count and total for a second proportion to
 #'   compare `n_a`/`n_total_a` against. Supply both or neither.
-#' @param label_a,label_b Short labels substituted into the sentences --
-#'   for example `"3-source baseline"` and `"+ T-MSIS"`. `label_b` is unused
-#'   if `n_b`/`n_total_b` are not supplied.
-#' @param quantity_label What is being counted, substituted into the
-#'   sentences as both the subject (title-cased) and in context -- for
-#'   example `"entity-years abstained"` or `"NPI-years with any
-#'   corroboration"`. Default `"cases"`.
+#' @param label_a,label_b Short labels for the two groups/conditions,
+#'   substituted where the sentence names which group a number belongs to --
+#'   for example `"the 3-source baseline"` and `"+ T-MSIS (4 sources)"`.
+#'   Include an article (`"the"`) if the sentence should read with one; none
+#'   is added automatically. `label_b` is unused if `n_b`/`n_total_b` are not
+#'   supplied.
+#' @param unit_label The plural noun being counted -- for example
+#'   `"entity-years"` or `"NPI-years"`. Default `"cases"`.
+#' @param condition_label A verb phrase describing what is true of the
+#'   counted `n_a`/`n_b` (not `n_total_a`/`n_total_b`) -- for example
+#'   `"were abstained"` or `"had any external corroboration"`. Default
+#'   `"met this criterion"`.
 #' @param conf_level Confidence level for the Wilson interval(s). Default
 #'   `0.95`.
 #' @return A list: `a` (`n`, `n_total`, `pct`, `ci_low`, `ci_high`, `label`),
 #'   `sentence_a` (one sentence reporting `a` with its Wilson interval), and
 #'   `combined_text` (all sentences joined with spaces). When `n_b` is
-#'   supplied, also `b` (same shape as `a`), `sentence_b`, `p_value` (from
-#'   `prop.test()`, `NA` if not computable), and `comparison_sentence`.
+#'   supplied, also `b` (same shape as `a`), `sentence_b`, `p_value`,
+#'   `statistic` and `df` (the chi-squared statistic and its degrees of
+#'   freedom from `prop.test()`, both `NA` if not computable),
+#'   `diff_pct` (`b$pct - a$pct`), `diff_ci_low`/`diff_ci_high` (95% CI for
+#'   that difference, in percentage points, signed the same way), and
+#'   `comparison_sentence`.
 #' @examples
 #' format_proportion_comparison_prose(
 #'   n_a = 204, n_total_a = 1806, label_a = "this cohort",
-#'   quantity_label = "NPI-years with any external corroboration"
+#'   unit_label = "NPI-years", condition_label = "had any external corroboration"
 #' )$sentence_a
 #'
 #' cmp <- format_proportion_comparison_prose(
 #'   n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
-#'   label_a = "3-source baseline", label_b = "+ T-MSIS",
-#'   quantity_label = "entity-years abstained"
+#'   label_a = "the 3-source baseline", label_b = "+ T-MSIS (4 sources)",
+#'   unit_label = "entity-years", condition_label = "were abstained"
 #' )
 #' cmp$comparison_sentence
 #' cmp$p_value
@@ -682,14 +708,16 @@ print.mysteryroster_truth <- function(x, ...) {
 #' @export
 format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_total_b = NULL,
                                                 label_a = "group A", label_b = "group B",
-                                                quantity_label = "cases", conf_level = 0.95) {
+                                                unit_label = "cases", condition_label = "met this criterion",
+                                                conf_level = 0.95) {
   checkmate::assert_count(n_a)
   checkmate::assert_count(n_total_a, positive = TRUE)
   if (n_a > n_total_a) {
     stop("format_proportion_comparison_prose: n_a cannot exceed n_total_a", call. = FALSE)
   }
   checkmate::assert_string(label_a, min.chars = 1)
-  checkmate::assert_string(quantity_label, min.chars = 1)
+  checkmate::assert_string(unit_label, min.chars = 1)
+  checkmate::assert_string(condition_label, min.chars = 1)
   checkmate::assert_number(conf_level, lower = 0, upper = 1)
   has_b <- !is.null(n_b) || !is.null(n_total_b)
   if (has_b) {
@@ -708,8 +736,8 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
   ci_a <- wilson_ci(n_a, n_total_a, conf_level = conf_level, as_percent = TRUE)
   pct_a <- one_sided_pct(n_a, n_total_a)
   sentence_a <- sprintf(
-    "%s: %s of %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
-    label_a, fmt_n(n_a), fmt_n(n_total_a), quantity_label, pct_a, conf_pct, ci_a$ci_low, ci_a$ci_high
+    "In %s, %s of %s %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
+    label_a, fmt_n(n_a), fmt_n(n_total_a), unit_label, condition_label, pct_a, conf_pct, ci_a$ci_low, ci_a$ci_high
   )
 
   out <- list(
@@ -722,14 +750,22 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
     ci_b <- wilson_ci(n_b, n_total_b, conf_level = conf_level, as_percent = TRUE)
     pct_b <- one_sided_pct(n_b, n_total_b)
     sentence_b <- sprintf(
-      "%s: %s of %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
-      label_b, fmt_n(n_b), fmt_n(n_total_b), quantity_label, pct_b, conf_pct, ci_b$ci_low, ci_b$ci_high
+      "In %s, %s of %s %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
+      label_b, fmt_n(n_b), fmt_n(n_total_b), unit_label, condition_label, pct_b, conf_pct, ci_b$ci_low, ci_b$ci_high
     )
     pt <- tryCatch(
       suppressWarnings(stats::prop.test(c(n_a, n_b), c(n_total_a, n_total_b))),
       error = function(e) NULL
     )
     p_value <- if (is.null(pt)) NA_real_ else pt$p.value
+    statistic <- if (is.null(pt)) NA_real_ else unname(pt$statistic)
+    df <- if (is.null(pt)) NA_real_ else unname(pt$parameter)
+    diff_pct <- round(pct_b - pct_a, 1)
+    # prop.test()'s conf.int is for prop[1] - prop[2] (i.e. a - b); re-signed
+    # to b - a, in percentage points, so a positive difference always means
+    # "b is higher", matching diff_pct's own sign.
+    diff_ci_low <- if (is.null(pt)) NA_real_ else round(-100 * pt$conf.int[2], 1)
+    diff_ci_high <- if (is.null(pt)) NA_real_ else round(-100 * pt$conf.int[1], 1)
     p_fmt <- if (is.na(p_value)) {
       "not computable"
     } else if (p_value < 0.001) {
@@ -737,23 +773,34 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
     } else {
       sprintf("= %.3f", p_value)
     }
+    stat_fmt <- if (is.na(statistic)) {
+      "statistic not computable"
+    } else {
+      sprintf("chi-squared(%d, N = %s) = %.2f", as.integer(df), fmt_n(n_total_a + n_total_b), statistic)
+    }
     comparison_sentence <- sprintf(
-      "%s was %.1f%% (%s/%s) for %s versus %.1f%% (%s/%s) for %s (two-proportion test, p %s).",
-      .title_case_first(quantity_label), pct_a, fmt_n(n_a), fmt_n(n_total_a), label_a,
-      pct_b, fmt_n(n_b), fmt_n(n_total_b), label_b, p_fmt
+      paste0(
+        "%.1f%% of %s %s in %s (%s/%s), compared with %.1f%% in %s (%s/%s) -- ",
+        "a difference of %.1f percentage points (%s%% CI %.1f to %.1f; ",
+        "two-proportion %s, p %s)."
+      ),
+      pct_a, unit_label, condition_label, label_a, fmt_n(n_a), fmt_n(n_total_a),
+      pct_b, label_b, fmt_n(n_b), fmt_n(n_total_b),
+      diff_pct, conf_pct, diff_ci_low, diff_ci_high, stat_fmt, p_fmt
     )
     out$b <- list(n = n_b, n_total = n_total_b, pct = pct_b, ci_low = ci_b$ci_low, ci_high = ci_b$ci_high, label = label_b)
     out$sentence_b <- sentence_b
     out$p_value <- p_value
+    out$statistic <- statistic
+    out$df <- df
+    out$diff_pct <- diff_pct
+    out$diff_ci_low <- diff_ci_low
+    out$diff_ci_high <- diff_ci_high
     out$comparison_sentence <- comparison_sentence
     out$combined_text <- paste(sentence_a, sentence_b, comparison_sentence)
   }
 
   out
-}
-
-.title_case_first <- function(x) {
-  paste0(toupper(substring(x, 1, 1)), substring(x, 2))
 }
 
 #' Manuscript-ready prose for an attribute_truth_fusion() result
@@ -772,16 +819,20 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
 #'   method on the same claims -- to compare `result`'s abstention rate
 #'   against via a two-proportion test. Its own `source_diagnostics` is not
 #'   used; only `result`'s is (see Details).
-#' @param result_label,compare_to_label Short labels substituted into the
-#'   sentences, same as [format_proportion_comparison_prose()]'s `label_a`/
-#'   `label_b`. Defaults `"this fit"` / `"the comparison fit"`.
+#' @param result_label,compare_to_label Short labels naming the two
+#'   conditions, same as [format_proportion_comparison_prose()]'s `label_a`/
+#'   `label_b` -- include an article if the sentence should read with one
+#'   (for example `"the baseline fit"`). Defaults `"this fit"` / `"the
+#'   comparison fit"`.
 #' @param conf_level Confidence level for the Wilson interval(s). Default
 #'   `0.95`.
 #' @return Same shape as [format_proportion_comparison_prose()]'s return
-#'   (quantity_label fixed to `"entity-years abstained"`), plus `method`
-#'   (`result`'s method) and, when available, `reliability_table` (`result`'s
-#'   `source_diagnostics`, one row per source, highest reliability first)
-#'   and `reliability_sentence`, both folded into `combined_text`.
+#'   (`unit_label`/`condition_label` fixed to `"entity-years"`/`"were
+#'   abstained"`), plus `method` (`result`'s method) and, when
+#'   `source_diagnostics` has a learned `reliability_score` for 2+ sources,
+#'   `reliability_table` (one row per source, highest reliability first) and
+#'   `reliability_sentence` (the full ranking, not just the extremes),
+#'   folded into `combined_text`.
 #' @examples
 #' claims <- data.frame(
 #'   entity_id = c("1", "1", "2", "2"), attribute = "state",
@@ -808,12 +859,12 @@ attribute_truth_fusion_prose <- function(result, compare_to = NULL,
     out <- format_proportion_comparison_prose(
       n_a = n_a, n_total_a = n_total_a, n_b = n_b, n_total_b = n_total_b,
       label_a = result_label, label_b = compare_to_label,
-      quantity_label = "entity-years abstained", conf_level = conf_level
+      unit_label = "entity-years", condition_label = "were abstained", conf_level = conf_level
     )
   } else {
     out <- format_proportion_comparison_prose(
       n_a = n_a, n_total_a = n_total_a, label_a = result_label,
-      quantity_label = "entity-years abstained", conf_level = conf_level
+      unit_label = "entity-years", condition_label = "were abstained", conf_level = conf_level
     )
   }
 
@@ -823,10 +874,10 @@ attribute_truth_fusion_prose <- function(result, compare_to = NULL,
   rel <- rel[!is.na(rel$reliability_score), , drop = FALSE]
   if (nrow(rel) >= 2L) {
     rel <- rel[order(-rel$reliability_score), , drop = FALSE]
+    ranked <- sprintf("%s (%.3f)", rel$source_id, rel$reliability_score)
     reliability_sentence <- sprintf(
-      "Under `%s`, learned source reliability ranked %s highest (%.3f) and %s lowest (%.3f).",
-      out$method, rel$source_id[1], rel$reliability_score[1],
-      rel$source_id[nrow(rel)], rel$reliability_score[nrow(rel)]
+      "Under `%s`, learned source reliability ranked, highest to lowest: %s.",
+      out$method, paste(ranked, collapse = ", ")
     )
     out$reliability_table <- rel
     out$reliability_sentence <- reliability_sentence

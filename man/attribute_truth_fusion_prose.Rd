@@ -22,19 +22,21 @@ method on the same claims -- to compare \code{result}'s abstention rate
 against via a two-proportion test. Its own \code{source_diagnostics} is not
 used; only \code{result}'s is (see Details).}
 
-\item{result_label, compare_to_label}{Short labels substituted into the
-sentences, same as \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}}'s \code{label_a}/
-\code{label_b}. Defaults \code{"this fit"} / \code{"the comparison fit"}.}
+\item{result_label, compare_to_label}{Short labels naming the two
+conditions, same as \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}}'s \code{label_a}/
+\code{label_b} -- include an article if the sentence should read with one
+(for example \code{"the baseline fit"}). Defaults \code{"this fit"} / \code{"the comparison fit"}.}
 
 \item{conf_level}{Confidence level for the Wilson interval(s). Default
 \code{0.95}.}
 }
 \value{
 Same shape as \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}}'s return
-(quantity_label fixed to \code{"entity-years abstained"}), plus \code{method}
-(\code{result}'s method) and, when available, \code{reliability_table} (\code{result}'s
-\code{source_diagnostics}, one row per source, highest reliability first)
-and \code{reliability_sentence}, both folded into \code{combined_text}.
+(\code{unit_label}/\code{condition_label} fixed to \code{"entity-years"}/\code{"were abstained"}), plus \code{method} (\code{result}'s method) and, when
+\code{source_diagnostics} has a learned \code{reliability_score} for 2+ sources,
+\code{reliability_table} (one row per source, highest reliability first) and
+\code{reliability_sentence} (the full ranking, not just the extremes),
+folded into \code{combined_text}.
 }
 \description{
 A thin wrapper around \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}} specific to

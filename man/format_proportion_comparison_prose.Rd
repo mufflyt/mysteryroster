@@ -11,7 +11,8 @@ format_proportion_comparison_prose(
   n_total_b = NULL,
   label_a = "group A",
   label_b = "group B",
-  quantity_label = "cases",
+  unit_label = "cases",
+  condition_label = "met this criterion",
   conf_level = 0.95
 )
 }
@@ -22,13 +23,20 @@ format_proportion_comparison_prose(
 \item{n_b, n_total_b}{Optional count and total for a second proportion to
 compare \code{n_a}/\code{n_total_a} against. Supply both or neither.}
 
-\item{label_a, label_b}{Short labels substituted into the sentences --
-for example \code{"3-source baseline"} and \code{"+ T-MSIS"}. \code{label_b} is unused
-if \code{n_b}/\code{n_total_b} are not supplied.}
+\item{label_a, label_b}{Short labels for the two groups/conditions,
+substituted where the sentence names which group a number belongs to --
+for example \code{"the 3-source baseline"} and \code{"+ T-MSIS (4 sources)"}.
+Include an article (\code{"the"}) if the sentence should read with one; none
+is added automatically. \code{label_b} is unused if \code{n_b}/\code{n_total_b} are not
+supplied.}
 
-\item{quantity_label}{What is being counted, substituted into the
-sentences as both the subject (title-cased) and in context -- for
-example \code{"entity-years abstained"} or \code{"NPI-years with any corroboration"}. Default \code{"cases"}.}
+\item{unit_label}{The plural noun being counted -- for example
+\code{"entity-years"} or \code{"NPI-years"}. Default \code{"cases"}.}
+
+\item{condition_label}{A verb phrase describing what is true of the
+counted \code{n_a}/\code{n_b} (not \code{n_total_a}/\code{n_total_b}) -- for example
+\code{"were abstained"} or \code{"had any external corroboration"}. Default
+\code{"met this criterion"}.}
 
 \item{conf_level}{Confidence level for the Wilson interval(s). Default
 \code{0.95}.}
@@ -37,8 +45,12 @@ example \code{"entity-years abstained"} or \code{"NPI-years with any corroborati
 A list: \code{a} (\code{n}, \code{n_total}, \code{pct}, \code{ci_low}, \code{ci_high}, \code{label}),
 \code{sentence_a} (one sentence reporting \code{a} with its Wilson interval), and
 \code{combined_text} (all sentences joined with spaces). When \code{n_b} is
-supplied, also \code{b} (same shape as \code{a}), \code{sentence_b}, \code{p_value} (from
-\code{prop.test()}, \code{NA} if not computable), and \code{comparison_sentence}.
+supplied, also \code{b} (same shape as \code{a}), \code{sentence_b}, \code{p_value},
+\code{statistic} and \code{df} (the chi-squared statistic and its degrees of
+freedom from \code{prop.test()}, both \code{NA} if not computable),
+\code{diff_pct} (\code{b$pct - a$pct}), \code{diff_ci_low}/\code{diff_ci_high} (95\% CI for
+that difference, in percentage points, signed the same way), and
+\code{comparison_sentence}.
 }
 \description{
 Every result reported in this package's own case-study docs (Wilson
@@ -46,18 +58,34 @@ interval on a rate; two-proportion test comparing a rate before and after
 some change) was written by hand, the same few lines of \code{sprintf()} and
 \code{prop.test()} every time. This is that pattern as a reusable function: give
 it a count and a total (optionally a second count and total to compare
-against), get back the numbers \emph{and} a drop-in sentence built from them,
-so copying a reported percentage out of a manuscript can't drift from the
-number a reviewer would recompute from the same inputs.
+against), get back the numbers \emph{and} a drop-in, grammatically complete
+sentence built from them, so copying a reported percentage out of a
+manuscript can't drift from the number a reviewer would recompute from the
+same inputs.
 }
 \details{
+\strong{Why two label arguments per group.} A single free-text label (as an
+earlier version of this function used) reads fine as "204 of 1,806
+entity-years abstained" but produces a sentence fragment, not a sentence,
+for anything phrased as a noun rather than a predicate ("204 of 1,806
+NPI-years with any external corroboration" has no verb). Splitting the
+thing being counted (\code{unit_label}, a plural noun: \code{"entity-years"},
+\code{"NPI-years"}) from what is true of it (\code{condition_label}, a verb phrase:
+\code{"were abstained"}, \code{"had any external corroboration"}) makes every
+generated sentence grammatically complete regardless of wording.
+
 \strong{This does not replace statistical judgment.} It runs exactly one test
 (\code{stats::prop.test()}, two-sided, continuity-corrected) and one interval
 (Wilson, via \code{\link[=wilson_ci]{wilson_ci()}}) -- the two defaults used throughout this
 package's own docs. A different design (one-sided, a different interval,
 a paired or stratified test) is not what this computes, and the sentence
-it returns says "two-proportion test" so that is never misread as more
-than it is.
+it returns spells out the exact test (\code{"two-proportion chi-squared test with continuity correction"}) so that is never misread as more than it is.
+The comparison sentence also reports the difference in percentage points
+with its own 95\% CI (from the same \code{prop.test()} call, re-signed so a
+positive difference always means \code{b} is higher than \code{a}) and the test
+statistic with degrees of freedom and total N, in the
+"chi-squared(df, N = ...) = ..., p = ..." form a manuscript expects --
+not just a bare p-value.
 
 \strong{p-values are never silently dropped.} If \code{prop.test()} cannot run (for
 example a \code{0}-total group), \code{p_value} is \code{NA} and \code{comparison_sentence}
@@ -67,13 +95,13 @@ result or printing a misleading placeholder.
 \examples{
 format_proportion_comparison_prose(
   n_a = 204, n_total_a = 1806, label_a = "this cohort",
-  quantity_label = "NPI-years with any external corroboration"
+  unit_label = "NPI-years", condition_label = "had any external corroboration"
 )$sentence_a
 
 cmp <- format_proportion_comparison_prose(
   n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
-  label_a = "3-source baseline", label_b = "+ T-MSIS",
-  quantity_label = "entity-years abstained"
+  label_a = "the 3-source baseline", label_b = "+ T-MSIS (4 sources)",
+  unit_label = "entity-years", condition_label = "were abstained"
 )
 cmp$comparison_sentence
 cmp$p_value

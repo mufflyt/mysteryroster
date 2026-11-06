@@ -236,19 +236,21 @@ involved -- just the two integers each side of the fraction above):
 ```{r prose-abstention}
 abstention_prose <- format_proportion_comparison_prose(
   n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
-  label_a = "3-source baseline", label_b = "+ T-MSIS (4 sources)",
-  quantity_label = "entity-years abstained under majority vote"
+  label_a = "the 3-source baseline", label_b = "+ T-MSIS (4 sources)",
+  unit_label = "entity-years", condition_label = "were abstained under majority vote"
 )
 abstention_prose$comparison_sentence
 abstention_prose$p_value
+abstention_prose$diff_ci_low
+abstention_prose$diff_ci_high
 ```
 
-That p-value is new information, not something already published above --
-the headline bullets only ever reported the per-year breakdown, never this
-pooled two-proportion test across all 3,556. `attribute_truth_fusion_prose()`
-does the same thing directly from an `attribute_truth_fusion()` result,
-without extracting `n`/`n_abstained` by hand first, and adds a
-reliability-ranking sentence when `source_diagnostics` has one to report:
+That p-value, chi-squared statistic, and difference-in-proportions interval are new
+information, not something already published above -- the headline bullets only ever
+reported the per-year breakdown, never this pooled two-proportion test across all 3,556.
+`attribute_truth_fusion_prose()` does the same thing directly from an
+`attribute_truth_fusion()` result, without extracting `n`/`n_abstained` by hand first,
+and adds a full reliability-ranking sentence when `source_diagnostics` has one to report:
 
 ```{r prose-direct}
 claims_small <- data.frame(

@@ -3,12 +3,13 @@
 test_that("format_proportion_comparison_prose reports a single proportion correctly", {
   out <- format_proportion_comparison_prose(
     n_a = 204, n_total_a = 1806, label_a = "this cohort",
-    quantity_label = "NPI-years with any external corroboration"
+    unit_label = "NPI-years", condition_label = "had any external corroboration"
   )
   expect_equal(out$a$pct, 11.3)
   expect_equal(out$a$ci_low, 9.9)
   expect_equal(out$a$ci_high, 12.8)
-  expect_match(out$sentence_a, "204 of 1,806 NPI-years with any external corroboration")
+  expect_match(out$sentence_a, "^In this cohort, ")
+  expect_match(out$sentence_a, "204 of 1,806 NPI-years had any external corroboration")
   expect_match(out$sentence_a, "11\\.3%")
   expect_match(out$sentence_a, "95% CI 9\\.9-12\\.8%")
   expect_null(out$b)
@@ -19,15 +20,20 @@ test_that("format_proportion_comparison_prose reports a single proportion correc
 test_that("format_proportion_comparison_prose computes a two-proportion test when n_b is given", {
   out <- format_proportion_comparison_prose(
     n_a = 10, n_total_a = 100, n_b = 40, n_total_b = 100,
-    label_a = "before", label_b = "after", quantity_label = "cases resolved"
+    label_a = "before", label_b = "after", unit_label = "cases", condition_label = "were resolved"
   )
   expect_equal(out$a$pct, 10)
   expect_equal(out$b$pct, 40)
   expect_true(is.numeric(out$p_value))
   expect_true(out$p_value < 0.001) # a real, large difference
-  expect_match(out$comparison_sentence, "Cases resolved")
-  expect_match(out$comparison_sentence, "10\\.0% \\(10/100\\) for before")
-  expect_match(out$comparison_sentence, "40\\.0% \\(40/100\\) for after")
+  expect_true(is.numeric(out$statistic))
+  expect_equal(out$df, 1)
+  expect_equal(out$diff_pct, 30)
+  expect_true(out$diff_ci_low > 0) # after is reliably higher than before
+  expect_match(out$comparison_sentence, "10\\.0% of cases were resolved in before \\(10/100\\)")
+  expect_match(out$comparison_sentence, "compared with 40\\.0% in after \\(40/100\\)")
+  expect_match(out$comparison_sentence, "a difference of 30\\.0 percentage points")
+  expect_match(out$comparison_sentence, "chi-squared\\(1, N = 200\\)")
   expect_match(out$comparison_sentence, "p < 0.001")
   expect_match(out$combined_text, "before")
   expect_match(out$combined_text, "after")
@@ -38,6 +44,19 @@ test_that("format_proportion_comparison_prose reports p as '= x.xxx' when not be
     n_a = 48, n_total_a = 100, n_b = 52, n_total_b = 100
   )
   expect_match(out$comparison_sentence, "p = 0\\.\\d{3}")
+})
+
+test_that("format_proportion_comparison_prose's difference CI is signed b minus a", {
+  # a < b: difference and its CI should be positive (b higher than a)
+  out <- format_proportion_comparison_prose(n_a = 10, n_total_a = 100, n_b = 40, n_total_b = 100)
+  expect_equal(out$diff_pct, 30)
+  expect_true(out$diff_ci_low < out$diff_ci_high)
+  expect_true(out$diff_ci_low > 0)
+
+  # a > b: difference and its CI should be negative (b lower than a)
+  out2 <- format_proportion_comparison_prose(n_a = 40, n_total_a = 100, n_b = 10, n_total_b = 100)
+  expect_equal(out2$diff_pct, -30)
+  expect_true(out2$diff_ci_high < 0)
 })
 
 test_that("format_proportion_comparison_prose rejects n_a exceeding n_total_a", {
@@ -58,6 +77,17 @@ test_that("format_proportion_comparison_prose requires both or neither of n_b/n_
   )
 })
 
+test_that("format_proportion_comparison_prose reproduces the published evidence-ledger numbers exactly", {
+  out <- format_proportion_comparison_prose(
+    n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
+    label_a = "the 3-source baseline", label_b = "+ T-MSIS (4 sources)",
+    unit_label = "entity-years", condition_label = "were abstained"
+  )
+  expect_equal(out$a$pct, 19.4)
+  expect_equal(out$b$pct, 21.3)
+  expect_equal(round(out$p_value, 3), 0.049)
+})
+
 # --- attribute_truth_fusion_prose -----------------------------------------
 
 test_that("attribute_truth_fusion_prose reports abstention from a single fit", {
@@ -70,7 +100,7 @@ test_that("attribute_truth_fusion_prose reports abstention from a single fit", {
   out <- attribute_truth_fusion_prose(fit, result_label = "this example")
   expect_equal(out$a$n, 1) # entity 2 ties (NY vs NJ), entity 1 doesn't
   expect_equal(out$a$n_total, 2)
-  expect_match(out$sentence_a, "this example: 1 of 2 entity-years abstained")
+  expect_match(out$sentence_a, "In this example, 1 of 2 entity-years were abstained")
   expect_equal(out$method, "majority")
   expect_null(out$reliability_sentence) # majority learns no reliability
 })
@@ -92,15 +122,15 @@ test_that("attribute_truth_fusion_prose compares two fits via a two-proportion t
   expect_match(out$comparison_sentence, "no tie")
 })
 
-test_that("attribute_truth_fusion_prose adds a reliability sentence when source_diagnostics has 2+ sources", {
+test_that("attribute_truth_fusion_prose adds a full reliability ranking when source_diagnostics has 2+ sources", {
   fake_fit <- structure(
     list(
       predictions = data.frame(entity_id = c("1", "2"), reference_year = 2024, abstained = c(FALSE, TRUE)),
       candidate_scores = data.frame(),
       source_diagnostics = data.frame(
-        source_id = c("nppes", "nppes", "dac", "dac"),
-        true_label = c("CO", "NY", "CO", "NY"),
-        reliability_score = c(0.9, 0.9, 0.4, 0.4)
+        source_id = c("nppes", "nppes", "dac", "dac", "op", "op"),
+        true_label = c("CO", "NY", "CO", "NY", "CO", "NY"),
+        reliability_score = c(0.9, 0.9, 0.4, 0.4, 0.6, 0.6)
       ),
       model_diagnostics = data.frame(method = "dawid_skene"),
       claims = data.frame()
@@ -109,10 +139,11 @@ test_that("attribute_truth_fusion_prose adds a reliability sentence when source_
   )
   out <- attribute_truth_fusion_prose(fake_fit, result_label = "fake")
   expect_match(out$reliability_sentence, "dawid_skene")
-  expect_match(out$reliability_sentence, "nppes highest \\(0\\.900\\)")
-  expect_match(out$reliability_sentence, "dac lowest \\(0\\.400\\)")
-  expect_equal(nrow(out$reliability_table), 2)
-  expect_match(out$combined_text, "reliability ranked nppes highest")
+  expect_match(out$reliability_sentence, "highest to lowest")
+  # all three sources named, in reliability order
+  expect_match(out$reliability_sentence, "nppes \\(0\\.900\\), op \\(0\\.600\\), dac \\(0\\.400\\)")
+  expect_equal(nrow(out$reliability_table), 3)
+  expect_match(out$combined_text, "ranked, highest to lowest")
 })
 
 test_that("attribute_truth_fusion_prose requires a mysteryroster_truth object", {
