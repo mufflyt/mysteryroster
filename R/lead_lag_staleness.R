@@ -1574,8 +1574,8 @@ attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_
       ci_text <- format_ci_years(r$median_ci_low, r$median_ci_high)
       if (clinical) {
         sprintf(
-          "This estimate for %s was based on %d events still being tracked at the time the median was reached, with a %d%% confidence interval of %s.",
-          label_for(r$source), r$median_n_at_risk, ci_pct, ci_text
+          "This estimate for %s was based on %d event%s still being tracked at the time the median was reached, with a %d%% confidence interval of %s.",
+          label_for(r$source), r$median_n_at_risk, if (r$median_n_at_risk == 1L) "" else "s", ci_pct, ci_text
         )
       } else {
         sprintf(

@@ -131,6 +131,23 @@ test_that("attribute_catch_up_curve_prose's register = 'clinical' reports the co
   expect_false(grepl("—", p$sentence))
 })
 
+test_that("attribute_catch_up_curve_prose's register = 'clinical' uses singular 'event' when median_n_at_risk is 1", {
+  # a detects id 1's NM arrival at 2021 (its own data) AND id 2's GA arrival at 2021 --
+  # under exclude_self, a's own events are unanchored by definition, but b independently
+  # detects id 1's NM arrival too (at 2022), so the NM event survives for a (anchored via
+  # b) while the GA event does not (only a ever detected it). a is left scored against
+  # exactly 1 event, so its confidence-interval sentence must say "1 event", not "1 events".
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "GA"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "TX")) # never shows GA
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state", reference = "exclude_self")
+  expect_equal(cu$median_horizon$median_n_at_risk[cu$median_horizon$source == "a"], 1L)
+  p <- attribute_catch_up_curve_prose(cu, register = "clinical")
+  expect_match(p$sentence, "was based on 1 event still being tracked", fixed = TRUE)
+  expect_false(grepl("1 events", p$sentence, fixed = TRUE))
+})
+
 test_that("attribute_catch_up_curve_prose's ci_level only changes the displayed label, not the computation", {
   cu <- make_cu()
   p90 <- attribute_catch_up_curve_prose(cu, ci_level = 0.90)

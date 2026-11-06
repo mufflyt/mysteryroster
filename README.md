@@ -359,7 +359,7 @@ available before it is actually implemented.
 | Restrict to the frame registry; define strata | `frame_strata()` |
 | Stratified sample with preserved sampling probabilities | `stratified_listing_sample()` |
 | Design weights for a call log sampled elsewhere (N / n from a population table) | `listing_weights()` |
-| Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `listing_status_levels()` |
+| Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `obgyn_disposition_map()`, `listing_status_levels()` |
 | Design-weighted validity, overall and by stratum; complete-case estimate; location-valid or workforce-valid outcome | `listing_validity_design()`, `validity_estimates()` |
 | Extreme-case bounds for unresolved listings | `validity_sensitivity_bounds()` |
 | Survey-weighted logistic regression | `validity_model()` |
@@ -371,7 +371,8 @@ available before it is actually implemented.
 | Which source actually has data for more entity-years, against a defined universe | `attribute_coverage()` |
 | Longitudinal lead-lag: which source moves first, adopts, or reverts, with an optional cross-sectional back-check | `attribute_lead_lag_matrix()` |
 | How many years until one source adopts the other's disputed value -- median/IQR/mean/CI, in a manuscript sentence | `attribute_lead_lag_duration()` |
-| Catch-up curves across 2+ sources at once, as a proper right-censored Kaplan-Meier survival estimate (never silently drops an identifier that hasn't caught up yet) | `attribute_catch_up_curve()` |
+| Catch-up curves across 2+ sources at once, as a proper right-censored Kaplan-Meier survival estimate (never silently drops an identifier that hasn't caught up yet), with a circularity-robust reference mode, shared-lineage grouping, and a confidence interval around the median | `attribute_catch_up_curve()` |
+| Manuscript-ready prose for an `attribute_catch_up_curve()` result, ranking sources that resolve and writing an honest sentence for ones that don't, in a terse technical register or a plain-language clinical one | `attribute_catch_up_curve_prose()` |
 | Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |
 | Administrative enrollment arrival/departure timing around a panel move | `enrollment_move_lead_lag()` |
 | Manuscript-ready paragraphs from the three lead-lag approaches above | `format_no_gold_standard_prose()` |
@@ -386,7 +387,7 @@ available before it is actually implemented.
 | Predict a value by majority vote, or an optional Dawid-Skene-family or TruthFinder-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
 | Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
 | Manuscript-ready sentence (count, %, Wilson CI) for one proportion, or two compared via a two-proportion chi-squared test (statistic, df, p-value, and a CI for the difference) | `format_proportion_comparison_prose()` |
-| Manuscript-ready sentence ranking 2+ groups by any numeric value (coverage, lead rate, odd-one-out rate, reliability...), with ties flagged rather than hidden behind a false strict order | `format_ranking_prose()` |
+| Manuscript-ready sentence ranking 2+ groups by any numeric value (coverage, lead rate, odd-one-out rate, reliability...), with ties flagged rather than hidden behind a false strict order, in a terse technical register or a plain-language clinical one | `format_ranking_prose()` |
 | Same, pulled directly from one or two `attribute_truth_fusion()` results, plus a full source-reliability ranking sentence | `attribute_truth_fusion_prose()` |
 
 ## Design rules
