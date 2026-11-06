@@ -978,6 +978,19 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' value changes. An identifier's first observed year in a source is never itself an arrival
 #' (there is no prior value to differ from).
 #'
+#' **What counts as a source "showing" the value, for catch-up purposes.** This is
+#' deliberately looser than the arrival rule above: once an `(id, value)` event's `start`
+#' year is known (pooled across all sources, see below), a source is credited with showing
+#' that value as soon as *any* of its own records -- at or after `start` -- carries that
+#' exact value, whether or not its own immediately preceding record was the year before.
+#' Requiring consecutive years here too would silently undercount catch-up for any source
+#' sampled less frequently than annually (e.g. enrollment- or claims-derived data with
+#' multi-year gaps between records): such a source can display the correct value while its
+#' own prior record for that identifier is several years earlier, which the strict
+#' consecutive-year rule would never recognize as a match. A record of that exact value from
+#' *before* `start` -- a coincidental earlier occurrence unrelated to the tracked arrival --
+#' does not count.
+#'
 #' **What defines one "event" to track catch-up for.** Every source's arrivals are pooled, and
 #' each distinct `(id, value)` pair's event `start` is the *earliest* year *any* source shows
 #' that identifier arriving at that value. This means a value an identifier returns to a second
@@ -1090,14 +1103,25 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
   if (is.null(max_horizon)) max_horizon <- panel_max_year - panel_min_year
   horizons <- 0:max_horizon
 
-  km_for_source <- function(ev_s) {
-    if (is.null(ev_s) || nrow(ev_s) == 0L) {
-      ev_s <- tibble::tibble(id = character(0), year = integer(0), value = character(0))
-    }
-    m <- merge(first_seen, ev_s, by = c("id", "value"), all.x = TRUE)
+  # A source is credited with "showing" a tracked value as soon as ANY of its own
+  # records carries that exact value in a year at or after the value's pooled first
+  # appearance -- not only if that source's own immediately preceding record was
+  # exactly one year earlier. The latter (stricter) rule is used above, in
+  # extract_events(), to discover genuine arrivals robustly; it is deliberately NOT
+  # reused here, because it silently undercounts catch-up for any source that is
+  # sampled intermittently (e.g. claims- or enrollment-derived data with multi-year
+  # gaps between records) relative to a densely/annually sampled source -- such a
+  # source can show the correct value while its own prior record is several years
+  # earlier, which extract_events() would never flag as an "arrival".
+  km_for_source <- function(src) {
+    m <- merge(first_seen, src, by = c("id", "value"), all.x = TRUE)
     m$d <- m$year - m$start
-    m <- m[is.na(m$d) | m$d >= 0, , drop = FALSE]
-    m <- m[order(m$d), ]
+    # A match that occurred only *before* this value's first appearance anywhere
+    # (a coincidental earlier occurrence of the same value, unrelated to the
+    # tracked arrival) does not count as catching up; treat it as no match so the
+    # (id, value, start) triple is retained in the risk set rather than vanishing.
+    m$d[!is.na(m$d) & m$d < 0] <- NA
+    m <- m[order(is.na(m$d), m$d), ]
     m <- m[!duplicated(m[, c("id", "value", "start")]), , drop = FALSE]
     follow_up <- panel_max_year - m$start
 
@@ -1120,7 +1144,7 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
   }
 
   curve_rows <- lapply(nm, function(s) {
-    out <- km_for_source(events[[s]])
+    out <- km_for_source(cleaned[[s]])
     out$source <- s
     out[, c("source", "horizon", "n_at_risk", "n_events", "pct_not_yet_shown")]
   })

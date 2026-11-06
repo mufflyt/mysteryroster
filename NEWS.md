@@ -21,6 +21,26 @@
   hand-traced Kaplan-Meier calculations, including a dedicated censoring
   test confirming an event near the panel's end correctly drops out of
   the risk set rather than permanently dragging a source's curve down.
+* Fixed a real bug in `attribute_catch_up_curve()`: whether a source had
+  "shown" a tracked value was decided using the same strict consecutive-year
+  rule used to *detect* arrivals in the first place. That rule is right for
+  discovering genuine arrivals, but wrong for deciding whether another
+  source has caught up -- it silently discarded a real match whenever that
+  source's own prior record for the identifier was more than one year
+  earlier, which is the normal case for any source sampled less often than
+  annually (enrollment- or claims-derived data with multi-year gaps between
+  records). Found by running the function against real, full midwifery
+  cohort data across five genuinely heterogeneous sources (NPPES,
+  DAC/PECOS, T-MSIS, Open Payments, CCN facility affiliation): three of the
+  five appeared to "never catch up" at ~95-99.5% unresolved, which turned
+  out to be the bug discarding 80-95% of each source's real matches, not a
+  finding about those sources. A source is now credited as soon as *any* of
+  its own records carries the matching value at or after the event's
+  pooled start year, regardless of the gap to its prior record; a match
+  that occurred only *before* the event started still correctly does not
+  count, and is retained in the risk set (not silently dropped) rather than
+  miscounted as resolved. Two new regression tests cover both corrected
+  behaviors.
 * Ran 20 more adversarial saboteurs (Part E of `docs/saboteur-test-matrix.md`)
   against the prose generators, covering different attack vectors than Part
   D plus `attribute_churn_rate()`/`attribute_coverage()` (built this
