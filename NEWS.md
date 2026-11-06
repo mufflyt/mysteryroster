@@ -1,5 +1,42 @@
 # mysteryroster (development version)
 
+* Fixed two real validity problems in `attribute_catch_up_curve()`, found by running it
+  against a real five-source midwifery comparison rather than only hand-built test
+  fixtures:
+  (1) Censoring used the *panel-wide* latest/earliest year for every source, conflating
+  "this source was watched and hadn't shown the value yet" (real loss to follow-up) with
+  "this source's own data collection hadn't started or had already ended" (structural
+  non-coverage). On the real data this inflated a sparse source's apparent median
+  catch-up time with years it was never able to observe anything in at all -- concretely,
+  Open Payments' reported median dropped from a non-sensical 16 years to 10 once censoring
+  used that source's own 2015-2025 observation window instead of the full panel's
+  2007-2026 span. Fixed: a source's risk set now enters (is left-truncated) at that
+  source's own earliest observed year and is censored at its own latest, never a different
+  source's.
+  (2) An event's reference time was pooled across every source's own detected arrivals,
+  so the source that happened to detect an event earliest got credited with "catching up"
+  to it immediately -- not because it is actually fast, but because it supplied the
+  timestamp it is being measured against. On the real data this was severe: 66-85% of the
+  events a source resolved at `horizon = 0` were ones that source itself had helped define.
+  Added `reference = "exclude_self"` (alongside the existing `"pooled"` default): scores
+  each source only against events *other* sources independently detected, dropping (and
+  reporting via the new `n_unanchored`) any event no other source confirms. Running both
+  modes on the real data: NPPES's median rose from 0 to 1 year and DAC/PECOS's from 0 to 2
+  once self-detected events no longer counted in their own favor; nearly half of
+  DAC/PECOS's tracked arrivals (1,485 of 3,029) turned out to have no independent
+  confirmation from any other source at all.
+  Separately checked and found negligible in the real data (0 of several thousand
+  multi-value identifiers across all five sources): a value an identifier returns to a
+  second time still collapses into its first-ever arrival, a known, documented limitation
+  left as-is since fixing it would not have changed any real number. Six new regression
+  tests cover both fixes with hand-traced examples; all 22 pre-existing tests for this
+  function still pass unchanged.
+* Added `attribute_catch_up_curve_prose()`: manuscript-ready prose for an
+  `attribute_catch_up_curve()` result, ranking sources whose curve crosses 50% via
+  `format_ranking_prose()` and writing a separate, honest sentence (percent still not
+  reflected, immediately and at a chosen horizon) for any source whose curve never does,
+  rather than forcing every source through the same ranking or fabricating an unbounded
+  catch-up time.
 * Added `attribute_catch_up_curve()`: a proper right-censored Kaplan-Meier
   survival estimate of how long each source takes to show a value another
   source already has, across 2+ sources at once. Ported and generalized

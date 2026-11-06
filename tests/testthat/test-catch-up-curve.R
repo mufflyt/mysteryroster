@@ -123,6 +123,54 @@ test_that("attribute_catch_up_curve does not drop an event from the risk set whe
   expect_true(is.na(cu$median_horizon$median_horizon[cu$median_horizon$source == "b"]))
 })
 
+test_that("attribute_catch_up_curve left-truncates a source's risk set until its own observation window begins", {
+  # a detects the arrival (CO -> NM) in 2011, but b's own data does not begin until 2015 --
+  # b cannot possibly be "at risk" of showing the value before its own data collection
+  # started. b should not enter the risk set until horizon 4 (2015 - 2011), not horizon 0.
+  a <- data.frame(npi = "1", year = 2010:2011, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = c(2015, 2016), state = c("CO", "NM"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  cb <- cu$curve[cu$curve$source == "b", ]
+  expect_equal(cb$n_at_risk[cb$horizon %in% 0:3], c(0, 0, 0, 0)) # not yet entered b's window
+  expect_equal(cb$n_at_risk[cb$horizon == 4], 1L) # enters at horizon 4 = 2015 - 2011
+  expect_equal(cb$n_at_risk[cb$horizon == 6], 0L) # censored at horizon 6: b's own data ends 2016
+  expect_equal(cu$median_horizon$median_horizon[cu$median_horizon$source == "b"], 5L)
+})
+
+test_that("attribute_catch_up_curve's reference = 'exclude_self' removes circularity and reports n_unanchored", {
+  # id 1: only a ever shows NM -- this event has no independent confirmation at all.
+  # id 2: both a (2022) and b (2021, earlier) detect the TX -> GA arrival independently.
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "GA"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "CO", "TX", "GA", "GA"))
+  c <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "CO", "TX", "TX", "TX"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b, c = c), attribute = "state", reference = "exclude_self")
+
+  expect_equal(cu$reference, "exclude_self")
+  expect_equal(cu$n_tracked, 2L) # constant regardless of reference mode
+  nu <- cu$n_unanchored
+  expect_equal(nu$n_unanchored[nu$source == "a"], 1L) # id 1's NM arrival: only a ever detected it
+  expect_equal(nu$n_unanchored[nu$source == "b"], 0L)
+  expect_equal(nu$n_unanchored[nu$source == "c"], 0L)
+
+  # a is scored against only 1 event (id 2's, anchored via b's 2021 detection) -- id 1's
+  # event is dropped entirely for a, not merely left unresolved.
+  ca <- cu$curve[cu$curve$source == "a", ]
+  expect_equal(ca$n_at_risk[ca$horizon == 0], 1L)
+  expect_equal(cu$median_horizon$median_horizon[cu$median_horizon$source == "a"], 1L)
+})
+
+test_that("attribute_catch_up_curve's reference = 'pooled' default matches prior behavior and reports n_tracked", {
+  a <- data.frame(npi = c("1", "1", "1"), year = 2020:2022, state = c("CO", "CO", "NM"))
+  b <- data.frame(npi = c("1", "1", "1"), year = 2020:2022, state = c("CO", "NM", "NM"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  expect_equal(cu$reference, "pooled")
+  expect_equal(cu$n_tracked, 1L)
+  expect_null(cu$n_unanchored)
+})
+
 test_that("attribute_catch_up_curve errors clearly when no source has any consecutive-year arrival", {
   a <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "NM")) # a gap, not consecutive
   b <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "CO"))

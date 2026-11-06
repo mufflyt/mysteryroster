@@ -9,7 +9,8 @@ attribute_catch_up_curve(
   attribute,
   id = "npi",
   year = "year",
-  max_horizon = NULL
+  max_horizon = NULL,
+  reference = c("pooled", "exclude_self")
 )
 }
 \arguments{
@@ -23,17 +24,31 @@ attribute_catch_up_curve(
 
 \item{max_horizon}{Maximum years since an event's \code{start} to evaluate. If \code{NULL} (default),
 the full span of years present across all sources (\code{max(year) - min(year)}).}
+
+\item{reference}{\code{"pooled"} (default) pools every source's own detected arrivals to find
+each event's \code{start}, so a source can get credit for "catching up" to an event it itself
+defined. \code{"exclude_self"} scores each source only against events \emph{other} sources
+detected, removing that circularity at the cost of dropping events no other source
+independently confirms (see \code{n_unanchored}).}
 }
 \value{
 A list:
 \describe{
 \item{\code{curve}}{Tibble, one row per \verb{(source, horizon)}: \code{n_at_risk}, \code{n_events} (first
 shown at exactly this horizon), \code{pct_not_yet_shown} (the Kaplan-Meier survival
-estimate, \code{100} at \code{horizon = 0} by construction, non-increasing within a source).}
+estimate, non-increasing within a source; may start below \code{100} if that source's own
+observation window begins after some events' \code{start}, since those events have not
+yet entered its risk set).}
 \item{\code{median_horizon}}{Tibble, one row per source: the smallest \code{horizon} at which
 \code{pct_not_yet_shown <= 50}, or \code{NA} if the curve never crosses 50\% within
 \code{max_horizon} -- a source that never reaches its median catch-up time within the
 observed panel, reported as \code{NA}, not a misleadingly small number.}
+\item{\code{n_tracked}}{Total distinct \verb{(id, value)} arrival events pooled across all
+sources -- a single constant, independent of any source's own observation window.}
+\item{\code{reference}}{The \code{reference} argument used, echoed back.}
+\item{\code{n_unanchored}}{Only present when \code{reference = "exclude_self"}: tibble, one row
+per source, the count of pooled events dropped for that source because no \emph{other}
+source independently detected them.}
 }
 }
 \description{
@@ -60,6 +75,19 @@ gap -- the same convention \code{\link[=attribute_churn_rate]{attribute_churn_ra
 value changes. An identifier's first observed year in a source is never itself an arrival
 (there is no prior value to differ from).
 
+\strong{What counts as a source "showing" the value, for catch-up purposes.} This is
+deliberately looser than the arrival rule above: once an \verb{(id, value)} event's \code{start}
+year is known (pooled across all sources, see below), a source is credited with showing
+that value as soon as \emph{any} of its own records -- at or after \code{start} -- carries that
+exact value, whether or not its own immediately preceding record was the year before.
+Requiring consecutive years here too would silently undercount catch-up for any source
+sampled less frequently than annually (e.g. enrollment- or claims-derived data with
+multi-year gaps between records): such a source can display the correct value while its
+own prior record for that identifier is several years earlier, which the strict
+consecutive-year rule would never recognize as a match. A record of that exact value from
+\emph{before} \code{start} -- a coincidental earlier occurrence unrelated to the tracked arrival --
+does not count.
+
 \strong{What defines one "event" to track catch-up for.} Every source's arrivals are pooled, and
 each distinct \verb{(id, value)} pair's event \code{start} is the \emph{earliest} year \emph{any} source shows
 that identifier arriving at that value. This means a value an identifier returns to a second
@@ -70,12 +98,36 @@ arrival at a value, not every individual spell), this is the right simplificatio
 silent -- a value visited more than once by the same identifier is a known, accepted
 limitation of this function, not an oversight.
 
-\strong{Censoring.} At each \code{horizon} (years since an event's \code{start}), a source's risk set
-excludes any event whose own follow-up (\code{max(year) - start}, using the \emph{latest} year observed
-anywhere across all sources) is shorter than \code{horizon} -- that event is \strong{censored}, not
-counted as "never shown". An identifier a source never shows at all remains at risk for as
-long as its own follow-up lasts, exactly like a patient lost to follow-up in a clinical
-survival analysis, not treated as an immediate or permanent failure.
+\strong{Censoring uses each source's OWN observation window, not the panel's.} At each
+\code{horizon} (years since an event's \code{start}), a source's risk set excludes any event the
+source could not possibly have observed yet -- entry into the risk set is delayed
+(left-truncated) until that source's own earliest observed year, and the source is
+censored (right-censored, not counted as "never shown") once its own latest observed
+year has passed, regardless of whether some \emph{other} source's data extends further. Using
+the panel-wide latest year for every source conflates two different things: a source that
+was watched and simply had not shown the value yet (real loss to follow-up) versus a
+source whose own data collection had already ended, or had not yet started, when the
+comparison window extends past it (structural non-coverage). The latter is not evidence
+the source is slow -- it is evidence the source cannot be assessed over years it was
+never observed in at all. A source whose own data entirely predates or postdates an
+event's observable window (no overlap at all) is never at risk for that event and simply
+does not contribute to its curve.
+
+\strong{Circularity in which source "defines" an event, and the \code{reference} parameter.} By
+default (\code{reference = "pooled"}), an event's \code{start} is pooled across every source's own
+detected arrivals -- which means the source that happens to detect an event earliest gets
+credited with "catching up" to it immediately (\code{horizon = 0}), simply because it supplied
+the reference time, not because it is actually fast. In practice this is severe: in a
+real five-source comparison, 66-85\% of the events a source resolved at \code{horizon = 0} were
+ones that source itself had (partly) defined. \code{reference = "exclude_self"} removes this:
+for each source, the event set it is scored against is built from \emph{every other} source's
+detected arrivals, excluding its own. An event detected only by the source being scored
+(no other source independently confirms it) cannot be scored at all under this mode and
+is dropped, counted in the returned \code{n_unanchored}. This does not create ground truth --
+an event two sources both happen to miss is still invisible to both -- but it removes the
+most direct form of circularity, and comparing \code{reference = "pooled"} against
+\code{reference = "exclude_self"} on the same data is itself a sensitivity check worth running
+before treating any single source's apparent speed as real.
 }
 \examples{
 a <- data.frame(
@@ -105,6 +157,7 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_agreement_by_covariate]{attribute_agreement_by_covariate()}},
 \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
 \code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
+\code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}},
 \code{\link[=attribute_churn_rate]{attribute_churn_rate()}},
 \code{\link[=attribute_consensus_tier]{attribute_consensus_tier()}},
 \code{\link[=attribute_consensus_tier_flow]{attribute_consensus_tier_flow()}},

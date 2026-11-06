@@ -1001,12 +1001,36 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' silent -- a value visited more than once by the same identifier is a known, accepted
 #' limitation of this function, not an oversight.
 #'
-#' **Censoring.** At each `horizon` (years since an event's `start`), a source's risk set
-#' excludes any event whose own follow-up (`max(year) - start`, using the *latest* year observed
-#' anywhere across all sources) is shorter than `horizon` -- that event is **censored**, not
-#' counted as "never shown". An identifier a source never shows at all remains at risk for as
-#' long as its own follow-up lasts, exactly like a patient lost to follow-up in a clinical
-#' survival analysis, not treated as an immediate or permanent failure.
+#' **Censoring uses each source's OWN observation window, not the panel's.** At each
+#' `horizon` (years since an event's `start`), a source's risk set excludes any event the
+#' source could not possibly have observed yet -- entry into the risk set is delayed
+#' (left-truncated) until that source's own earliest observed year, and the source is
+#' censored (right-censored, not counted as "never shown") once its own latest observed
+#' year has passed, regardless of whether some *other* source's data extends further. Using
+#' the panel-wide latest year for every source conflates two different things: a source that
+#' was watched and simply had not shown the value yet (real loss to follow-up) versus a
+#' source whose own data collection had already ended, or had not yet started, when the
+#' comparison window extends past it (structural non-coverage). The latter is not evidence
+#' the source is slow -- it is evidence the source cannot be assessed over years it was
+#' never observed in at all. A source whose own data entirely predates or postdates an
+#' event's observable window (no overlap at all) is never at risk for that event and simply
+#' does not contribute to its curve.
+#'
+#' **Circularity in which source "defines" an event, and the `reference` parameter.** By
+#' default (`reference = "pooled"`), an event's `start` is pooled across every source's own
+#' detected arrivals -- which means the source that happens to detect an event earliest gets
+#' credited with "catching up" to it immediately (`horizon = 0`), simply because it supplied
+#' the reference time, not because it is actually fast. In practice this is severe: in a
+#' real five-source comparison, 66-85% of the events a source resolved at `horizon = 0` were
+#' ones that source itself had (partly) defined. `reference = "exclude_self"` removes this:
+#' for each source, the event set it is scored against is built from *every other* source's
+#' detected arrivals, excluding its own. An event detected only by the source being scored
+#' (no other source independently confirms it) cannot be scored at all under this mode and
+#' is dropped, counted in the returned `n_unanchored`. This does not create ground truth --
+#' an event two sources both happen to miss is still invisible to both -- but it removes the
+#' most direct form of circularity, and comparing `reference = "pooled"` against
+#' `reference = "exclude_self"` on the same data is itself a sensitivity check worth running
+#' before treating any single source's apparent speed as real.
 #'
 #' @param sources Named list of longitudinal data frames (2+), each with `id`, `year`, and
 #'   `attribute` columns -- same convention as [attribute_coverage()]/
@@ -1015,15 +1039,28 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' @param id,year Column names. Defaults `"npi"`, `"year"`.
 #' @param max_horizon Maximum years since an event's `start` to evaluate. If `NULL` (default),
 #'   the full span of years present across all sources (`max(year) - min(year)`).
+#' @param reference `"pooled"` (default) pools every source's own detected arrivals to find
+#'   each event's `start`, so a source can get credit for "catching up" to an event it itself
+#'   defined. `"exclude_self"` scores each source only against events *other* sources
+#'   detected, removing that circularity at the cost of dropping events no other source
+#'   independently confirms (see `n_unanchored`).
 #' @return A list:
 #'   \describe{
 #'     \item{`curve`}{Tibble, one row per `(source, horizon)`: `n_at_risk`, `n_events` (first
 #'       shown at exactly this horizon), `pct_not_yet_shown` (the Kaplan-Meier survival
-#'       estimate, `100` at `horizon = 0` by construction, non-increasing within a source).}
+#'       estimate, non-increasing within a source; may start below `100` if that source's own
+#'       observation window begins after some events' `start`, since those events have not
+#'       yet entered its risk set).}
 #'     \item{`median_horizon`}{Tibble, one row per source: the smallest `horizon` at which
 #'       `pct_not_yet_shown <= 50`, or `NA` if the curve never crosses 50% within
 #'       `max_horizon` -- a source that never reaches its median catch-up time within the
 #'       observed panel, reported as `NA`, not a misleadingly small number.}
+#'     \item{`n_tracked`}{Total distinct `(id, value)` arrival events pooled across all
+#'       sources -- a single constant, independent of any source's own observation window.}
+#'     \item{`reference`}{The `reference` argument used, echoed back.}
+#'     \item{`n_unanchored`}{Only present when `reference = "exclude_self"`: tibble, one row
+#'       per source, the count of pooled events dropped for that source because no *other*
+#'       source independently detected them.}
 #'   }
 #' @examples
 #' a <- data.frame(
@@ -1046,7 +1083,9 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #'   complements; [format_ranking_prose()] to rank `median_horizon` across sources.
 #' @family no-gold-standard comparison
 #' @export
-attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "year", max_horizon = NULL) {
+attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "year", max_horizon = NULL,
+                                      reference = c("pooled", "exclude_self")) {
+  reference <- match.arg(reference)
   checkmate::assert_list(sources, min.len = 2, names = "unique")
   checkmate::assert_string(attribute, min.chars = 1)
   checkmate::assert_string(id, min.chars = 1)
@@ -1089,17 +1128,21 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
     })
     dplyr::bind_rows(rows)
   }
-  events <- lapply(cleaned, extract_events)
-  all_events <- dplyr::bind_rows(events)
+  events <- lapply(cleaned, extract_events) # events[[s]] is NULL if source s detects nothing
+  events_present <- events[!vapply(events, is.null, logical(1))]
+  all_events <- dplyr::bind_rows(events_present)
   if (nrow(all_events) == 0L) {
     stop("attribute_catch_up_curve: no consecutive-year arrivals detected in any source", call. = FALSE)
   }
 
-  first_seen <- stats::aggregate(year ~ id + value, all_events, min)
-  names(first_seen)[3] <- "start"
+  first_seen_pooled <- stats::aggregate(year ~ id + value, all_events, min)
+  names(first_seen_pooled)[3] <- "start"
+  n_tracked <- nrow(first_seen_pooled)
 
-  panel_min_year <- min(vapply(cleaned, function(x) min(x$year), integer(1)))
-  panel_max_year <- max(vapply(cleaned, function(x) max(x$year), integer(1)))
+  source_min_year <- vapply(cleaned, function(x) min(x$year), integer(1))
+  source_max_year <- vapply(cleaned, function(x) max(x$year), integer(1))
+  panel_min_year <- min(source_min_year)
+  panel_max_year <- max(source_max_year)
   if (is.null(max_horizon)) max_horizon <- panel_max_year - panel_min_year
   horizons <- 0:max_horizon
 
@@ -1113,8 +1156,32 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
   # gaps between records) relative to a densely/annually sampled source -- such a
   # source can show the correct value while its own prior record is several years
   # earlier, which extract_events() would never flag as an "arrival".
-  km_for_source <- function(src) {
-    m <- merge(first_seen, src, by = c("id", "value"), all.x = TRUE)
+  km_for_source <- function(s) {
+    src <- cleaned[[s]]
+    n_unanchored <- 0L
+    if (identical(reference, "exclude_self")) {
+      other_events <- events[setdiff(nm, s)]
+      other_events <- other_events[!vapply(other_events, is.null, logical(1))]
+      all_other <- dplyr::bind_rows(other_events)
+      if (nrow(all_other) == 0L) {
+        first_seen_s <- first_seen_pooled[0L, ]
+      } else {
+        first_seen_s <- stats::aggregate(year ~ id + value, all_other, min)
+        names(first_seen_s)[3] <- "start"
+      }
+      n_unanchored <- n_tracked - nrow(first_seen_s)
+    } else {
+      first_seen_s <- first_seen_pooled
+    }
+
+    if (nrow(first_seen_s) == 0L) {
+      return(list(
+        curve = tibble::tibble(horizon = horizons, n_at_risk = 0L, n_events = 0L, pct_not_yet_shown = NA_real_),
+        n_unanchored = n_unanchored
+      ))
+    }
+
+    m <- merge(first_seen_s, src, by = c("id", "value"), all.x = TRUE)
     m$d <- m$year - m$start
     # A match that occurred only *before* this value's first appearance anywhere
     # (a coincidental earlier occurrence of the same value, unrelated to the
@@ -1123,28 +1190,40 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
     m$d[!is.na(m$d) & m$d < 0] <- NA
     m <- m[order(is.na(m$d), m$d), ]
     m <- m[!duplicated(m[, c("id", "value", "start")]), , drop = FALSE]
-    follow_up <- panel_max_year - m$start
+
+    # This source's OWN observation window, not the panel's: it cannot be at risk of
+    # showing a value before its own data begins (entry is delayed/left-truncated, not
+    # retroactive), and it is censored at its own last observed year, regardless of how
+    # much further some other source's data happens to extend.
+    entry_h <- pmax(0, source_min_year[[s]] - m$start)
+    exit_h <- source_max_year[[s]] - m$start
 
     n_at_risk_vec <- integer(length(horizons))
     n_events_vec <- integer(length(horizons))
     surv_vec <- numeric(length(horizons))
-    s <- 1
+    surv <- 1
     for (i in seq_along(horizons)) {
       h <- horizons[i]
-      at_risk <- (is.na(m$d) | m$d >= h) & follow_up >= h
+      at_risk <- (is.na(m$d) | m$d >= h) & entry_h <= h & exit_h >= h
       n_at_risk <- sum(at_risk)
-      n_events <- sum(!is.na(m$d) & m$d == h)
+      n_events <- sum(!is.na(m$d) & m$d == h & at_risk)
       n_at_risk_vec[i] <- n_at_risk
       n_events_vec[i] <- n_events
-      if (n_at_risk > 0L) s <- s * (1 - n_events / n_at_risk)
-      surv_vec[i] <- 100 * s
+      if (n_at_risk > 0L) surv <- surv * (1 - n_events / n_at_risk)
+      surv_vec[i] <- 100 * surv
     }
-    tibble::tibble(horizon = horizons, n_at_risk = n_at_risk_vec, n_events = n_events_vec,
-                   pct_not_yet_shown = round(surv_vec, 1))
+    list(
+      curve = tibble::tibble(horizon = horizons, n_at_risk = n_at_risk_vec, n_events = n_events_vec,
+                             pct_not_yet_shown = round(surv_vec, 1)),
+      n_unanchored = n_unanchored
+    )
   }
 
+  per_source <- lapply(nm, km_for_source)
+  names(per_source) <- nm
+
   curve_rows <- lapply(nm, function(s) {
-    out <- km_for_source(cleaned[[s]])
+    out <- per_source[[s]]$curve
     out$source <- s
     out[, c("source", "horizon", "n_at_risk", "n_events", "pct_not_yet_shown")]
   })
@@ -1152,12 +1231,169 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
 
   median_rows <- lapply(nm, function(s) {
     cv <- curve[curve$source == s, ]
-    below <- cv$horizon[cv$pct_not_yet_shown <= 50]
+    below <- cv$horizon[!is.na(cv$pct_not_yet_shown) & cv$pct_not_yet_shown <= 50]
     tibble::tibble(source = s, median_horizon = if (length(below) > 0L) min(below) else NA_integer_)
   })
   median_horizon <- tibble::as_tibble(dplyr::bind_rows(median_rows))
 
-  list(curve = curve, median_horizon = median_horizon)
+  out <- list(curve = curve, median_horizon = median_horizon, n_tracked = n_tracked, reference = reference)
+  if (identical(reference, "exclude_self")) {
+    out$n_unanchored <- tibble::tibble(
+      source = nm,
+      n_unanchored = unname(vapply(nm, function(s) per_source[[s]]$n_unanchored, integer(1)))
+    )
+  }
+  out
+}
+
+#' Manuscript-ready prose for an attribute_catch_up_curve() result
+#'
+#' A thin wrapper around [format_ranking_prose()] specific to
+#' [attribute_catch_up_curve()]'s own output shape: ranks sources whose catch-up curve
+#' crosses 50% within the observed panel, and -- because [format_ranking_prose()]
+#' deliberately refuses `NA` values -- writes its own sentence for any source whose curve
+#' never does, naming how much of the pooled event set still has not caught up, both
+#' immediately and at a chosen horizon.
+#'
+#' @details
+#' A source's curve crossing 50% ("resolved") and never doing so ("unresolved") are
+#' reported in two different registers for a reason: a median catch-up time is only a
+#' meaningful summary for a source that actually reaches one within the panel. Forcing
+#' every source through the same ranking sentence would either drop the unresolved ones
+#' silently (the same failure mode [attribute_lead_lag_duration()]'s median/IQR has, which
+#' [attribute_catch_up_curve()] exists to avoid) or report a fabricated "greater than X
+#' years" figure with no real upper bound. Resolved sources are ranked by
+#' [format_ranking_prose()]; unresolved ones each get a sentence giving
+#' `pct_not_yet_shown` at horizon 0 and at `unresolved_horizon` (clamped down to a source's
+#' own maximum observed horizon if that is shorter), so a reader sees exactly how much
+#' ground an unresolved source has or hasn't covered, not just that it failed to reach the
+#' 50% mark.
+#'
+#' Fewer than two resolved sources cannot be ranked ([format_ranking_prose()] requires
+#' 2+); with exactly one, its own median is reported as a plain sentence instead, and with
+#' zero, the ranking sentence is omitted entirely -- `sentence` is always well-formed,
+#' never an error, regardless of how many sources resolve.
+#'
+#' @param cu Output of [attribute_catch_up_curve()]: a list with `curve` and
+#'   `median_horizon`.
+#' @param display_label Optional named character vector mapping a source name (as it
+#'   appears in `cu`) to the label used in prose (e.g. `c(nppes = "NPPES", dac_pecos =
+#'   "the DAC/PECOS-combined enrollment record")`). A source with no entry is shown under
+#'   its own name.
+#' @param unresolved_horizon Horizon (years) at which to report the catch-up percentage
+#'   for a source whose curve never crosses 50%. Default `5`. Clamped down to a source's
+#'   own maximum observed horizon if that is shorter.
+#' @param decreasing Passed to [format_ranking_prose()] for the resolved-source ranking.
+#'   Default `FALSE` (fastest catch-up first), the natural reading for a "years to catch
+#'   up" value -- the opposite of that function's own default.
+#' @return A list:
+#'   \describe{
+#'     \item{`n_events`}{Tracked arrivals pooled across all sources (`n_at_risk` at
+#'       `horizon = 0`, identical for every source by construction).}
+#'     \item{`ranking`}{[format_ranking_prose()]'s full return for the resolved sources,
+#'       or `NULL` if fewer than 2 sources resolved.}
+#'     \item{`unresolved`}{Tibble, one row per unresolved source: `source`, `horizon`,
+#'       `pct_at_horizon_0`, `pct_at_horizon`.}
+#'     \item{`sentence`}{The complete, ready-to-paste Results text.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "CO", "NM", "TX", "TX", "TX")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "NM", "NM", "TX", "GA", "GA")
+#' )
+#' cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+#' attribute_catch_up_curve_prose(cu, display_label = c(a = "Source A", b = "Source B"))$sentence
+#' @seealso [attribute_catch_up_curve()]; [format_ranking_prose()], used internally for the
+#'   resolved-source ranking.
+#' @family no-gold-standard comparison
+#' @export
+attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_horizon = 5L,
+                                            decreasing = FALSE) {
+  checkmate::assert_list(cu, names = "unique")
+  if (!all(c("curve", "median_horizon") %in% names(cu))) {
+    stop("attribute_catch_up_curve_prose: cu must have 'curve' and 'median_horizon' elements, as returned by attribute_catch_up_curve()", call. = FALSE)
+  }
+  curve <- cu$curve
+  median_horizon <- cu$median_horizon
+  checkmate::assert_data_frame(curve, min.rows = 1)
+  checkmate::assert_data_frame(median_horizon, min.rows = 1)
+  for (col in c("source", "horizon", "n_at_risk", "pct_not_yet_shown")) {
+    if (!col %in% names(curve)) {
+      stop(sprintf("attribute_catch_up_curve_prose: cu$curve has no column '%s'", col), call. = FALSE)
+    }
+  }
+  for (col in c("source", "median_horizon")) {
+    if (!col %in% names(median_horizon)) {
+      stop(sprintf("attribute_catch_up_curve_prose: cu$median_horizon has no column '%s'", col), call. = FALSE)
+    }
+  }
+  if (!is.null(display_label)) checkmate::assert_character(display_label, names = "unique")
+  checkmate::assert_count(unresolved_horizon, positive = TRUE)
+  checkmate::assert_flag(decreasing)
+
+  label_for <- function(s) if (!is.null(display_label) && s %in% names(display_label)) display_label[[s]] else s
+
+  nm <- unique(as.character(median_horizon$source))
+  n_events <- max(curve$n_at_risk[curve$horizon == 0], na.rm = TRUE)
+
+  resolved <- median_horizon[!is.na(median_horizon$median_horizon), , drop = FALSE]
+  unresolved_nm <- setdiff(nm, resolved$source)
+
+  ranking <- NULL
+  ranking_sentence <- NULL
+  if (nrow(resolved) >= 2L) {
+    ranking <- format_ranking_prose(
+      group = vapply(resolved$source, label_for, character(1)), value = resolved$median_horizon,
+      value_label = "median years to catch up", fmt = "%.0f", decreasing = decreasing
+    )
+    ranking_sentence <- ranking$sentence
+  } else if (nrow(resolved) == 1L) {
+    ranking_sentence <- sprintf(
+      "%s reached 50%% catch-up after a median of %.0f years.",
+      label_for(resolved$source[1]), resolved$median_horizon[1]
+    )
+  }
+
+  unresolved_rows <- lapply(unresolved_nm, function(s) {
+    cv <- curve[curve$source == s, , drop = FALSE]
+    h <- min(unresolved_horizon, max(cv$horizon))
+    tibble::tibble(
+      source = s, horizon = h,
+      pct_at_horizon_0 = cv$pct_not_yet_shown[cv$horizon == 0],
+      pct_at_horizon = cv$pct_not_yet_shown[cv$horizon == h]
+    )
+  })
+  unresolved <- if (length(unresolved_rows) > 0L) {
+    tibble::as_tibble(dplyr::bind_rows(unresolved_rows))
+  } else {
+    tibble::tibble(source = character(0), horizon = integer(0),
+                   pct_at_horizon_0 = numeric(0), pct_at_horizon = numeric(0))
+  }
+
+  unresolved_sentences <- vapply(seq_len(nrow(unresolved)), function(i) {
+    r <- unresolved[i, ]
+    sprintf(
+      "%s never reached 50%% catch-up within the observed panel (%.1f%% of tracked arrivals still not reflected immediately, %.1f%% still not reflected %d year%s later).",
+      label_for(r$source), r$pct_at_horizon_0, r$pct_at_horizon, r$horizon, if (r$horizon == 1L) "" else "s"
+    )
+  }, character(1))
+
+  sentence <- paste(
+    c(
+      sprintf("We identified %s state-arrival event%s tracked across %d source%s.",
+              format(n_events, big.mark = ","), if (n_events == 1L) "" else "s",
+              length(nm), if (length(nm) == 1L) "" else "s"),
+      ranking_sentence,
+      unresolved_sentences
+    ),
+    collapse = " "
+  )
+
+  list(n_events = n_events, ranking = ranking, unresolved = unresolved, sentence = sentence)
 }
 
 #' Approach 2: Attribute agreement stratified by empirical spell age or career tenure
