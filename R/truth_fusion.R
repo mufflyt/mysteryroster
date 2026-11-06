@@ -855,6 +855,15 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
 #' groups all stop the call rather than silently producing a sentence that reads like a real
 #' ranking but isn't one -- a "ranking" of one thing, or with a missing entry, is not a ranking.
 #'
+#' **`register` changes only `sentence`, never `table`/`highest`/`lowest`/`ties`.**
+#' `register = "technical"` (default) produces the terse, data-table-like sentence this
+#' function has always produced ("Ranked by X, highest to lowest: A (v), B (v)."). `register =
+#' "clinical"` instead produces a plain-language narrative sentence with no abbreviations and no
+#' em dashes, suitable for a clinical-journal Methods/Results section read by a non-technical
+#' audience -- the caller is still responsible for passing fully spelled-out, audience-
+#' appropriate `group` names (e.g. `"the national provider directory"`, not `"nppes"`); this
+#' function only controls sentence structure, not domain vocabulary it has no way to know.
+#'
 #' @param group Character vector of group names, length 2+, no duplicates.
 #' @param value Numeric vector, same length as `group`, the quantity being ranked. No `NA`s.
 #' @param n Optional integer vector, same length as `group`: the sample size behind each
@@ -866,6 +875,8 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
 #' @param decreasing Rank highest value first (`TRUE`, default) or lowest first (`FALSE`) --
 #'   this only changes display order, never which group "wins" anything; `value_label`/context
 #'   is what tells the reader whether higher is better.
+#' @param register `"technical"` (default) or `"clinical"` -- see Details. Affects `sentence`
+#'   only.
 #' @return A list: `table` (tibble, `group`, `value`, and `n` if supplied, in rank order),
 #'   `highest`, `lowest` (each a list: `group`, `value`, `n`), `ties` (character vector of
 #'   group names involved in a display-value tie, empty if none), and `sentence`.
@@ -875,12 +886,20 @@ format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_tot
 #'   value = c(100, 77.2, 25.4, 63.4), n = c(2000, 2000, 2000, 2000),
 #'   value_label = "coverage", fmt = "%.1f", suffix = "%"
 #' )$sentence
+#'
+#' format_ranking_prose(
+#'   group = c("the national provider directory", "the Medicare enrollment address source"),
+#'   value = c(1, 16), value_label = "median years to confirmation", fmt = "%.0f",
+#'   decreasing = FALSE, register = "clinical"
+#' )$sentence
 #' @seealso [format_proportion_comparison_prose()] for one or two groups;
 #'   [attribute_truth_fusion_prose()], which uses this internally for its reliability ranking.
 #' @family truth fusion
 #' @export
 format_ranking_prose <- function(group, value, n = NULL, value_label = "value",
-                                  fmt = "%.1f", suffix = "", decreasing = TRUE) {
+                                  fmt = "%.1f", suffix = "", decreasing = TRUE,
+                                  register = c("technical", "clinical")) {
+  register <- match.arg(register)
   checkmate::assert_character(group, min.len = 2, any.missing = FALSE)
   if (any(!nzchar(trimws(group)))) {
     stop("format_ranking_prose: group contains an empty or whitespace-only name", call. = FALSE)
@@ -928,11 +947,31 @@ format_ranking_prose <- function(group, value, n = NULL, value_label = "value",
   } else {
     ""
   }
-  sentence <- sprintf(
-    "Ranked by %s, %s to %s: %s.%s",
-    value_label, if (decreasing) "highest" else "lowest", if (decreasing) "lowest" else "highest",
-    paste(entry_text, collapse = ", "), tie_note
-  )
+
+  if (identical(register, "clinical")) {
+    direction_word <- if (decreasing) "highest" else "lowest"
+    sentence <- sprintf(
+      "Among the %d groups compared, the %s %s was observed for %s.",
+      length(group_o), direction_word, value_label, entry_text[1]
+    )
+    if (length(entry_text) > 1L) {
+      sentence <- paste(sentence, sprintf(
+        "This was followed, in order, by %s.", paste(entry_text[-1], collapse = ", ")
+      ))
+    }
+    if (length(tie_groups) > 0L) {
+      sentence <- paste(sentence, sprintf(
+        "The following groups had identical values and are considered tied: %s.",
+        paste(tie_groups, collapse = ", ")
+      ))
+    }
+  } else {
+    sentence <- sprintf(
+      "Ranked by %s, %s to %s: %s.%s",
+      value_label, if (decreasing) "highest" else "lowest", if (decreasing) "lowest" else "highest",
+      paste(entry_text, collapse = ", "), tie_note
+    )
+  }
 
   mk_extreme <- function(i) {
     out <- list(group = group_o[i], value = value_o[i])

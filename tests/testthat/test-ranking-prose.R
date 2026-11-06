@@ -39,6 +39,34 @@ test_that("format_ranking_prose rejects fewer than 2 groups", {
   expect_error(format_ranking_prose(group = "A", value = 10), "length >= 2")
 })
 
+test_that("format_ranking_prose's register = 'clinical' produces a narrative sentence with no abbreviations or em dashes", {
+  r <- format_ranking_prose(
+    group = c("the national provider directory", "the Medicare enrollment address source"),
+    value = c(1, 16), value_label = "median years to confirmation", fmt = "%.0f",
+    decreasing = FALSE, register = "clinical"
+  )
+  expect_match(r$sentence, "^Among the 2 groups compared, the lowest median years to confirmation was observed for the national provider directory \\(1\\)\\.")
+  expect_match(r$sentence, "This was followed, in order, by the Medicare enrollment address source \\(16\\)\\.")
+  expect_false(grepl("—", r$sentence)) # no em dash
+  expect_false(grepl("^Ranked by", r$sentence)) # not the technical-register template
+  # table/highest/lowest/ties are unaffected by register
+  expect_equal(r$highest$group, "the national provider directory")
+})
+
+test_that("format_ranking_prose's register = 'clinical' states ties in plain language", {
+  r <- format_ranking_prose(group = c("A", "B", "C"), value = c(10.0, 10.04, 20), fmt = "%.1f",
+                             suffix = "%", register = "clinical")
+  expect_match(r$sentence, "had identical values and are considered tied")
+  expect_false(grepl("—", r$sentence))
+})
+
+test_that("format_ranking_prose defaults to register = 'technical'", {
+  r1 <- format_ranking_prose(group = c("A", "B"), value = c(1, 2))
+  r2 <- format_ranking_prose(group = c("A", "B"), value = c(1, 2), register = "technical")
+  expect_equal(r1$sentence, r2$sentence)
+  expect_match(r1$sentence, "^Ranked by")
+})
+
 test_that("format_ranking_prose rejects duplicate group names", {
   expect_error(
     format_ranking_prose(group = c("A", "A", "B"), value = c(1, 2, 3)),

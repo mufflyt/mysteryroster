@@ -57,6 +57,59 @@ test_that("attribute_catch_up_curve_prose uses singular 'year' when the clamped 
   expect_match(p$sentence, "1 year later(?!s)", perl = TRUE)
 })
 
+test_that("attribute_catch_up_curve_prose's register = 'clinical' avoids catch-up/arrival jargon and em dashes", {
+  cu <- make_cu()
+  p <- attribute_catch_up_curve_prose(
+    cu, display_label = c(a = "the first registry", b = "the second registry", c = "the third registry"),
+    register = "clinical"
+  )
+  expect_match(p$sentence, "^A total of 2 changes in the tracked value were identified across 3 sources\\.")
+  expect_match(p$sentence, "Among the 2 groups compared, the lowest median years to confirmation was observed for")
+  expect_match(p$sentence, "the third registry did not reach confirmation for even half of the changes tracked")
+  expect_false(grepl("catch.up", p$sentence, ignore.case = TRUE))
+  expect_false(grepl("arrival", p$sentence, ignore.case = TRUE))
+  expect_false(grepl("—", p$sentence))
+})
+
+test_that("attribute_catch_up_curve_prose's register = 'clinical' reports a single resolved source in plain language", {
+  a <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "CO"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  p <- attribute_catch_up_curve_prose(cu, register = "clinical")
+  expect_match(p$sentence, "^A total of 1 change in the tracked value was identified across 2 sources\\.")
+  expect_match(p$sentence, "The estimated time for a to confirm a change already reported by another source was 0 years")
+  expect_match(p$sentence, "did not reach confirmation for even half of the changes tracked")
+  expect_false(grepl("—", p$sentence))
+})
+
+test_that("attribute_catch_up_curve_prose defaults to register = 'technical'", {
+  cu <- make_cu()
+  p1 <- attribute_catch_up_curve_prose(cu)
+  p2 <- attribute_catch_up_curve_prose(cu, register = "technical")
+  expect_equal(p1$sentence, p2$sentence)
+})
+
+test_that("attribute_catch_up_curve_prose's n_events uses the true pooled total under reference = 'exclude_self', not the largest source's own reduced risk set", {
+  # Three events, each detected by exactly one source: a alone detects id 1's NM arrival,
+  # b alone detects id 2's GA arrival, c alone detects id 3's OH arrival. Under
+  # exclude_self, every source's own event is unanchored for every OTHER source that
+  # excludes it (each source can anchor only the two events it did NOT itself detect), so
+  # every source's own horizon-0 n_at_risk is 2, strictly less than the true pooled total
+  # of 3 -- max() across sources would silently understate the real count unless
+  # cu$n_tracked is used directly.
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2", "3", "3", "3"), year = rep(2020:2022, 3),
+                   state = c("CO", "CO", "NM", "TX", "TX", "TX", "PA", "PA", "PA"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2", "3", "3", "3"), year = rep(2020:2022, 3),
+                   state = c("CO", "CO", "CO", "TX", "TX", "GA", "PA", "PA", "PA"))
+  c <- data.frame(npi = c("1", "1", "1", "2", "2", "2", "3", "3", "3"), year = rep(2020:2022, 3),
+                   state = c("CO", "CO", "CO", "TX", "TX", "TX", "PA", "PA", "OH"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b, c = c), attribute = "state", reference = "exclude_self")
+  expect_equal(cu$n_tracked, 3L)
+  expect_true(all(cu$curve$n_at_risk[cu$curve$horizon == 0] < cu$n_tracked)) # confirms the bug scenario is live
+  p <- attribute_catch_up_curve_prose(cu)
+  expect_equal(p$n_events, 3L)
+})
+
 test_that("attribute_catch_up_curve_prose validates its inputs", {
   expect_error(attribute_catch_up_curve_prose(list(curve = data.frame())),
                "median_horizon")

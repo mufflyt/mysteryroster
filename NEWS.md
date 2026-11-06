@@ -1,5 +1,23 @@
 # mysteryroster (development version)
 
+* Added `register = c("technical", "clinical")` to `format_ranking_prose()` and
+  `attribute_catch_up_curve_prose()`. `"clinical"` produces plain-language narrative
+  sentences with no abbreviations and no em dashes ("Among the 2 groups compared, the
+  lowest median years to confirmation was observed for..." instead of "Ranked by median
+  years to catch up, lowest to highest: ..."), intended for a clinical-journal Methods/
+  Results section rather than a technical report. As with the existing `display_label`
+  parameter, the caller supplies audience-appropriate group names (e.g. "the national
+  provider directory" rather than "nppes"); `register` controls sentence structure, not
+  domain vocabulary the package has no way to know. `table`/`highest`/`lowest`/`ties` are
+  unaffected by `register`, only `sentence` changes. Default remains `"technical"`,
+  preserving all prior behavior exactly.
+* Fixed a real bug surfaced while building the above: `attribute_catch_up_curve_prose()`'s
+  `n_events` was computed as the largest single source's own `n_at_risk` at `horizon = 0`,
+  which only equals the true pooled total under `reference = "pooled"`. Under
+  `reference = "exclude_self"`, each source's own risk set is already reduced by its
+  unanchored and uncovered exclusions, so that maximum understates the real count (seen on
+  real data: 2,245 reported instead of the true 3,029). Fixed to use `attribute_catch_up_
+  curve()`'s own `n_tracked` field directly.
 * Added `lineage_groups` to `attribute_catch_up_curve()`'s `reference = "exclude_self"`
   mode (same convention as `attribute_claims_collapse_lineage()`'s own `lineage_groups`):
   two sources derived from the same underlying file cannot independently confirm each
