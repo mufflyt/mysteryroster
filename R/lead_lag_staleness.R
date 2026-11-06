@@ -1046,6 +1046,18 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' `reference = "exclude_self"` on the same data is itself a sensitivity check worth running
 #' before treating any single source's apparent speed as real.
 #'
+#' **A reported `median_horizon` can still be a thin, easily-shifted estimate even though
+#' it was computed correctly.** The Kaplan-Meier risk set shrinks at later horizons (fewer
+#' events have that much follow-up left at all), so a source whose curve approaches 50% only
+#' gradually can sit within a point or two of the threshold for several consecutive horizons
+#' on a small and shrinking sample, where a single additional event tips the point estimate
+#' by multiple years. This is not a bug -- re-running the same data gives the same number --
+#' but treating that number as precise would be a mistake a reader has no way to catch
+#' without more information. `median_ci_low`/`median_ci_high` and `median_n_at_risk` exist
+#' specifically to surface this: a wide interval or a small `median_n_at_risk` at the
+#' crossing horizon both say the same thing -- the point estimate is real but imprecise --
+#' and should be reported alongside it, not silently dropped in favor of the single number.
+#'
 #' @param sources Named list of longitudinal data frames (2+), each with `id`, `year`, and
 #'   `attribute` columns -- same convention as [attribute_coverage()]/
 #'   [attribute_source_corroboration()].
@@ -1069,17 +1081,30 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #'   as independent just because their files have different names reintroduces the
 #'   circularity `reference = "exclude_self"` exists to remove. Each source name may belong
 #'   to at most one group.
+#' @param ci_level Confidence level for the pointwise survival-curve interval (`curve$ci_low`/
+#'   `ci_high`) and the Brookmeyer-Crowley interval around `median_horizon`. Default `0.95`.
+#'   Computed via the log-log (Kalbfleisch-Prentice) transform of Greenwood's formula, the
+#'   same method `survival::survfit()` uses by default.
 #' @return A list:
 #'   \describe{
 #'     \item{`curve`}{Tibble, one row per `(source, horizon)`: `n_at_risk`, `n_events` (first
 #'       shown at exactly this horizon), `pct_not_yet_shown` (the Kaplan-Meier survival
 #'       estimate, non-increasing within a source; may start below `100` if that source's own
 #'       observation window begins after some events' `start`, since those events have not
-#'       yet entered its risk set).}
-#'     \item{`median_horizon`}{Tibble, one row per source: the smallest `horizon` at which
-#'       `pct_not_yet_shown <= 50`, or `NA` if the curve never crosses 50% within
-#'       `max_horizon` -- a source that never reaches its median catch-up time within the
-#'       observed panel, reported as `NA`, not a misleadingly small number.}
+#'       yet entered its risk set), `ci_low`/`ci_high` (the pointwise confidence interval on
+#'       `pct_not_yet_shown` at `ci_level`, `NA` only when there is no data at all to estimate
+#'       from).}
+#'     \item{`median_horizon`}{Tibble, one row per source: `median_horizon`, the smallest
+#'       `horizon` at which `pct_not_yet_shown <= 50`, or `NA` if the curve never crosses 50%
+#'       within `max_horizon` -- a source that never reaches its median catch-up time within
+#'       the observed panel, reported as `NA`, not a misleadingly small number. `median_ci_low`/
+#'       `median_ci_high`, the Brookmeyer-Crowley confidence interval around that horizon
+#'       (`median_ci_high` is `NA` when the upper confidence bound on the curve never crosses
+#'       50% within the observed horizons -- an unbounded slow end, not a fabricated one).
+#'       `median_n_at_risk`, the number of events still at risk at the horizon where the
+#'       point estimate crosses 50% -- a small value (relative to `n_tracked`) is a direct
+#'       warning sign that the point estimate itself is sitting on a thin, easily-shifted
+#'       sample, which the width of `median_ci_low`/`median_ci_high` will also reflect.}
 #'     \item{`n_tracked`}{Total distinct `(id, value)` arrival events pooled across all
 #'       sources -- a single constant, independent of any source's own observation window.}
 #'     \item{`reference`}{The `reference` argument used, echoed back.}
@@ -1114,13 +1139,15 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
 #' @family no-gold-standard comparison
 #' @export
 attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "year", max_horizon = NULL,
-                                      reference = c("pooled", "exclude_self"), lineage_groups = NULL) {
+                                      reference = c("pooled", "exclude_self"), lineage_groups = NULL,
+                                      ci_level = 0.95) {
   reference <- match.arg(reference)
   checkmate::assert_list(sources, min.len = 2, names = "unique")
   checkmate::assert_string(attribute, min.chars = 1)
   checkmate::assert_string(id, min.chars = 1)
   checkmate::assert_string(year, min.chars = 1)
   if (!is.null(max_horizon)) checkmate::assert_count(max_horizon, positive = TRUE)
+  checkmate::assert_number(ci_level, lower = 0, upper = 1)
 
   nm <- names(sources)
 
@@ -1238,7 +1265,8 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
 
     if (nrow(first_seen_s) == 0L) {
       return(list(
-        curve = tibble::tibble(horizon = horizons, n_at_risk = 0L, n_events = 0L, pct_not_yet_shown = NA_real_),
+        curve = tibble::tibble(horizon = horizons, n_at_risk = 0L, n_events = 0L, pct_not_yet_shown = NA_real_,
+                               ci_low = NA_real_, ci_high = NA_real_),
         n_unanchored = n_unanchored, n_no_coverage = n_no_coverage
       ))
     }
@@ -1263,7 +1291,9 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
     n_at_risk_vec <- integer(length(horizons))
     n_events_vec <- integer(length(horizons))
     surv_vec <- numeric(length(horizons))
+    greenwood_vec <- numeric(length(horizons))
     surv <- 1
+    cum_greenwood <- 0
     for (i in seq_along(horizons)) {
       h <- horizons[i]
       at_risk <- (is.na(m$d) | m$d >= h) & entry_h <= h & exit_h >= h
@@ -1273,10 +1303,38 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
       n_events_vec[i] <- n_events
       if (n_at_risk > 0L) surv <- surv * (1 - n_events / n_at_risk)
       surv_vec[i] <- 100 * surv
+      # Greenwood's formula, accumulated: Var(S(h)) = S(h)^2 * cum_greenwood. Kept on this
+      # variance-ratio scale (rather than multiplying through by S(h)^2 immediately) because
+      # the log-log-transformed confidence interval below needs exactly this ratio, not the
+      # raw variance.
+      if (n_at_risk > 0L && n_at_risk > n_events) {
+        cum_greenwood <- cum_greenwood + n_events / (n_at_risk * (n_at_risk - n_events))
+      }
+      greenwood_vec[i] <- cum_greenwood
     }
+
+    # Pointwise confidence interval for the survival curve itself, via the log-log
+    # (Kalbfleisch-Prentice) transform of Greenwood's variance -- the same method
+    # survival::survfit() uses by default, chosen because it stays within [0, 100] rather
+    # than needing to be clipped, unlike a plain S(h) +/- z*SE(S(h)) interval. A horizon
+    # with no uncertainty yet (0% or 100%, no events have had the chance to occur or all of
+    # them already have) gets a degenerate, exact interval rather than an undefined one.
+    z <- stats::qnorm(1 - (1 - ci_level) / 2)
+    s_frac <- surv_vec / 100
+    valid <- s_frac > 0 & s_frac < 1 & greenwood_vec > 0
+    theta <- ifelse(valid, log(-log(s_frac)), NA_real_)
+    se_theta <- ifelse(valid, sqrt(greenwood_vec) / abs(log(s_frac)), NA_real_)
+    ci_low_vec <- rep(NA_real_, length(horizons))
+    ci_high_vec <- rep(NA_real_, length(horizons))
+    ci_low_vec[valid] <- 100 * exp(-exp(theta[valid] + z * se_theta[valid]))
+    ci_high_vec[valid] <- 100 * exp(-exp(theta[valid] - z * se_theta[valid]))
+    ci_low_vec[s_frac == 1] <- 100; ci_high_vec[s_frac == 1] <- 100
+    ci_low_vec[s_frac == 0] <- 0; ci_high_vec[s_frac == 0] <- 0
+
     list(
       curve = tibble::tibble(horizon = horizons, n_at_risk = n_at_risk_vec, n_events = n_events_vec,
-                             pct_not_yet_shown = round(surv_vec, 1)),
+                             pct_not_yet_shown = round(surv_vec, 1),
+                             ci_low = round(ci_low_vec, 1), ci_high = round(ci_high_vec, 1)),
       n_unanchored = n_unanchored, n_no_coverage = n_no_coverage
     )
   }
@@ -1287,14 +1345,28 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
   curve_rows <- lapply(nm, function(s) {
     out <- per_source[[s]]$curve
     out$source <- s
-    out[, c("source", "horizon", "n_at_risk", "n_events", "pct_not_yet_shown")]
+    out[, c("source", "horizon", "n_at_risk", "n_events", "pct_not_yet_shown", "ci_low", "ci_high")]
   })
   curve <- tibble::as_tibble(dplyr::bind_rows(curve_rows))
 
+  # Brookmeyer-Crowley confidence interval for the median: the horizons at which the
+  # pointwise lower and upper confidence bounds on the survival curve itself (computed
+  # above) first cross 50%. The lower survival bound represents the most-already-resolved
+  # plausible curve, so it crosses first (the fast end of the interval); the upper bound is
+  # the least-resolved plausible curve, crossing last or never (the slow end) -- `NA` when
+  # it never crosses within the observed horizons, not a fabricated upper limit.
   median_rows <- lapply(nm, function(s) {
     cv <- curve[curve$source == s, ]
     below <- cv$horizon[!is.na(cv$pct_not_yet_shown) & cv$pct_not_yet_shown <= 50]
-    tibble::tibble(source = s, median_horizon = if (length(below) > 0L) min(below) else NA_integer_)
+    median_h <- if (length(below) > 0L) min(below) else NA_integer_
+    lo_below <- cv$horizon[!is.na(cv$ci_low) & cv$ci_low <= 50]
+    hi_below <- cv$horizon[!is.na(cv$ci_high) & cv$ci_high <= 50]
+    tibble::tibble(
+      source = s, median_horizon = median_h,
+      median_ci_low = if (!is.na(median_h) && length(lo_below) > 0L) min(lo_below) else NA_integer_,
+      median_ci_high = if (!is.na(median_h) && length(hi_below) > 0L) min(hi_below) else NA_integer_,
+      median_n_at_risk = if (!is.na(median_h)) cv$n_at_risk[cv$horizon == median_h] else NA_integer_
+    )
   })
   median_horizon <- tibble::as_tibble(dplyr::bind_rows(median_rows))
 
@@ -1360,15 +1432,22 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
 #'   [format_ranking_prose()], the caller is still responsible for passing fully spelled-
 #'   out `display_label` values in clinical register; this parameter controls sentence
 #'   structure, not domain vocabulary.
+#' @param ci_level Display label only (e.g. "95% CI"); must match the `ci_level` actually
+#'   passed to the [attribute_catch_up_curve()] call that produced `cu`, which this
+#'   function has no way to verify and trusts the caller on. Default `0.95`, matching that
+#'   function's own default.
 #' @return A list:
 #'   \describe{
-#'     \item{`n_events`}{Tracked arrivals pooled across all sources (`n_at_risk` at
-#'       `horizon = 0`, identical for every source by construction).}
+#'     \item{`n_events`}{The total number of tracked events pooled across all sources
+#'       (`cu$n_tracked` when present).}
 #'     \item{`ranking`}{[format_ranking_prose()]'s full return for the resolved sources,
 #'       or `NULL` if fewer than 2 sources resolved.}
 #'     \item{`unresolved`}{Tibble, one row per unresolved source: `source`, `horizon`,
 #'       `pct_at_horizon_0`, `pct_at_horizon`.}
-#'     \item{`sentence`}{The complete, ready-to-paste Results text.}
+#'     \item{`sentence`}{The complete, ready-to-paste Results text -- including, for each
+#'       resolved source, a confidence interval and the number of events still at risk
+#'       when its median was reached, whenever `cu` carries those columns (every real
+#'       [attribute_catch_up_curve()] result does).}
 #'   }
 #' @examples
 #' a <- data.frame(
@@ -1391,8 +1470,10 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
 #' @family no-gold-standard comparison
 #' @export
 attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_horizon = 5L,
-                                            decreasing = FALSE, register = c("technical", "clinical")) {
+                                            decreasing = FALSE, register = c("technical", "clinical"),
+                                            ci_level = 0.95) {
   register <- match.arg(register)
+  checkmate::assert_number(ci_level, lower = 0, upper = 1)
   checkmate::assert_list(cu, names = "unique")
   if (!all(c("curve", "median_horizon") %in% names(cu))) {
     stop("attribute_catch_up_curve_prose: cu must have 'curve' and 'median_horizon' elements, as returned by attribute_catch_up_curve()", call. = FALSE)
@@ -1459,6 +1540,52 @@ attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_
     }
   }
 
+  # A median_horizon's point estimate can be real but imprecise, sitting on a thin,
+  # already-censoring-reduced risk set for several consecutive horizons before actually
+  # crossing 50% (see attribute_catch_up_curve()'s own Details). Reporting it bare, with
+  # no interval, hides that from a reader who has no way to tell a well-powered median
+  # from a fragile one. This is only possible when cu was produced by a version of
+  # attribute_catch_up_curve() that returns the confidence-interval columns; older or
+  # hand-built cu objects without them simply skip this (no error).
+  has_ci <- all(c("median_ci_low", "median_ci_high", "median_n_at_risk") %in% names(median_horizon))
+  ci_sentences <- character(0)
+  if (has_ci && nrow(resolved) > 0L) {
+    ci_pct <- round(100 * ci_level)
+    # Builds the "X to Y years" clause with correct grammar in all four combinations of
+    # which bound, if either, is NA (not estimable within the observed horizons) -- a
+    # naive sprintf("%s to %s years", lo, hi) reads badly ("...not estimable ... years")
+    # whenever either bound is text rather than a number.
+    yr <- function(n) if (n == 1L) "year" else "years"
+    format_ci_years <- function(lo, hi) {
+      if (!is.na(lo) && !is.na(hi)) {
+        sprintf("%d to %d %s", lo, hi, yr(hi))
+      } else if (!is.na(lo)) {
+        if (clinical) sprintf("%d %s, with no upper bound estimable within the period observed", lo, yr(lo))
+        else sprintf("%d %s to not estimable", lo, yr(lo))
+      } else if (!is.na(hi)) {
+        if (clinical) sprintf("not estimable at the lower end, up to %d %s", hi, yr(hi))
+        else sprintf("not estimable to %d %s", hi, yr(hi))
+      } else {
+        "not estimable in either direction within the period observed"
+      }
+    }
+    ci_sentences <- vapply(seq_len(nrow(resolved)), function(i) {
+      r <- resolved[i, ]
+      ci_text <- format_ci_years(r$median_ci_low, r$median_ci_high)
+      if (clinical) {
+        sprintf(
+          "This estimate for %s was based on %d events still being tracked at the time the median was reached, with a %d%% confidence interval of %s.",
+          label_for(r$source), r$median_n_at_risk, ci_pct, ci_text
+        )
+      } else {
+        sprintf(
+          "%s: %d%% CI %s (n at risk at crossing = %d).",
+          label_for(r$source), ci_pct, ci_text, r$median_n_at_risk
+        )
+      }
+    }, character(1))
+  }
+
   unresolved_rows <- lapply(unresolved_nm, function(s) {
     cv <- curve[curve$source == s, , drop = FALSE]
     h <- min(unresolved_horizon, max(cv$horizon))
@@ -1502,7 +1629,7 @@ attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_
   }
 
   sentence <- paste(
-    c(intro_sentence, ranking_sentence, unresolved_sentences),
+    c(intro_sentence, ranking_sentence, ci_sentences, unresolved_sentences),
     collapse = " "
   )
 

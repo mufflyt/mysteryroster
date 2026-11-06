@@ -11,7 +11,8 @@ attribute_catch_up_curve(
   year = "year",
   max_horizon = NULL,
   reference = c("pooled", "exclude_self"),
-  lineage_groups = NULL
+  lineage_groups = NULL,
+  ci_level = 0.95
 )
 }
 \arguments{
@@ -43,6 +44,11 @@ different names cannot independently confirm each other's events, and treating t
 as independent just because their files have different names reintroduces the
 circularity \code{reference = "exclude_self"} exists to remove. Each source name may belong
 to at most one group.}
+
+\item{ci_level}{Confidence level for the pointwise survival-curve interval (\code{curve$ci_low}/
+\code{ci_high}) and the Brookmeyer-Crowley interval around \code{median_horizon}. Default \code{0.95}.
+Computed via the log-log (Kalbfleisch-Prentice) transform of Greenwood's formula, the
+same method \code{survival::survfit()} uses by default.}
 }
 \value{
 A list:
@@ -51,11 +57,20 @@ A list:
 shown at exactly this horizon), \code{pct_not_yet_shown} (the Kaplan-Meier survival
 estimate, non-increasing within a source; may start below \code{100} if that source's own
 observation window begins after some events' \code{start}, since those events have not
-yet entered its risk set).}
-\item{\code{median_horizon}}{Tibble, one row per source: the smallest \code{horizon} at which
-\code{pct_not_yet_shown <= 50}, or \code{NA} if the curve never crosses 50\% within
-\code{max_horizon} -- a source that never reaches its median catch-up time within the
-observed panel, reported as \code{NA}, not a misleadingly small number.}
+yet entered its risk set), \code{ci_low}/\code{ci_high} (the pointwise confidence interval on
+\code{pct_not_yet_shown} at \code{ci_level}, \code{NA} only when there is no data at all to estimate
+from).}
+\item{\code{median_horizon}}{Tibble, one row per source: \code{median_horizon}, the smallest
+\code{horizon} at which \code{pct_not_yet_shown <= 50}, or \code{NA} if the curve never crosses 50\%
+within \code{max_horizon} -- a source that never reaches its median catch-up time within
+the observed panel, reported as \code{NA}, not a misleadingly small number. \code{median_ci_low}/
+\code{median_ci_high}, the Brookmeyer-Crowley confidence interval around that horizon
+(\code{median_ci_high} is \code{NA} when the upper confidence bound on the curve never crosses
+50\% within the observed horizons -- an unbounded slow end, not a fabricated one).
+\code{median_n_at_risk}, the number of events still at risk at the horizon where the
+point estimate crosses 50\% -- a small value (relative to \code{n_tracked}) is a direct
+warning sign that the point estimate itself is sitting on a thin, easily-shifted
+sample, which the width of \code{median_ci_low}/\code{median_ci_high} will also reflect.}
 \item{\code{n_tracked}}{Total distinct \verb{(id, value)} arrival events pooled across all
 sources -- a single constant, independent of any source's own observation window.}
 \item{\code{reference}}{The \code{reference} argument used, echoed back.}
@@ -160,6 +175,18 @@ an event two sources both happen to miss is still invisible to both -- but it re
 most direct form of circularity, and comparing \code{reference = "pooled"} against
 \code{reference = "exclude_self"} on the same data is itself a sensitivity check worth running
 before treating any single source's apparent speed as real.
+
+\strong{A reported \code{median_horizon} can still be a thin, easily-shifted estimate even though
+it was computed correctly.} The Kaplan-Meier risk set shrinks at later horizons (fewer
+events have that much follow-up left at all), so a source whose curve approaches 50\% only
+gradually can sit within a point or two of the threshold for several consecutive horizons
+on a small and shrinking sample, where a single additional event tips the point estimate
+by multiple years. This is not a bug -- re-running the same data gives the same number --
+but treating that number as precise would be a mistake a reader has no way to catch
+without more information. \code{median_ci_low}/\code{median_ci_high} and \code{median_n_at_risk} exist
+specifically to surface this: a wide interval or a small \code{median_n_at_risk} at the
+crossing horizon both say the same thing -- the point estimate is real but imprecise --
+and should be reported alongside it, not silently dropped in favor of the single number.
 }
 \examples{
 a <- data.frame(

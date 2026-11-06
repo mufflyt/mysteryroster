@@ -250,6 +250,58 @@ test_that("attribute_catch_up_curve collapses a repeated CO -> TX -> CO -> TX ep
   expect_equal(ca$n_events[ca$horizon == 0], 2L)
 })
 
+test_that("attribute_catch_up_curve's confidence interval matches an independent hand-derived calculation", {
+  # Four identifiers all arrive at NM in 2020 (detected by a). Source b resolves id 1 at
+  # horizon 1, ids 2 and 4 together at horizon 2 (two events at once, thinning the risk
+  # set sharply), and never resolves id 3 (right-censored at its own follow-up limit).
+  # Greenwood's cumulative variance ratio by hand: h=1 contributes 1/(4*3) = 0.08333;
+  # h=2 contributes 2/(3*1) = 0.66667 (cumulative 0.75); h=3 and h=4 contribute 0 (no new
+  # events). At h=2 (S=0.25, cumulative variance ratio 0.75), the log-log transform gives
+  # theta = log(-log(0.25)) = 0.3266, se(theta) = sqrt(0.75)/0.3266's denominator
+  # |log(0.25)| = 1.3863, so se = 0.6247; at 95%, theta +/- 1.96*se back-transforms to a
+  # survival interval of approximately (0.9%, 66.5%) -- verified independently in this
+  # session against both this hand calculation and R's own survival::survfit() fed the
+  # equivalent left-truncated, right-censored individual-level data (identical to 1
+  # decimal place at every horizon and for the median and its confidence interval).
+  a <- data.frame(npi = c("1", "1", "2", "2", "3", "3", "4", "4"), year = rep(2019:2020, 4),
+                   state = c("X", "NM", "X", "NM", "X", "NM", "X", "NM"))
+  b <- data.frame(
+    npi = c("1", "1", "1", "1", "2", "2", "2", "2", "3", "3", "3", "3", "4", "4", "4", "4"),
+    year = rep(2020:2023, 4),
+    state = c("X", "NM", "NM", "NM", "X", "X", "NM", "NM", "X", "X", "X", "X", "X", "X", "NM", "NM")
+  )
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  cb <- cu$curve[cu$curve$source == "b", ]
+  expect_equal(cb$pct_not_yet_shown, c(100, 75, 25, 25, 25))
+  expect_equal(cb$ci_low, c(100, 12.8, 0.9, 0.9, 0.9))
+  expect_equal(cb$ci_high, c(100, 96.1, 66.5, 66.5, 66.5))
+
+  mb <- cu$median_horizon[cu$median_horizon$source == "b", ]
+  expect_equal(mb$median_horizon, 2L)
+  expect_equal(mb$median_ci_low, 1L) # the fast end: pointwise ci_low first crosses 50% at horizon 1
+  expect_true(is.na(mb$median_ci_high)) # the slow end never crosses 50% within the observed horizons
+  expect_equal(mb$median_n_at_risk, 3L) # how thin the sample is right at the point-estimate crossing
+})
+
+test_that("attribute_catch_up_curve gives a degenerate confidence interval before any event can have occurred", {
+  a <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM")) # resolves immediately, d = 0
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  cb <- cu$curve[cu$curve$source == "b", ]
+  # Resolved at horizon 0 with no uncertainty possible yet (one identifier, no variance to
+  # estimate from): both bounds collapse to the point estimate exactly, not NA or an
+  # arbitrarily wide interval.
+  expect_equal(cb$ci_low, cb$pct_not_yet_shown)
+  expect_equal(cb$ci_high, cb$pct_not_yet_shown)
+})
+
+test_that("attribute_catch_up_curve validates ci_level", {
+  a <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "NM"))
+  b <- data.frame(npi = "1", year = 2020:2021, state = c("CO", "CO"))
+  expect_error(attribute_catch_up_curve(list(a = a, b = b), attribute = "state", ci_level = 1.5),
+               "Assertion on 'ci_level' failed")
+})
+
 test_that("attribute_catch_up_curve errors clearly when no source has any consecutive-year arrival", {
   a <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "NM")) # a gap, not consecutive
   b <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "CO"))

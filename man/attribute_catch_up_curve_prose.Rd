@@ -9,7 +9,8 @@ attribute_catch_up_curve_prose(
   display_label = NULL,
   unresolved_horizon = 5L,
   decreasing = FALSE,
-  register = c("technical", "clinical")
+  register = c("technical", "clinical"),
+  ci_level = 0.95
 )
 }
 \arguments{
@@ -36,17 +37,25 @@ source" rather than "caught up", "changes" rather than "arrivals". As with
 \code{\link[=format_ranking_prose]{format_ranking_prose()}}, the caller is still responsible for passing fully spelled-
 out \code{display_label} values in clinical register; this parameter controls sentence
 structure, not domain vocabulary.}
+
+\item{ci_level}{Display label only (e.g. "95\% CI"); must match the \code{ci_level} actually
+passed to the \code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}} call that produced \code{cu}, which this
+function has no way to verify and trusts the caller on. Default \code{0.95}, matching that
+function's own default.}
 }
 \value{
 A list:
 \describe{
-\item{\code{n_events}}{Tracked arrivals pooled across all sources (\code{n_at_risk} at
-\code{horizon = 0}, identical for every source by construction).}
+\item{\code{n_events}}{The total number of tracked events pooled across all sources
+(\code{cu$n_tracked} when present).}
 \item{\code{ranking}}{\code{\link[=format_ranking_prose]{format_ranking_prose()}}'s full return for the resolved sources,
 or \code{NULL} if fewer than 2 sources resolved.}
 \item{\code{unresolved}}{Tibble, one row per unresolved source: \code{source}, \code{horizon},
 \code{pct_at_horizon_0}, \code{pct_at_horizon}.}
-\item{\code{sentence}}{The complete, ready-to-paste Results text.}
+\item{\code{sentence}}{The complete, ready-to-paste Results text -- including, for each
+resolved source, a confidence interval and the number of events still at risk
+when its median was reached, whenever \code{cu} carries those columns (every real
+\code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}} result does).}
 }
 }
 \description{
