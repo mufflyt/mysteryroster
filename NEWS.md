@@ -1,5 +1,13 @@
 # mysteryroster (development version)
 
+* Added two base-R figures to `vignette("truth-fusion-evidence-ledger-cross-check")`:
+  a grouped bar chart of majority-vote abstention by transition year (baseline vs.
+  +T-MSIS), visually showing the asymmetry between the 2018 and 2024 spike years, and
+  a grouped bar chart of each weighted method's learned reliability for all four
+  sources, visually showing T-MSIS has no cross-method consensus (lowest-ranked under
+  the two Dawid-Skene variants, mid-pack and barely distinguished under
+  average_log/truthfinder). Same base-R/no-ggplot2-dependency convention as this
+  package's other vignettes' figures.
 * Added `vignette("truth-fusion-evidence-ledger-cross-check")`, packaging the
   evidence-ledger expansion work (`docs/midwifery-evidence-ledger-design.md`,
   `docs/midwifery-evidence-ledger-results.md`) as a proper case-study

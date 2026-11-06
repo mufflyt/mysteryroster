@@ -8,7 +8,7 @@ vignette: >
 ---
 
 ```{r, include = FALSE}
-knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
 ```
 
 ```{r setup}
@@ -160,11 +160,63 @@ run in parallel: `docs/midwifery-evidence-ledger-results.md`. The headline:
   specific transitions a *separate*, full-panel analysis of the same underlying data had
   already flagged as unusual: abstention roughly doubles for the 2017-to-2018 transition
   (8.0% to 19.3%) and *decreases* for 2023-to-2024 (23.7% to 18.9%).
+
+```{r fig-abstention-by-year, fig.alt = "Grouped bar chart of majority-vote abstention percentage by transition year, baseline 3 sources versus plus T-MSIS 4 sources. Abstention rises for 2017, 2018, and 2019, and falls for 2022 through 2025. The 2018 spike year roughly doubles from 8.0 to 19.3 percent; the 2024 spike year falls from 23.7 to 18.9 percent."}
+# Real, published numbers (docs/midwifery-evidence-ledger-results.md S3) --
+# not recomputed here, since the real NPI-level claims never enter this package.
+years <- c("2017", "2018 (spike)", "2019", "2022", "2023", "2024 (spike)", "2025")
+abstention_by_year <- rbind(
+  "3 sources (baseline)" = c(9.3, 8.0, 15.8, 36.6, 28.8, 23.7, 16.8),
+  "+T-MSIS (4 sources)"  = c(18.1, 19.3, 20.8, 29.6, 23.4, 18.9, 14.5)
+)
+colnames(abstention_by_year) <- years
+op <- par(mar = c(6, 4, 3, 1))
+mid <- barplot(abstention_by_year, beside = TRUE, col = c("#1F2A33", "#C8553D"), border = NA,
+               ylim = c(0, max(abstention_by_year) * 1.25), las = 2,
+               ylab = "% of NPI-years majority ties on",
+               main = "Adding T-MSIS: majority abstention by transition year", cex.main = 1,
+               legend.text = rownames(abstention_by_year),
+               args.legend = list(x = "topright", bty = "n", cex = 0.8))
+text(mid, abstention_by_year, abstention_by_year, pos = 3, cex = 0.6)
+par(op)
+```
+
+The two spike years move in opposite directions -- 2018 gets *more* contested once an
+independent source is added, 2024 gets *less* -- which is exactly the asymmetry the
+separately-built full-panel analysis found by the opposite method (below).
+
 - `dawid_skene` and `one_coin_dawid_skene` both learn T-MSIS is the least reliable of
   the four sources (reliability 0.551 and 0.693, lowest in both fits) -- `truthfinder`
   barely distinguishes any of the four, the same contradictory-reliability-ranking
   finding the original 3-source cohort already showed, now extended rather than
   resolved by adding a source.
+
+```{r fig-reliability-no-consensus, fig.alt = "Grouped bar chart of learned reliability score by method, for four sources: nppes, dac_pecos_combined, open_payments, and tmsis_medicaid_enrollment. T-MSIS is the lowest-reliability source under dawid_skene and one_coin_dawid_skene, but mid-pack and barely distinguished from the others under average_log and truthfinder."}
+# Real, published numbers (docs/midwifery-evidence-ledger-results.md S4), read
+# directly from the ~/midwifery session's source_diagnostics_*.csv output files.
+methods <- c("dawid_skene", "one_coin_dawid_skene", "average_log", "truthfinder")
+reliability <- rbind(
+  nppes                     = c(0.847, 0.785, 0.822, 0.614),
+  dac_pecos_combined        = c(0.686, 0.770, 0.972, 0.641),
+  open_payments              = c(0.696, 0.824, 1.000, 0.674),
+  tmsis_medicaid_enrollment = c(0.551, 0.693, 0.847, 0.635)
+)
+colnames(reliability) <- methods
+cols <- c("#1F2A33", "#C8553D", "#8AA29E", "#F2C14E")
+op <- par(mar = c(9, 4, 4, 1))
+barplot(reliability, beside = TRUE, col = cols, border = NA, ylim = c(0, 1.25), las = 2,
+        ylab = "Learned reliability score", cex.names = 0.85,
+        main = "T-MSIS reliability has no cross-method consensus", cex.main = 1)
+legend("top", legend = rownames(reliability), fill = cols, border = NA, bty = "n",
+       horiz = TRUE, cex = 0.6, inset = c(0, -0.08), xpd = TRUE)
+par(op)
+```
+
+T-MSIS (gold) sits at the bottom of its group under the two Dawid-Skene variants, and
+in the middle, barely distinguished from the others, under `average_log`/`truthfinder` --
+the same contradictory-rankings pattern `vignette("truth-fusion-case-study-midwifery")`
+found for the original three sources, not resolved by adding a fourth.
+
 - Adding T-MSIS nearly **triples** `dawid_skene`/`truthfinder`'s agreement on how to
   resolve a tie (6.6% to 19.1%) and drops `dawid_skene`'s trust-NPPES share by about 18
   points -- a more encouraging signal than the `majority`-only result alone would
