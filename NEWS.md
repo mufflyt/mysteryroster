@@ -1,5 +1,19 @@
 # mysteryroster (development version)
 
+* Added `vignette("truth-fusion-evidence-ledger-cross-check")`, packaging the
+  evidence-ledger expansion work (`docs/midwifery-evidence-ledger-design.md`,
+  `docs/midwifery-evidence-ledger-results.md`) as a proper case-study
+  vignette: a runnable demonstration of `attribute_claims_collapse_lineage()`,
+  a small invented illustration (verified against an actual run, not just
+  described) of how adding a fourth source can resolve some majority ties
+  and create others at once, and the real cohort's aggregate findings --
+  T-MSIS agreeing with NPPES only ~50% of the time, majority abstention
+  rising on net while `dawid_skene`'s cross-method agreement nearly triples,
+  and the independent cross-check against a separately-built full-panel
+  analysis (NPPES-removal) landing on the same conclusion about which of two
+  migration spikes is NPPES-dependent. No person-level or NPI-level data
+  appears in the vignette; only the invented illustration and the already-
+  published aggregate numbers.
 * The weighted methods flagged as unrun in the bullet below (dawid_skene,
   one_coin_dawid_skene, sums, average_log, investment, pooled_investment,
   truthfinder) were subsequently run by the `~/midwifery` session against
