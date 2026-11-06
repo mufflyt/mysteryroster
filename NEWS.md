@@ -15,6 +15,14 @@
   practice-address vote. No real data has been loaded under this yet: that
   requires reading `~/midwifery`'s artifacts directly, on hold while a
   separate, live, in-progress build in that repository is running.
+* The hospital-facility-affiliation exclusion above (constraint 3) was
+  rescinded by the user immediately after: a CCN is a real physical
+  facility with a real state, so `docs/midwifery-evidence-ledger-design.md`
+  now calls for loading it directly as `practice_state` evidence (dated to
+  its one snapshot year, never extrapolated), the same single-snapshot
+  treatment already given to Healthgrades/Doximity/state boards. The
+  `~/midwifery` build reached the identical call independently and is
+  wiring the same source in as its 5th truth-fusion source.
 * Strengthened `vignette("truth-fusion-case-study-midwifery")` with a
   second real example (NPPES, a combined DAC/PECOS source, and CMS Open
   Payments -- public transparency data by design, so real NPIs are shown,

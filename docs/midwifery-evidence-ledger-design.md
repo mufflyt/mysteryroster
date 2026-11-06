@@ -17,13 +17,20 @@ source by source, what the completed Step 1 audit of `~/midwifery` found.
 sources (`nppes`, `dac_pecos_combined`, `open_payments`) for the same 1,806
 real NPPES-defined mover transitions. The task now is to decide, for each
 *additional* candidate source the Step 1 audit found already built in
-`~/midwifery`, whether and how it can be added without violating the six
-explicit constraints below.
+`~/midwifery`, whether and how it can be added without violating the
+explicit constraints below (originally six; one later rescinded -- see
+constraint 3).
 
-## The six constraints, restated as what they rule out
+## The constraints, restated as what they rule out
 
 These were given verbatim as hard "Do not" rules for this expansion, and
-every row of the source-verdict table below cites which one applies:
+every row of the source-verdict table below cites which one applies.
+**Constraint 3 (hospital affiliation != practice address) was explicitly
+rescinded by the user on 2026-11-05: hospital facility affiliations are to
+be used as practice-location evidence, not walled off into a separate
+attribute.** It is kept below, struck through, so the reasoning it used to
+encode and the fact that it was a deliberate override -- not an oversight --
+both stay visible.
 
 1. **Do not count multiple rows from the same source as independent votes.**
    Already enforced by `attribute_truth_fusion()`'s row-level deduplication
@@ -31,13 +38,22 @@ every row of the source-verdict table below cites which one applies:
 2. **Do not count DAC and PECOS as independent when they derive from common
    upstream records.** Generalized by the new
    `attribute_claims_collapse_lineage()` (below) to any declared lineage
-   group, not just the one pair the original ablation hardcoded.
-3. **Do not treat a hospital affiliation as equivalent to a primary practice
-   address.** Not a lineage problem -- a different fact about a different
-   entity (a hospital's location, not the clinician's own address). Handled
-   by *never* loading a hospital-affiliation extract under
-   `attribute = "practice_state"` at all (see the facility-affiliation row
-   below), not by a weight or a flag that could later be misread as a vote.
+   group, not just the one pair the original ablation hardcoded. This now
+   has direct bearing on hospital facility affiliations -- see the
+   source-verdict row below.
+3. ~~Do not treat a hospital affiliation as equivalent to a primary practice
+   address.~~ **Rescinded.** The original reasoning: a hospital affiliation
+   is a fact about a different entity (the hospital's location), not the
+   clinician's own address, so counting it as a `practice_state` vote risks
+   conflating "works at/credentialed at this hospital" with "practices in
+   this state." The user's override treats that risk as acceptable here --
+   plausibly because a midwife's hospital affiliation is a materially
+   stronger signal of her practice state than it would be for, say, a
+   purely outpatient specialist, and because no other candidate source adds
+   comparably direct new coverage. Superseded by the verdict below: loaded
+   directly as `practice_state` evidence, `evidence_basis = "affiliation"`
+   kept as a descriptive tag (so this is still visible to anyone reading
+   the ledger) rather than as a structural exclusion.
 4. **Do not treat historical enrollment as proof of an address in that
    enrollment year.** An enrollment interval is evidence the clinician was
    enrolled in a state's program during that interval -- it is not a
@@ -67,7 +83,7 @@ Every claim added under this expansion should carry one more column,
 |---|---|---|
 | `direct_snapshot` | the source's own record of the clinician's practice address/state, as of a stated date | yes (what all three original sources already are) |
 | `enrollment_interval` | a dated interval of program enrollment in a state, not a geocoded address | yes, but see constraint 4 -- treat as weaker, distinct evidence, never silently merged into the same lineage family as a `direct_snapshot` source |
-| `affiliation` | a fact about an *affiliated entity* (hospital, facility), not the clinician directly | **no** -- load under a different `attribute` value (e.g. `affiliated_facility_state`) so it is structurally incapable of being counted as a `practice_state` vote |
+| `affiliation` | a fact about an *affiliated entity* (hospital, facility: a CCN is a real physical facility with a real state) | **yes, per the constraint-3 override above** -- loaded as a `practice_state` claim like any other single-snapshot source; the tag stays only as a descriptive note of what kind of evidence it is, not a structural block |
 | `scrape_current_only` | a profile scrape with only a download/observation timestamp, no source-stated effective date | yes, but `valid_from`/`valid_to` must be left `NA` per constraint 5, so a consumer can filter it out of any longitudinal (year-specific) use |
 
 ## Source-by-source verdict (from the completed Step 1 audit)
@@ -77,7 +93,7 @@ Every claim added under this expansion should carry one more column,
 | Historical DAC/Physician Compare vintages | `artifacts/physician_compare_historical_midwives.csv`, 14 vintages 2013-2025 | `direct_snapshot` | `dac_pecos` (existing) | already in `dac_pecos_combined`; no new information without re-splitting that merge, which is out of scope here |
 | PECOS revalidation | `cms_revalidation.duckdb`, 40 monthly vintages 2021-12 to 2026-09 | `direct_snapshot` | `dac_pecos` (existing, per `SHARED_LINEAGE_GROUPS`) | already in `dac_pecos_combined` |
 | PPEF / NBER PPEF | single current snapshot | n/a | n/a | **exclude** -- audit found only an enrollment-ID-derived date, no state/address field at all; nothing to add |
-| Hospital facility affiliations | `artifacts/dac_facility_affiliations.csv`, current, vintage-matched to 2026-06 DAC | `affiliation` | none (own family if ever added) | **include only as `affiliated_facility_state`**, a separate attribute -- per constraint 3, never as `practice_state` |
+| Hospital facility affiliations | `artifacts/dac_facility_affiliations.csv`, current, vintage-matched to 2026-06 DAC | `affiliation` | independent (own family) -- a CCN facility registry is a structurally different record type from DAC/PECOS's physician-level enrollment data, so "vintage-matched" is read as a shared *extract date*, not shared *lineage*; the `~/midwifery` session reached the same call independently | **include as a direct `practice_state` claim, dated 2026-only, never extrapolated to earlier years** -- per constraint 3's override; same single-snapshot treatment already applied to Healthgrades/Doximity/state boards elsewhere |
 | Trilliant work sites | `midwife_work_sites_long.csv`, claims-derived, single snapshot (evidence_date 2026-06-25) | `direct_snapshot` for that one date; `scrape_current_only`-like for any other year | independent (own family) | include at its one dated snapshot year only; do not propagate to other years (constraint 6) |
 | Open Payments, per-payment history | merged DuckDB, dated 2013-2024 (`Date_of_Payment`); some corrupted dates (year 0002, 3015) flagged by the audit | `direct_snapshot` | independent (already `open_payments`) | include the richer per-payment year coverage, but **filter corrupted dates before loading** -- a malformed date is not a valid `reference_year`, and silently coercing it would violate constraint 5's spirit even though it's a different failure mode |
 | Medicaid T-MSIS enrollment segments | `medicaid_provider_enrollment_segments.duckdb`, 66M rows, `ENRL_START_DT`/`ENRL_END_DT` + `STATE_CD`, Jan 2018-Dec 2024 | `enrollment_interval` | independent (own family) | **the one genuinely new, independently-lineaged, properly-dated candidate** -- include, tagged `enrollment_interval`, never merged into a `direct_snapshot` lineage family; NPI-completeness varies wildly by state (audit found states as low as ~0%), so coverage must be measured per state before trusting any null result from it |
@@ -85,14 +101,12 @@ Every claim added under this expansion should carry one more column,
 | Doximity / Healthgrades | scraped profiles, scrape-time dates only | `scrape_current_only` | independent, if added | include only with `valid_from`/`valid_to` left `NA` (constraint 5); likely low marginal value given no effective-date field |
 | State boards (BON) | live/current only, per existing BON-harvester project | `scrape_current_only` | independent, if added | same treatment as Doximity/Healthgrades; current-only, no historical dating |
 
-Net of this table: **one clearly new, worthwhile source** (T-MSIS enrollment
-segments), **one source addable but structurally separated from
-`practice_state`** (hospital facility affiliations, as
-`affiliated_facility_state`), **one source gaining dated coverage it didn't
-have before** (Open Payments' fuller per-payment history, after a date-sanity
-filter), and several sources that add nothing beyond what
-`dac_pecos_combined` already contains, or that the audit found have no
-usable effective-date field at all.
+Net of this table: **two clearly new, independent sources** (T-MSIS
+enrollment segments, and hospital facility affiliations as of the constraint-3
+override above), **one source gaining dated coverage it didn't have before**
+(Open Payments' fuller per-payment history, after a date-sanity filter), and
+several sources that add nothing beyond what `dac_pecos_combined` already
+contains, or that the audit found have no usable effective-date field at all.
 
 ## What `attribute_claims_collapse_lineage()` does and does not solve here
 
@@ -103,17 +117,20 @@ cast by the family; drops a disagreeing group entirely (never picks one);
 passes through unchanged when only one group member has a claim there. This
 is the general form of the rule the original `dac_pecos_combined` merge
 already applied once, ad hoc -- it is now reusable for any future
-lineage-sharing pair (for instance, if facility affiliations and DAC are
-ever found to share more lineage than "vintage-matched," they could be
-declared a family the same way).
+lineage-sharing pair. Facility affiliations turned out not to need it (both
+sessions independently judged the CCN registry structurally independent of
+DAC/PECOS, not just coincidentally dated together) -- but the function is
+ready the day a genuinely lineage-sharing pair among the newer sources
+*is* found.
 
 It does **not** decide which sources belong in which family -- that is a
 provenance judgment (this document's table), supplied by the caller, not
 inferred from how often two sources happen to agree. It also does not solve
-constraints 3-6; those are schema-tagging and construction-time discipline
+constraints 4-6; those are schema-tagging and construction-time discipline
 (the `evidence_basis` convention above), not a generic collapse rule, because
-"is this an address" and "is this date real" are not statistical properties
-a lineage-collapse function could detect from the claims table alone.
+"is this an enrollment interval" and "is this date real" are not statistical
+properties a lineage-collapse function could detect from the claims table
+alone.
 
 ## Explicitly not done yet
 
