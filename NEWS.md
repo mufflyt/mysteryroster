@@ -1,5 +1,16 @@
 # mysteryroster (development version)
 
+* Added `attribute_lead_lag_duration()` to `vignette("lead-lag-staleness")` as a new
+  "Approach 4," immediately before the catch-up-curve section it precedes conceptually.
+  Like `attribute_catch_up_curve()` before it, this function had no narrative
+  documentation at all despite being exported and referenced by name in that other
+  function's own docs. The new section uses a dedicated 3-identifier example (not the
+  minimal 1-identifier one in the function's own `@examples`) specifically chosen to make
+  its real limitation visible in the rendered output: `disc_base_n` is 3, but `b_adopts$n`
+  is 2, with the median computed from `years = c(1, 3)` alone -- the identifier that never
+  resolves is not in that vector, and nothing in the sentence marks its absence. This is
+  exactly the gap `attribute_catch_up_curve()`'s censoring-aware estimate exists to close,
+  which the vignette can now show side by side instead of asserting in prose.
 * Added a confidence interval to `attribute_catch_up_curve()`'s `median_horizon`:
   `median_ci_low`/`median_ci_high` (the Brookmeyer-Crowley interval, via the log-log
   transform of Greenwood's formula, the same method `survival::survfit()` uses by
