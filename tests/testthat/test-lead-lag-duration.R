@@ -77,6 +77,19 @@ test_that("attribute_lead_lag_duration resolves base_year the same way attribute
   expect_equal(dur$base_year, 2021L) # earliest shared year with a follow-up year
 })
 
+test_that("attribute_lead_lag_duration's result gets a class and a concise print method", {
+  a <- data.frame(npi = "1", year = 2020:2023, state = c("CO", "CO", "CO", "CO"))
+  b <- data.frame(npi = "1", year = 2020:2023, state = c("NM", "NM", "CO", "CO"))
+  dur <- attribute_lead_lag_duration(a, b, attribute = "state", base_year = 2020)
+  expect_s3_class(dur, "mysteryroster_lead_lag_duration")
+  expect_equal(dur$b_adopts$n, 1) # the class doesn't change list access to the real data
+  out <- capture.output(print(dur))
+  expect_match(out[1], "^<mysteryroster_lead_lag_duration>$")
+  expect_match(paste(out, collapse = " "), "base year: 2020 \\| 1 identifier discordant")
+  expect_match(paste(out, collapse = " "), "median of 2.0 years")
+  expect_invisible(print(dur))
+})
+
 test_that("attribute_lead_lag_duration validates inputs", {
   a <- data.frame(npi = "1", year = 2020, state = "CO")
   b <- data.frame(npi = "1", year = 2020, state = "NM")

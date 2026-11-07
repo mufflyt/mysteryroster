@@ -302,6 +302,32 @@ test_that("attribute_catch_up_curve validates ci_level", {
                "Assertion on 'ci_level' failed")
 })
 
+test_that("attribute_catch_up_curve's result gets a class and a concise print method", {
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "NM", "TX", "TX", "TX"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "NM", "NM", "TX", "GA", "GA"))
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state", reference = "exclude_self")
+  expect_s3_class(cu, "mysteryroster_catch_up_curve")
+  expect_equal(cu$n_tracked, 2) # the class doesn't change list access to the real data
+  out <- capture.output(print(cu))
+  expect_match(out[1], "^<mysteryroster_catch_up_curve>$")
+  expect_match(out[2], "reference: exclude_self \\| 2 tracked events across 2 sources")
+  full <- paste(out, collapse = " ")
+  expect_match(full, "fastest first") # both sources resolve here, both listed
+  expect_invisible(print(cu))
+})
+
+test_that("attribute_catch_up_curve's print method reports unresolved sources separately from resolved ones", {
+  a <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "NM", "NM", "TX", "GA", "GA"))
+  b <- data.frame(npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+                   state = c("CO", "CO", "CO", "TX", "TX", "TX")) # never shows either arrival
+  cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+  out <- paste(capture.output(print(cu)), collapse = " ")
+  expect_match(out, "never reached 50% catch-up: b")
+})
+
 test_that("attribute_catch_up_curve errors clearly when no source has any consecutive-year arrival", {
   a <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "NM")) # a gap, not consecutive
   b <- data.frame(npi = "1", year = c(2020, 2022), state = c("CO", "CO"))

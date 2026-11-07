@@ -1,5 +1,17 @@
 # mysteryroster (development version)
 
+* `attribute_catch_up_curve()` and `attribute_lead_lag_duration()` now return a classed
+  result (`mysteryroster_catch_up_curve`, `mysteryroster_lead_lag_duration`) with its own
+  `print()` method, matching the existing convention `attribute_truth_fusion()` already
+  had. Typing a catch-up-curve result at the console previously dumped seven raw list
+  elements, several of them multi-row tibbles; a duration result dumped every field of two
+  deeply nested nested summary lists, one value per line, 40+ lines for what reads as two
+  sentences. Both now print a compact summary (median years to catch up with its
+  confidence interval and risk-set size, ranked fastest-first, for `attribute_catch_up_
+  curve()`; the two adoption/reversion sentences for `attribute_lead_lag_duration()`) while
+  every list element (`$curve`, `$median_horizon`, `$b_adopts`, etc.) remains fully
+  accessible exactly as before -- the class only changes what happens when the object is
+  printed, not what `$` access returns.
 * Added `attribute_lead_lag_duration()` to `vignette("lead-lag-staleness")` as a new
   "Approach 4," immediately before the catch-up-curve section it precedes conceptually.
   Like `attribute_catch_up_curve()` before it, this function had no narrative

@@ -942,15 +942,31 @@ attribute_lead_lag_duration <- function(source_a, source_b, attribute,
   b_adopts_sentence <- sentence_for(b_adopts, source_a_label, source_b_label, "adopted")
   a_reverts_sentence <- sentence_for(a_reverts, source_b_label, source_a_label, "reverted to")
 
-  list(
-    base_year = base_year,
-    disc_base_n = disc_base_n,
-    b_adopts = b_adopts,
-    a_reverts = a_reverts,
-    b_adopts_sentence = b_adopts_sentence,
-    a_reverts_sentence = a_reverts_sentence,
-    combined_text = paste(b_adopts_sentence, a_reverts_sentence)
+  structure(
+    list(
+      base_year = base_year,
+      disc_base_n = disc_base_n,
+      b_adopts = b_adopts,
+      a_reverts = a_reverts,
+      b_adopts_sentence = b_adopts_sentence,
+      a_reverts_sentence = a_reverts_sentence,
+      combined_text = paste(b_adopts_sentence, a_reverts_sentence)
+    ),
+    class = "mysteryroster_lead_lag_duration"
   )
+}
+
+#' @export
+print.mysteryroster_lead_lag_duration <- function(x, ...) {
+  cat(sprintf(
+    "<mysteryroster_lead_lag_duration>\n  base year: %d | %d identifier%s discordant\n\n",
+    x$base_year, x$disc_base_n, if (x$disc_base_n == 1L) "" else "s"
+  ))
+  cat(strwrap(x$b_adopts_sentence, width = 76, indent = 2, exdent = 2), sep = "\n")
+  cat("\n")
+  cat(strwrap(x$a_reverts_sentence, width = 76, indent = 2, exdent = 2), sep = "\n")
+  cat("\n")
+  invisible(x)
 }
 
 #' Kaplan-Meier-style catch-up curve: how long until a source shows a value another already has?
@@ -1381,7 +1397,33 @@ attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "yea
       n_unanchored = unname(vapply(nm, function(s) per_source[[s]]$n_unanchored, integer(1)))
     )
   }
-  out
+  structure(out, class = "mysteryroster_catch_up_curve")
+}
+
+#' @export
+print.mysteryroster_catch_up_curve <- function(x, ...) {
+  cat(sprintf(
+    "<mysteryroster_catch_up_curve>\n  reference: %s | %s tracked event%s across %d source%s\n",
+    x$reference, format(x$n_tracked, big.mark = ","), if (x$n_tracked == 1L) "" else "s",
+    nrow(x$median_horizon), if (nrow(x$median_horizon) == 1L) "" else "s"
+  ))
+  mh <- x$median_horizon
+  resolved <- mh[!is.na(mh$median_horizon), , drop = FALSE]
+  resolved <- resolved[order(resolved$median_horizon), , drop = FALSE]
+  if (nrow(resolved) > 0L) {
+    cat("  median years to catch up (95% CI), fastest first:\n")
+    for (i in seq_len(nrow(resolved))) {
+      r <- resolved[i, ]
+      hi <- if (is.na(r$median_ci_high)) "not estimable" else r$median_ci_high
+      cat(sprintf("    %-20s %s (%s-%s)  [n at risk at crossing = %s]\n",
+                  r$source, r$median_horizon, r$median_ci_low, hi, r$median_n_at_risk))
+    }
+  }
+  unresolved <- setdiff(mh$source, resolved$source)
+  if (length(unresolved) > 0L) {
+    cat(sprintf("  never reached 50%% catch-up: %s\n", paste(unresolved, collapse = ", ")))
+  }
+  invisible(x)
 }
 
 #' Manuscript-ready prose for an attribute_catch_up_curve() result
