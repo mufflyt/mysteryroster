@@ -9,20 +9,33 @@
 <!-- badges: end -->
 
 Registry overlap strata and listing-validity analysis for mystery-caller
-audits of physician directories.
+audits of physician directories -- plus a second, independent toolkit for
+comparing sources that disagree when neither one is a gold standard.
 
-## The question
+## Two questions, two independent toolkits
 
-National physician directories (NPPES, certifying boards, professional
-societies) count different physicians and are rarely checked against reality.
-A registry-validity study cross-links them, calls a stratified sample of listed
-practices, and asks one thing of each physician-location listing: is the named
-physician still practising the indexed specialty at the listed address?
+**Is a physician listing valid?** National physician directories (NPPES,
+certifying boards, professional societies) count different physicians and
+are rarely checked against reality. A registry-validity study cross-links
+them, calls a stratified sample of listed practices, and asks one thing of
+each physician-location listing: is the named physician still practising the
+indexed specialty at the listed address?
 
 `mysteryroster` is the specialty-agnostic core of that study. It was carved out
 of the ENT registry-validity study (Falk et al.) so the OB/GYN subspecialty
 study, and any later one, runs the same steps with its own registries and its
 own disposition codebook.
+
+**When two or more sources disagree on an attribute and neither is a gold
+standard, which one is leading and which is lagging, and when is it safe to
+fuse them into one predicted value?** This is the other roughly 30 functions
+in the package (about two-thirds of it by function count) -- single
+cross-section agreement, longitudinal lead-lag and catch-up-curve approaches,
+N-way consensus and corroboration, and truth fusion with explicit abstention.
+It shares no functions with the listing-validity workflow above and does not
+require it. Skip to [Beyond membership: does a shared attribute
+agree?](#beyond-membership-does-a-shared-attribute-agree) if this is why
+you're here, or see `?mysteryroster` for the full map.
 
 ## Installation
 
