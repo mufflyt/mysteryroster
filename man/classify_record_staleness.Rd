@@ -56,6 +56,8 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_set_agreement]{attribute_set_agreement()}},
 \code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}},
 \code{\link[=attribute_spell_age]{attribute_spell_age()}},
+\code{\link[=attribute_verification_codebook]{attribute_verification_codebook()}},
+\code{\link[=attribute_verification_questionnaire]{attribute_verification_questionnaire()}},
 \code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
 \code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
 \code{\link[=record_age_band]{record_age_band()}},

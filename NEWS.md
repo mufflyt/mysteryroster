@@ -1,5 +1,16 @@
 # mysteryroster (development version)
 
+* Added `attribute_verification_codebook()` and `attribute_verification_questionnaire()`,
+  the sixth piece of the staged OIG-style audit integration. The codebook maps all six
+  OIG-style per-claim response categories (`correct`/`partially_incorrect`/
+  `formerly_correct`/`never_correct`/`unable_to_verify`/`not_applicable`) to four coarser
+  accuracy buckets -- richer than `listing_status_levels()`'s four whole-listing statuses,
+  since it distinguishes *why* a claim is wrong, not just whether it is. The questionnaire
+  generator freezes one verification question per distinct sampled assertion -- one
+  question per distinct value when an attribute is legitimately multi-valued, and an
+  explicit question for a missing value rather than skipping it or treating it as
+  automatically wrong. Every sampled identifier-year must get at least one question, or
+  the call errors rather than silently having nothing to verify.
 * Added `attribute_enrollment_locations()`, the fifth piece of the staged OIG-style audit
   integration. Links both direct individual enrollment edges and group-reassignment edges
   to practice locations by `(year, enrollment_id)`, keeping every physician-location pair
