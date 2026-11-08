@@ -122,6 +122,7 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_enrollment_locations]{attribute_enrollment_locations()}},
 \code{\link[=attribute_field_dictionary]{attribute_field_dictionary()}},
 \code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}},
 \code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}},
 \code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}},
 \code{\link[=attribute_record_presence]{attribute_record_presence()}},
