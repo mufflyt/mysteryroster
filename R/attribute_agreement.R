@@ -408,3 +408,53 @@ attribute_agreement_summary <- function(agreement) {
   out <- out[order(out$year, out$source_a, out$source_b), ]
   tibble::as_tibble(out)
 }
+
+#' Comparable count and agreement rate per source pair and year, set-based
+#'
+#' The set-based sibling of [attribute_agreement_summary()]: aggregates
+#' [attribute_set_agreement()]'s row-level output the way a state-by-state
+#' audit reports it, for each pair of sources and each year -- how many
+#' identifiers both sources had a comparable value set for, and what share
+#' agreed under each of the two looser-to-stricter standards
+#' [attribute_set_agreement()] returns.
+#'
+#' @param set_agreement Output of [attribute_set_agreement()].
+#' @return A tibble: `source_a`, `source_b`, `year`, `n_compared`,
+#'   `n_any_shared`, `pct_any_shared`, `n_same_set`, `pct_same_set`, ordered
+#'   by `year`, `source_a`, `source_b`. Both `pct_*` columns are proportions
+#'   in `[0, 1]`, not percentages. Pairs that share no identifier-year are
+#'   absent rather than shown with `n_compared = 0`.
+#' @examples
+#' s <- list(
+#'   nppes = data.frame(npi = c("1", "1", "2"), year = 2024, state = c("CO", "NM", "CO")),
+#'   pecos = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"))
+#' )
+#' attribute_set_agreement_summary(attribute_set_agreement(s, attribute = "state"))
+#' @seealso [attribute_set_agreement()], [attribute_agreement_summary()] for
+#'   the single-value case this generalizes.
+#' @family no-gold-standard comparison
+#' @export
+attribute_set_agreement_summary <- function(set_agreement) {
+  checkmate::assert_data_frame(set_agreement)
+  need <- c("source_a", "source_b", "year", "any_shared", "same_set")
+  missing_cols <- setdiff(need, names(set_agreement))
+  if (length(missing_cols) > 0) {
+    stop("attribute_set_agreement_summary: set_agreement is missing column(s): ",
+         paste(missing_cols, collapse = ", "), call. = FALSE)
+  }
+  key <- paste(set_agreement$source_a, set_agreement$source_b, set_agreement$year, sep = "")
+  groups <- split(set_agreement, key, drop = TRUE)
+  rows <- lapply(groups, function(g) {
+    n_compared <- nrow(g)
+    n_any_shared <- sum(g$any_shared)
+    n_same_set <- sum(g$same_set)
+    tibble::tibble(
+      source_a = g$source_a[1], source_b = g$source_b[1], year = g$year[1],
+      n_compared = n_compared, n_any_shared = n_any_shared, pct_any_shared = n_any_shared / n_compared,
+      n_same_set = n_same_set, pct_same_set = n_same_set / n_compared
+    )
+  })
+  out <- dplyr::bind_rows(rows)
+  out <- out[order(out$year, out$source_a, out$source_b), ]
+  tibble::as_tibble(out)
+}
