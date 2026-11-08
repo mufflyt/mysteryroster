@@ -130,6 +130,14 @@ attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, ye
     base::any(base::is.na(value) |
                 !base::nzchar(base::trimws(base::as.character(value))))
   }, base::logical(1))
+  noncanonical <- base::vapply(keys, function(value) {
+    text <- base::as.character(value)
+    base::any(text != base::trimws(text), na.rm = TRUE)
+  }, base::logical(1))
+  if (base::any(noncanonical)) {
+    base::stop("record_presence keys have noncanonical whitespace.",
+               call. = FALSE)
+  }
   if (base::any(blank) || base::anyDuplicated(keys) > 0L) {
     base::stop("record_presence has missing/blank or duplicate keys.",
                call. = FALSE)

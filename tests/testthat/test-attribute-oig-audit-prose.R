@@ -255,3 +255,14 @@ test_that("audit prose restricts comparisons to shared populated records", {
     presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
   ), "populated eligible")
 })
+
+test_that("audit prose rejects whitespace keys that conceal duplicates", {
+  fixture <- prose_fixture()
+  presence <- base::rbind(
+    fixture$record_presence, fixture$record_presence[1, ]
+  )
+  presence$id[5] <- " 1 "
+  expect_error(attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  ), "noncanonical whitespace")
+})
