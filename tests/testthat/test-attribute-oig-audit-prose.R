@@ -219,3 +219,39 @@ test_that("audit prose rejects impossible agreement counts", {
     ))
   }
 })
+
+test_that("audit prose checks supplied eligibility and field counts", {
+  fixture <- prose_fixture()
+  presence <- fixture$record_presence
+  presence$field_available <- TRUE
+  presence$completeness_eligible <- presence$record_present
+  presence$n_field_rows <- base::as.integer(presence$record_present)
+  presence$n_populated <- presence$n_field_rows
+  report <- function(records) attribute_oig_audit_prose(
+    records, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(report(presence), "contained 2 and 1 physician records")
+  presence$field_available[1] <- FALSE
+  expect_error(report(presence), "inconsistent")
+  presence$field_available[1] <- NA
+  expect_error(report(presence))
+  presence$field_available[1] <- TRUE
+  presence$n_populated[1] <- 2
+  expect_error(report(presence), "inconsistent")
+  presence$n_populated[1] <- 0
+  expect_error(report(presence), "inconsistent")
+})
+
+test_that("audit prose restricts comparisons to shared populated records", {
+  fixture <- prose_fixture()
+  presence <- fixture$record_presence
+  presence$id[3:4] <- c("3", "4")
+  expect_error(attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  ), "populated eligible")
+  presence <- fixture$record_presence
+  presence$field_status[3] <- "field_value_missing"
+  expect_error(attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  ), "populated eligible")
+})
