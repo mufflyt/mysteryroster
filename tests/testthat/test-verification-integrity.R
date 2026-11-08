@@ -221,3 +221,78 @@ testthat::test_that("normalized presence keys reject collisions and bad flags", 
   )
   testthat::expect_equal(indicators$n_populated, 2)
 })
+
+testthat::test_that("untrusted methods stay unresolved with an explicit reason", {
+  fixture <- verification_status_fixture()
+  fixture$audit$items$verification_method[
+    fixture$audit$items$id == "1"
+  ] <- NA_character_
+  classified <- attribute_verification_status(
+    fixture$audit, fixture$targets, fixture$methods
+  )
+  zip <- classified$fields[classified$fields$attribute == "zip", ]
+  testthat::expect_equal(zip$listing_status[1], "unresolved")
+  testthat::expect_true(
+    "missing_verification_method" %in% zip$unresolved_reasons[[1]]
+  )
+  testthat::expect_true(
+    "unaccepted_verification_method" %in% zip$unresolved_reasons[[9]]
+  )
+})
+
+testthat::test_that("manually changed audit dates cannot establish validity", {
+  fixture <- verification_status_fixture()
+  future <- fixture$audit
+  future$items$verified_at[future$items$id == "1"] <- base::Sys.Date() + 1
+  testthat::expect_error(
+    attribute_verification_status(future, fixture$targets, fixture$methods),
+    "future"
+  )
+  malformed <- fixture$audit
+  malformed$items$verified_at <- base::as.character(
+    malformed$items$verified_at
+  )
+  malformed$items$verified_at[1] <- "not a date"
+  testthat::expect_error(
+    attribute_verification_status(
+      malformed, fixture$targets, fixture$methods
+    ), "dates"
+  )
+})
+
+testthat::test_that("all applicable values determine a multivalue field", {
+  fixture <- verification_status_fixture()
+  fixture$audit$items$answer[fixture$audit$items$id == "1" &
+    fixture$audit$items$value == "10002"] <- "not_applicable"
+  classified <- attribute_verification_status(
+    fixture$audit, fixture$targets, fixture$methods
+  )
+  testthat::expect_equal(
+    classified$validity$listing_status[classified$validity$id == "1"],
+    "confirmed_valid"
+  )
+})
+
+testthat::test_that("trimmed sample and year collisions are rejected", {
+  population <- base::data.frame(npi = "1", year = "2020")
+  index <- base::data.frame(
+    npi = "1", year = "2020", source = base::c("a", "b")
+  )
+  manifest <- base::data.frame(
+    year = "2020", source = base::c("a", "b"), extract_complete = TRUE
+  )
+  sample <- base::data.frame(npi = base::c("1", " 1 "), year = "2020")
+  testthat::expect_error(
+    attribute_analysis_populations(
+      population, index, manifest, base::c("a", "b"),
+      accuracy_sample = sample
+    ), "duplicate"
+  )
+  duplicated_year <- base::rbind(population, population)
+  duplicated_year$year[2] <- " 2020 "
+  testthat::expect_error(
+    attribute_analysis_populations(
+      duplicated_year, index, manifest, base::c("a", "b")
+    ), "duplicate"
+  )
+})
