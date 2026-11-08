@@ -95,6 +95,7 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
 \code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}},
 \code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}},
+\code{\link[=attribute_record_presence]{attribute_record_presence()}},
 \code{\link[=attribute_set_agreement]{attribute_set_agreement()}},
 \code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}},
 \code{\link[=attribute_spell_age]{attribute_spell_age()}},
