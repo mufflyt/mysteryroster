@@ -1,5 +1,21 @@
 # mysteryroster (development version)
 
+* Added `attribute_set_agreement_summary()` and `attribute_oig_audit_prose()`. The first is
+  the set-based sibling `attribute_set_agreement()` was always missing relative to
+  `attribute_agreement()`/`attribute_agreement_summary()`: per-source-pair-and-year
+  `n_compared`/`n_any_shared`/`pct_any_shared`/`n_same_set`/`pct_same_set`, with `pct_*` as
+  proportions in `[0, 1]` matching the existing convention. The second composes manuscript
+  prose directly from this package's own OIG-style audit functions
+  (`attribute_record_presence()`, `attribute_set_agreement_summary()`, optionally
+  `attribute_enrollment_locations()` and `attribute_nonresponse_audit()`) -- the same role
+  `format_no_gold_standard_prose()` and `attribute_truth_fusion_prose()` play for the
+  package's other analyses. It deliberately omits a verified-accuracy sentence (no
+  equivalent to `mr_verified_accuracy()` was ever ported -- see the note on
+  `attribute_nonresponse_audit()` above) and a format-validity sentence (the field
+  dictionary's `normalizer` is metadata, not executable code, so there is nothing to check
+  a populated value against). Verified end-to-end by running every new function in this
+  staged integration in sequence on one consistent synthetic study and confirming the
+  resulting paragraph reads correctly.
 * Added `attribute_nonresponse_audit()`, the seventh and final piece of the staged
   OIG-style audit integration. Reconciles a frozen questionnaire against whatever answers
   and contact attempts actually came back, classifying every sampled identifier-year into
