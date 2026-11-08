@@ -1,5 +1,11 @@
 # mysteryroster (development version)
 
+* `attribute_enrollment_locations()` accepts empty direct, reassignment, and
+  location tables while preserving unmatched edges and unlinked locations.
+  Duplicate keys are checked after whitespace normalization to prevent inflated
+  links. Reserved location metadata names now fail explicitly rather than
+  corrupting linkage provenance. Nine regression tests cover these cases.
+
 * Added `attribute_set_agreement_summary()` and `attribute_oig_audit_prose()`. The first is
   the set-based sibling `attribute_set_agreement()` was always missing relative to
   `attribute_agreement()`/`attribute_agreement_summary()`: per-source-pair-and-year

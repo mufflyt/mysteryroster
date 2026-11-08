@@ -73,6 +73,15 @@ locations, every physician links to every one of that group's locations
 -- each physician-location pair is its own traceable row, not collapsed
 or deduplicated, because each is independently a legitimate (if purely
 administrative) association to confirm or rule out.
+
+\strong{Empty extracts and normalized keys.} Any input may have zero rows,
+provided it retains its required columns. Missing locations keep their
+enrollment edges; missing edges leave locations unlinked. Keys must also
+be unique after whitespace trimming, so padding cannot multiply links.
+
+\strong{Reserved metadata.} Extra location columns cannot use \code{id}, \code{year},
+\code{linkage_path}, \code{location_linked}, or \code{clinical_presence_verified}.
+These names belong to the standardized linkage output.
 }
 \examples{
 individual <- data.frame(npi = "1", year = 2024, enrollment_id = "individual_a")
