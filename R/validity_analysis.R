@@ -18,8 +18,9 @@ listing_validity_design <- function(df, strata = "stratum", weights = "weight", 
   for (col in c(strata, weights, ids)) {
     if (!col %in% names(df)) stop(sprintf("listing_validity_design: no column '%s'", col), call. = FALSE)
   }
-  if (any(is.na(df[[weights]]) | df[[weights]] <= 0)) {
-    stop("listing_validity_design: every weight must be positive and non-missing", call. = FALSE)
+  if (!is.numeric(df[[weights]]) ||
+      any(!is.finite(df[[weights]]) | df[[weights]] <= 0)) {
+    stop("listing_validity_design: every weight must be positive, finite and non-missing", call. = FALSE)
   }
   survey::svydesign(
     ids     = if (is.null(ids)) ~1 else as.formula(paste0("~", ids)),
@@ -33,105 +34,234 @@ listing_validity_design <- function(df, strata = "stratum", weights = "weight", 
 #' Design-weighted proportion of listings in a given status
 #'
 #' @param design Output of [listing_validity_design()].
-#' @param status Column holding [listing_status_levels()] values. Default
-#'   `"listing_status"`.
+#' @param status Column holding [listing_status_levels()] values.
 #' @param level Which status to estimate. Default `"confirmed_valid"`.
-#' @param by Optional grouping column (for example `"stratum"`).
-#' @param definitive_only If `TRUE`, restrict the design to listings whose
-#'   status is `confirmed_valid` or `confirmed_invalid` (the complete-case
-#'   estimand); otherwise all sampled listings form the denominator.
-#' @param level_ci Confidence level. Default 0.95.
-#' @param outcome Optional logical column naming a different estimand, for
-#'   example `"location_valid"` (practises at the listed location) or
-#'   `"workforce_valid"` (active in the specialty somewhere). When given,
-#'   `status`/`level` are ignored and rows where the outcome is `NA` are
-#'   dropped from the design.
-#' @return A tibble with `estimate`, `se`, `ci_low`, `ci_high` and the
-#'   unweighted `n`, one row overall or per `by` group.
+#' @param by Optional grouping column.
+#' @param definitive_only Restrict to confirmed valid or invalid listings.
+#'   The default uses all sampled listings as the denominator.
+#' @param level_ci Confidence level, strictly between zero and one.
+#' @param outcome Optional logical outcome column. When supplied, status and
+#'   level are ignored and missing outcomes are excluded.
+#' @param ci_method `"beta"` (default) uses [survey::svyciprop()] with the
+#'   Korn-Graubard effective-sample-size interval. `"mean"` reproduces the
+#'   legacy normal interval from [survey::svymean()], clipped to [0, 1].
+#' @return A tibble with estimate, se, unweighted n, ci_low, ci_high and
+#'   ci_status, overall or per group. Empty domains have n = 0 and missing
+#'   estimates and intervals. Groups present before outcome exclusion remain.
+#' @details
+#' Beta intervals are missing at exactly zero or one (ci_status = "boundary")
+#'   and when the estimated variance is zero or non-finite
+#'   ("undefined_variance"); these cases do not support this interval.
+#'   The point estimate is retained. Empty domains have status "empty".
+#'   Otherwise status is "estimated", or "legacy_mean" for the mean method.
+#'   The legacy method can produce zero-width intervals at the boundaries.
+#'   Survey design assumptions and variance settings still apply; these
+#'   intervals describe sampling uncertainty, not unresolved-status bounds.
 #' @examples
 #' calls <- data.frame(
 #'   stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
-#'   listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+#'   listing_status = c("confirmed_valid", "confirmed_invalid",
+#'                      "confirmed_valid", "unresolved"))
 #' design <- listing_validity_design(calls)
 #' validity_estimates(design)
-#' validity_estimates(design, by = "stratum")
+#' validity_estimates(design, by = "stratum", ci_method = "mean")
 #' @export
-validity_estimates <- function(design, status = "listing_status", level = "confirmed_valid",
-                               by = NULL, definitive_only = FALSE, level_ci = 0.95,
-                               outcome = NULL) {
+validity_estimates <- function(
+    design, status = "listing_status", level = "confirmed_valid",
+    by = NULL, definitive_only = FALSE, level_ci = 0.95,
+    outcome = NULL, ci_method = c("beta", "mean")) {
   checkmate::assert_class(design, "survey.design")
+  checkmate::assert_flag(definitive_only)
+  checkmate::assert_number(level_ci, lower = 0, upper = 1, finite = TRUE)
+  if (level_ci <= 0 || level_ci >= 1) {
+    base::stop("level_ci must be strictly between zero and one.",
+               call. = FALSE)
+  }
+  ci_method <- base::match.arg(ci_method)
   vars <- design$variables
-  if (!is.null(outcome)) {
-    if (!outcome %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", outcome), call. = FALSE)
-    if (!is.logical(vars[[outcome]])) stop(sprintf("validity_estimates: '%s' is not logical", outcome), call. = FALSE)
-    design <- subset(design, !is.na(vars[[outcome]]))
-    vars <- design$variables
-    design$variables$.y <- as.integer(vars[[outcome]])
-  } else {
-    if (!status %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", status), call. = FALSE)
-    if (definitive_only) {
-      keep <- vars[[status]] %in% c("confirmed_valid", "confirmed_invalid")
-      design <- subset(design, keep)
-      vars <- design$variables
+  if (!base::is.null(by)) {
+    checkmate::assert_string(by, min.chars = 1)
+    if (!by %in% base::names(vars)) {
+      base::stop("validity_estimates: no column '", by, "'", call. = FALSE)
     }
-    design$variables$.y <- as.integer(vars[[status]] == level)
   }
-  if (is.null(by)) {
-    m <- survey::svymean(~.y, design, na.rm = TRUE)
-    out <- tibble::tibble(estimate = as.numeric(m), se = as.numeric(survey::SE(m)),
-                          n = nrow(design$variables))
+  if (!base::is.null(outcome)) {
+    checkmate::assert_string(outcome, min.chars = 1)
+    if (!outcome %in% base::names(vars)) {
+      base::stop("validity_estimates: no column '", outcome, "'",
+                 call. = FALSE)
+    }
+    if (!base::is.logical(vars[[outcome]])) {
+      base::stop("validity_estimates: '", outcome, "' is not logical",
+                 call. = FALSE)
+    }
+    keep <- !base::is.na(vars[[outcome]])
+    design$variables$.y <- base::as.integer(vars[[outcome]])
   } else {
-    if (!by %in% names(vars)) stop(sprintf("validity_estimates: no column '%s'", by), call. = FALSE)
-    m <- survey::svyby(~.y, as.formula(paste0("~", by)), design, survey::svymean, na.rm = TRUE)
-    out <- tibble::tibble(group = as.character(m[[by]]), estimate = as.numeric(m$.y),
-                          se = as.numeric(survey::SE(m)))
-    names(out)[1] <- by
-    out$n <- as.integer(table(design$variables[[by]])[out[[by]]])
+    statuses <- .validity_statuses(vars, status)
+    checkmate::assert_choice(level, listing_status_levels())
+    keep <- if (definitive_only) {
+      statuses %in% c("confirmed_valid", "confirmed_invalid")
+    } else {
+      base::rep(TRUE, base::nrow(vars))
+    }
+    design$variables$.y <- base::as.integer(statuses == level)
   }
-  ci <- stats::confint(m, level = level_ci)
-  out$ci_low  <- pmax(0, ci[, 1])
-  out$ci_high <- pmin(1, ci[, 2])
-  out
+  .validity_check_weights(stats::weights(design, type = "sampling"))
+
+  estimate_domain <- function(domain) {
+    summary <- tibble::tibble(
+      estimate = NA_real_, se = NA_real_, n = base::nrow(domain$variables),
+      ci_low = NA_real_, ci_high = NA_real_, ci_status = "empty"
+    )
+    if (summary$n == 0L) return(summary)
+    mean <- survey::svymean(~.y, domain)
+    summary$estimate <- base::as.numeric(mean)
+    summary$se <- base::as.numeric(survey::SE(mean))
+    if (ci_method == "mean") {
+      interval <- stats::confint(mean, level = level_ci)
+      summary$ci_status <- "legacy_mean"
+      summary$ci_low <- base::max(0, interval[1])
+      summary$ci_high <- base::min(1, interval[2])
+    } else if (summary$estimate %in% c(0, 1)) {
+      summary$ci_status <- "boundary"
+    } else if (!base::is.finite(summary$se) || summary$se <= 0) {
+      summary$ci_status <- "undefined_variance"
+    } else {
+      proportion <- survey::svyciprop(
+        ~.y, domain, method = "beta", level = level_ci
+      )
+      interval <- stats::confint(proportion)
+      summary$ci_low <- base::as.numeric(interval[1])
+      summary$ci_high <- base::as.numeric(interval[2])
+      summary$ci_status <- "estimated"
+    }
+    summary
+  }
+
+  if (base::is.null(by)) {
+    return(estimate_domain(base::subset(design, keep)))
+  }
+  groups <- base::sort(base::unique(base::as.character(vars[[by]])))
+  summaries <- base::lapply(groups, function(group) {
+    selected <- keep & !base::is.na(vars[[by]]) & vars[[by]] == group
+    estimate_domain(base::subset(design, selected))
+  })
+  if (base::length(groups) == 0L) {
+    estimates <- estimate_domain(base::subset(design, keep))[FALSE, ]
+  } else {
+    estimates <- base::do.call(base::rbind, summaries)
+  }
+  estimates[[by]] <- groups
+  estimates[, c(by, base::setdiff(base::names(estimates), by))]
+}
+
+.validity_statuses <- function(sample, status) {
+  checkmate::assert_string(status, min.chars = 1)
+  if (!status %in% base::names(sample)) {
+    base::stop("validity: no column '", status, "'", call. = FALSE)
+  }
+  statuses <- base::as.character(sample[[status]])
+  if (base::anyNA(statuses) ||
+      !base::all(statuses %in% listing_status_levels())) {
+    base::stop(
+      "validity: status column holds values outside listing_status_levels()",
+      call. = FALSE
+    )
+  }
+  statuses
+}
+
+.validity_check_weights <- function(weights) {
+  checkmate::assert_numeric(weights, any.missing = FALSE, finite = TRUE)
+  if (base::any(weights <= 0)) {
+    base::stop("Every sampling weight must be positive.", call. = FALSE)
+  }
+  invisible(weights)
 }
 
 #' Extreme-case bounds for unresolved listings
 #'
-#' Three unweighted scenarios. Observed: unresolved excluded (definitive
-#' determinations only). Best case: unresolved counted as valid. Worst case:
-#' unresolved counted as invalid. Not-attempted listings are excluded from
-#' every denominator and reported separately. The bounds are asserted to be
-#' ordered worst <= observed <= best.
-#'
-#' @param df Data frame with a status column.
+#' Identification bounds obtained by assigning every uncertain listing valid
+#'   or invalid. These are not confidence intervals and do not measure
+#'   sampling uncertainty. The observed rate uses definitive listings only.
+#' @param df Data frame with a status column, or a survey.design object.
 #' @param status Column name. Default `"listing_status"`.
-#' @return A tibble with `scenario`, `n_valid`, `denominator`, `pct_valid`.
+#' @param weights Optional sampling-weight column name or numeric vector.
+#'   NULL uses unit weights for data frames. A survey design uses its own
+#'   sampling weights and must not also receive this argument.
+#' @param denominator `"attempted"` (default) excludes not-attempted
+#'   listings from bounds. `"all_sampled"` treats unresolved and
+#'   not-attempted listings as uncertain.
+#' @return A tibble with scenario, n_valid, denominator and pct_valid.
+#'   With weights, n_valid and denominator are sums of sampling weights,
+#'   not row counts; the weighted attribute is TRUE. Without weights the
+#'   original counts, scenarios and output structure are preserved.
+#'   The not_attempted attribute always reports the unweighted row count.
+#'   When all eligible listings are uncertain the definitive rate is NA
+#'   and bounds are 0 to 100 percent. Empty eligible populations have NA
+#'   bounds.
 #' @examples
 #' calls <- data.frame(
-#'   listing_status = c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted"))
+#'   listing_status = listing_status_levels(), weight = c(8, 2, 6, 4))
 #' validity_sensitivity_bounds(calls)
+#' validity_sensitivity_bounds(
+#'   calls, weights = "weight", denominator = "all_sampled")
 #' @export
-validity_sensitivity_bounds <- function(df, status = "listing_status") {
-  checkmate::assert_data_frame(df)
-  if (!status %in% names(df)) stop(sprintf("validity_sensitivity_bounds: no column '%s'", status), call. = FALSE)
-  s <- as.character(df[[status]])
-  n_valid <- sum(s == "confirmed_valid"); n_invalid <- sum(s == "confirmed_invalid")
-  n_unres <- sum(s == "unresolved"); n_notatt <- sum(s == "not_attempted")
-  if (n_valid + n_invalid + n_unres + n_notatt != nrow(df)) {
-    stop("validity_sensitivity_bounds: status column holds values outside listing_status_levels()", call. = FALSE)
+validity_sensitivity_bounds <- function(
+    df, status = "listing_status", weights = NULL,
+    denominator = c("attempted", "all_sampled")) {
+  denominator <- base::match.arg(denominator)
+  sample <- df
+  weighted <- !base::is.null(weights)
+  if (base::inherits(sample, "survey.design")) {
+    if (weighted) {
+      base::stop("Supply a survey design or weights, not both.", call. = FALSE)
+    }
+    weights <- stats::weights(sample, type = "sampling")
+    sample <- sample$variables
+    weighted <- TRUE
   }
-  denom_obs <- n_valid + n_invalid
-  denom_rng <- n_valid + n_invalid + n_unres
-  out <- tibble::tibble(
-    scenario    = c("observed_definitive_only", "best_case_unresolved_valid", "worst_case_unresolved_invalid"),
-    n_valid     = c(n_valid, n_valid + n_unres, n_valid),
-    denominator = c(denom_obs, denom_rng, denom_rng)
+  checkmate::assert_data_frame(sample)
+  statuses <- .validity_statuses(sample, status)
+  if (base::is.character(weights)) {
+    checkmate::assert_string(weights, min.chars = 1)
+    if (!weights %in% base::names(sample)) {
+      base::stop("validity: no weight column '", weights, "'", call. = FALSE)
+    }
+    weights <- sample[[weights]]
+  }
+  if (base::is.null(weights)) weights <- base::rep(1, base::nrow(sample))
+  .validity_check_weights(weights)
+  checkmate::assert_numeric(weights, len = base::nrow(sample))
+  valid <- base::sum(weights[statuses == "confirmed_valid"])
+  invalid <- base::sum(weights[statuses == "confirmed_invalid"])
+  uncertain <- base::sum(weights[statuses == "unresolved"])
+  label <- "unresolved"
+  if (denominator == "all_sampled") {
+    uncertain <- uncertain +
+      base::sum(weights[statuses == "not_attempted"])
+    label <- "unresolved_or_unattempted"
+  }
+  definitive <- valid + invalid
+  eligible <- definitive + uncertain
+  bounds <- tibble::tibble(
+    scenario = c(
+      "observed_definitive_only",
+      base::paste0("best_case_", label, "_valid"),
+      base::paste0("worst_case_", label, "_invalid")
+    ),
+    n_valid = c(valid, valid + uncertain, valid),
+    denominator = c(definitive, eligible, eligible)
   )
-  out$pct_valid <- ifelse(out$denominator > 0, 100 * out$n_valid / out$denominator, NA_real_)
-  attr(out, "not_attempted") <- n_notatt
-  if (all(out$denominator > 0) && !(out$pct_valid[3] <= out$pct_valid[1] && out$pct_valid[1] <= out$pct_valid[2])) {
-    stop("validity_sensitivity_bounds: bounds are not ordered worst <= observed <= best", call. = FALSE)
-  }
-  out
+  bounds$pct_valid <- base::ifelse(
+    bounds$denominator > 0, 100 * bounds$n_valid / bounds$denominator,
+    NA_real_
+  )
+  base::attr(bounds, "not_attempted") <-
+    base::sum(statuses == "not_attempted")
+  if (weighted) base::attr(bounds, "weighted") <- TRUE
+  bounds
 }
 
 #' Survey-weighted logistic regression of listing validity
