@@ -4,17 +4,68 @@
 \name{mysteryroster-package}
 \alias{mysteryroster}
 \alias{mysteryroster-package}
-\title{mysteryroster: registry overlap strata and listing-validity analysis}
+\title{mysteryroster: registry overlap strata, listing-validity analysis, and
+no-gold-standard source comparison}
 \description{
-The analytic unit throughout is one physician-location listing. The
-functions follow the order of a registry-validity protocol: cross-link
-registries (\code{\link[=registry_overlap]{registry_overlap()}}), restrict to the frame registry and
-define strata (\code{\link[=frame_strata]{frame_strata()}}), draw a stratified sample that keeps its
-sampling probabilities (\code{\link[=stratified_listing_sample]{stratified_listing_sample()}}), turn call
-dispositions into four exhaustive statuses (\code{\link[=classify_listing_status]{classify_listing_status()}}),
-then estimate (\code{\link[=listing_validity_design]{listing_validity_design()}}, \code{\link[=validity_estimates]{validity_estimates()}},
+This package supports two largely independent workflows, built around two
+different questions. Neither requires the other.
+}
+\details{
+\strong{Is a physician listing valid?} (roughly 16 functions, no \verb{@family} tag
+-- see \code{vignette("listing-validity-study")}.) The analytic unit is one
+physician-location listing. The functions follow the order of a
+registry-validity protocol: cross-link registries (\code{\link[=registry_overlap]{registry_overlap()}}),
+restrict to the frame registry and define strata (\code{\link[=frame_strata]{frame_strata()}}), draw
+a stratified sample that keeps its sampling probabilities
+(\code{\link[=stratified_listing_sample]{stratified_listing_sample()}}), turn call dispositions into four
+exhaustive statuses (\code{\link[=classify_listing_status]{classify_listing_status()}}), then estimate
+(\code{\link[=listing_validity_design]{listing_validity_design()}}, \code{\link[=validity_estimates]{validity_estimates()}},
 \code{\link[=validity_sensitivity_bounds]{validity_sensitivity_bounds()}}, \code{\link[=validity_model]{validity_model()}}) and report the flow
 (\code{\link[=listing_flow_counts]{listing_flow_counts()}}).
+
+\strong{When two or more sources disagree and neither is a gold standard, which
+one is right, or at least which is leading and which is lagging?}
+(roughly 30 functions, tagged \verb{@family no-gold-standard comparison} or
+\verb{@family truth fusion} -- see \code{vignette("attribute-agreement")},
+\code{vignette("lead-lag-staleness")}, \code{vignette("consensus-and-corroboration")},
+and \code{vignette("truth-fusion")}.) The analytic unit is one identifier's
+value for one attribute in one source-year. Four sub-workflows, in the
+order a comparison typically grows into:
+\describe{
+\item{Single cross-section}{Do two sources agree right now, and how
+stale is each record (\code{\link[=attribute_agreement]{attribute_agreement()}},
+\code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}}, \code{\link[=record_age_years]{record_age_years()}},
+\code{\link[=record_age_band]{record_age_band()}}, \code{\link[=classify_record_staleness]{classify_record_staleness()}})?}
+\item{Longitudinal, pairwise}{Using repeated annual panels, which source
+moves first, how long until the other adopts or reverts
+(\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}}, \code{\link[=attribute_lead_lag_duration]{attribute_lead_lag_duration()}}), or
+the same question as a right-censored survival curve
+(\code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}}, \code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}}) --
+plus \code{\link[=attribute_spell_age]{attribute_spell_age()}}, \code{\link[=attribute_churn_rate]{attribute_churn_rate()}},
+\code{\link[=attribute_coverage]{attribute_coverage()}}, \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}}, and
+\code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}} for the staleness and timing evidence
+these two lean on.}
+\item{3+ sources at once}{Is there a unanimous value, a majority, or a
+genuine split (\code{\link[=attribute_consensus_tier]{attribute_consensus_tier()}},
+\code{\link[=attribute_consensus_tier_flow]{attribute_consensus_tier_flow()}}); is exactly one source the lone
+dissenter (\code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}}, \code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}});
+which source does the group converge toward
+(\code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}})? \code{\link[=attribute_agreement_by_covariate]{attribute_agreement_by_covariate()}},
+\code{\link[=attribute_agreement_add_ci]{attribute_agreement_add_ci()}}, and \code{\link[=wilson_ci]{wilson_ci()}} support any of the
+above with a confidence interval or an arbitrary stratifying variable.}
+\item{Fusing sources into one predicted value}{Validate the long-format
+claims schema (\code{\link[=attribute_claims_validate]{attribute_claims_validate()}}), collapse a declared
+same-lineage group to one vote first (\code{\link[=attribute_claims_collapse_lineage]{attribute_claims_collapse_lineage()}}),
+then predict by majority vote or an optional probabilistic backend,
+with explicit abstention (\code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}},
+\code{\link[=attribute_truth_backends]{attribute_truth_backends()}}).}
+}
+Manuscript-ready prose for any of the above, rather than hand-written
+\code{sprintf()}, comes from \code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}}, \code{\link[=format_ranking_prose]{format_ranking_prose()}},
+\code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}}, and \code{\link[=attribute_truth_fusion_prose]{attribute_truth_fusion_prose()}}.
+None of these functions ever assumes either source is correct --
+agreement is concordance, not accuracy, throughout.
 }
 \seealso{
 Useful links:

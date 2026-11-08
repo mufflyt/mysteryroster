@@ -1,5 +1,18 @@
 # mysteryroster (development version)
 
+* Rewrote `?mysteryroster` (the package-level help page) and the top of `README.md`:
+  both previously described only the original listing-validity protocol (~16 functions),
+  leaving the entire no-gold-standard comparison and truth-fusion side of the package
+  (~30 functions, roughly two-thirds of it by count, and this session's entire focus)
+  completely unmentioned. A reader typing `?mysteryroster` or skimming the README's
+  opening got no signal that capability existed at all. `?mysteryroster` now orients to
+  both workflows explicitly, with the second broken into its four natural sub-workflows
+  (single cross-section, longitudinal pairwise, N-way consensus, truth fusion) and links
+  to every relevant vignette; the README's opening does the same, with a skip-link into
+  the body section where the second workflow is actually covered (which was already
+  thorough, ~230 lines -- the gap was specifically in the first-five-seconds framing, not
+  the content). Every function referenced in the new package doc verified against the
+  actual exported-function list before publishing, to avoid broken cross-references.
 * `attribute_catch_up_curve()` and `attribute_lead_lag_duration()` now return a classed
   result (`mysteryroster_catch_up_curve`, `mysteryroster_lead_lag_duration`) with its own
   `print()` method, matching the existing convention `attribute_truth_fusion()` already
