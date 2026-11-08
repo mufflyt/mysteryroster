@@ -147,5 +147,75 @@ test_that("attribute_oig_audit_prose runs end to end through the real package pi
   )
   expect_type(paragraph, "character")
   expect_true(grepl("In 2026", paragraph))
-  expect_true(grepl("3 and 3 physician records", paragraph))
+  expect_true(grepl("3 and 2 physician records", paragraph))
+})
+
+test_that("audit prose counts present records in the declared frame", {
+  fixture <- prose_fixture()
+  paragraph <- attribute_oig_audit_prose(
+    fixture$record_presence, fixture$set_summary, 2024,
+    "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(paragraph, "contained 2 and 1 physician records")
+})
+
+test_that("audit prose excludes unavailable fields from completeness", {
+  fixture <- prose_fixture()
+  fixture$record_presence$field_status[2] <- "field_not_in_extract"
+  paragraph <- attribute_oig_audit_prose(
+    fixture$record_presence, fixture$set_summary, 2024,
+    "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(paragraph, "populated in 100.0% and 100.0%", fixed = TRUE)
+  expect_match(paragraph, "unavailable in the extract for 1 present")
+})
+
+test_that("audit prose reports unavailable completeness as not estimable", {
+  fixture <- prose_fixture()
+  fixture$record_presence$field_status[1:2] <- "field_not_in_extract"
+  fixture$set_summary$n_compared <- 0
+  fixture$set_summary$n_any_shared <- 0
+  fixture$set_summary$n_same_set <- 0
+  fixture$set_summary$pct_any_shared <- NA_real_
+  fixture$set_summary$pct_same_set <- NA_real_
+  paragraph <- attribute_oig_audit_prose(
+    fixture$record_presence, fixture$set_summary, 2024,
+    "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(paragraph, "populated in not estimable and 100.0%", fixed = TRUE)
+  expect_match(paragraph, "unavailable in the extract for 2 present")
+})
+
+test_that("audit prose rejects duplicate records and contradictory flags", {
+  fixture <- prose_fixture()
+  report <- function(presence) attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  )
+  expect_error(report(base::rbind(
+    fixture$record_presence, fixture$record_presence[1, ]
+  )), "duplicate")
+  presence <- fixture$record_presence
+  presence$record_present <- base::as.integer(presence$record_present)
+  expect_error(report(presence), "logical")
+  presence <- fixture$record_presence
+  presence$field_status[4] <- "populated"
+  expect_error(report(presence), "inconsistent")
+  presence <- fixture$record_presence
+  presence$completeness_eligible <- TRUE
+  expect_error(report(presence), "inconsistent")
+  presence <- fixture$record_presence
+  presence$field_status[1] <- "unknown_status"
+  expect_error(report(presence), "field_status")
+})
+
+test_that("audit prose rejects impossible agreement counts", {
+  fixture <- prose_fixture()
+  for (invalid in base::list(-1, 0.5, NA_real_, Inf, 2)) {
+    summary <- fixture$set_summary
+    summary$n_same_set <- invalid
+    expect_error(attribute_oig_audit_prose(
+      fixture$record_presence, summary, 2024,
+      "nppes", "pecos", "practice_zip5"
+    ))
+  }
 })
