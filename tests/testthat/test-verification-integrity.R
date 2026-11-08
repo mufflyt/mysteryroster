@@ -307,3 +307,24 @@ testthat::test_that("field dictionary source normalization rejects collisions", 
     "unique"
   )
 })
+
+testthat::test_that("custom sample columns reconcile with canonical audit keys", {
+  fixture <- verification_status_fixture()
+  base::names(fixture$audit$sample)[
+    base::names(fixture$audit$sample) == "npi"
+  ] <- "provider_key"
+  base::names(fixture$audit$sample)[
+    base::names(fixture$audit$sample) == "year"
+  ] <- "wave"
+  classified <- attribute_verification_status(
+    fixture$audit, fixture$targets, fixture$methods,
+    id = "provider_key", year = "wave"
+  )
+  zip <- classified$fields[classified$fields$attribute == "zip", ]
+  testthat::expect_equal(zip$id, base::as.character(1:9))
+  testthat::expect_equal(zip$year, base::rep(2020, 9))
+  testthat::expect_identical(
+    zip$provider_key, fixture$audit$sample$provider_key
+  )
+  testthat::expect_identical(zip$wave, fixture$audit$sample$wave)
+})
