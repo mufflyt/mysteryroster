@@ -260,7 +260,7 @@ testthat::test_that("manually changed audit dates cannot establish validity", {
   )
 })
 
-testthat::test_that("all applicable values determine a multivalue field", {
+testthat::test_that("mixed correct and inapplicable claims remain unresolved", {
   fixture <- verification_status_fixture()
   fixture$audit$items$answer[fixture$audit$items$id == "1" &
     fixture$audit$items$value == "10002"] <- "not_applicable"
@@ -269,7 +269,7 @@ testthat::test_that("all applicable values determine a multivalue field", {
   )
   testthat::expect_equal(
     classified$validity$listing_status[classified$validity$id == "1"],
-    "confirmed_valid"
+    "unresolved"
   )
 })
 
@@ -294,5 +294,16 @@ testthat::test_that("trimmed sample and year collisions are rejected", {
     attribute_analysis_populations(
       duplicated_year, index, manifest, base::c("a", "b")
     ), "duplicate"
+  )
+})
+
+testthat::test_that("field dictionary source normalization rejects collisions", {
+  fields <- base::data.frame(
+    attribute = "zip", definition = "ZIP", location_role = "practice",
+    normalizer = "zip5"
+  )
+  testthat::expect_error(
+    attribute_field_dictionary(fields, base::c("a", " a ")),
+    "unique"
   )
 })
