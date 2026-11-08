@@ -1,5 +1,14 @@
 # mysteryroster (development version)
 
+* Added `attribute_field_dictionary()`, the second piece of the staged OIG-style audit
+  integration (see `attribute_set_agreement()` below). Cross-joins a caller-supplied field
+  catalog (`attribute`/`definition`/`location_role`/`normalizer`) over a vector of source
+  labels, tagging every row `requirement = "unreviewed"` until an analyst checks a dated
+  source specification, and assigning `lineage` from a `lineage_groups` argument that
+  reuses `attribute_claims_collapse_lineage()`'s exact shape (a source named in no group is
+  its own lineage family). Deliberately does not ship a hardcoded NPPES/PECOS/DAC field
+  list the way the source material did -- nothing else in this package assumes a specific
+  registry, so the field catalog is caller-supplied, shown only as a worked example.
 * Added `attribute_set_agreement()`, a set-based sibling to `attribute_agreement()` for
   attributes where a source can legitimately report more than one value for the same
   identifier-year -- for example a physician with two practice locations from the same
