@@ -32,6 +32,15 @@
 #' or deduplicated, because each is independently a legitimate (if purely
 #' administrative) association to confirm or rule out.
 #'
+#' **Empty extracts and normalized keys.** Any input may have zero rows,
+#' provided it retains its required columns. Missing locations keep their
+#' enrollment edges; missing edges leave locations unlinked. Keys must also
+#' be unique after whitespace trimming, so padding cannot multiply links.
+#'
+#' **Reserved metadata.** Extra location columns cannot use `id`, `year`,
+#' `linkage_path`, `location_linked`, or `clinical_presence_verified`.
+#' These names belong to the standardized linkage output.
+#'
 #' @param individual_enrollments Data frame of direct enrollment edges: `id`,
 #'   `year`, `enrollment_id`, one row per edge, unique and non-missing.
 #' @param reassignments Data frame of group-reassignment edges, same shape as
@@ -68,9 +77,9 @@
 #' @export
 attribute_enrollment_locations <- function(individual_enrollments, reassignments, locations,
                                              id = "npi", year = "year") {
-  checkmate::assert_data_frame(individual_enrollments, min.rows = 1)
-  checkmate::assert_data_frame(reassignments, min.rows = 1)
-  checkmate::assert_data_frame(locations, min.rows = 1)
+  checkmate::assert_data_frame(individual_enrollments)
+  checkmate::assert_data_frame(reassignments)
+  checkmate::assert_data_frame(locations)
   checkmate::assert_string(id, min.chars = 1)
   checkmate::assert_string(year, min.chars = 1)
 
@@ -99,10 +108,13 @@ attribute_enrollment_locations <- function(individual_enrollments, reassignments
   assert_key(locations, c(year, "enrollment_id", "location_id"), "locations")
 
   edge_frame <- function(df, path) {
-    data.frame(
-      id = trimws(as.character(df[[id]])), year = df[[year]],
-      enrollment_id = trimws(as.character(df$enrollment_id)), linkage_path = path
+    frame <- base::data.frame(
+      id = base::trimws(base::as.character(df[[id]])), year = df[[year]],
+      enrollment_id = base::trimws(base::as.character(df$enrollment_id)),
+      linkage_path = base::rep(path, base::nrow(df))
     )
+    assert_key(frame, base::c("id", "year", "enrollment_id"), path)
+    frame
   }
   edges <- rbind(
     edge_frame(individual_enrollments, "direct_enrollment"),
@@ -110,15 +122,25 @@ attribute_enrollment_locations <- function(individual_enrollments, reassignments
   )
 
   extra_cols <- setdiff(names(locations), c(year, "enrollment_id", "location_id"))
+  reserved <- base::intersect(extra_cols, base::c(
+    "id", "year", "linkage_path", "location_linked",
+    "clinical_presence_verified"
+  ))
+  if (base::length(reserved)) {
+    base::stop("attribute_enrollment_locations: reserved location column(s): ",
+      base::paste(reserved, collapse = ", "), call. = FALSE)
+  }
   loc <- data.frame(
     year = locations[[year]], enrollment_id = trimws(as.character(locations$enrollment_id)),
     location_id = trimws(as.character(locations$location_id))
   )
+  assert_key(loc, base::c("year", "enrollment_id", "location_id"),
+    "normalized locations")
   for (col in extra_cols) loc[[col]] <- locations[[col]]
 
   linked <- merge(edges, loc, by = c("year", "enrollment_id"), all.x = TRUE)
   linked$location_linked <- !is.na(linked$location_id)
-  linked$clinical_presence_verified <- NA
+  linked$clinical_presence_verified <- base::rep(NA, base::nrow(linked))
   linked <- linked[order(linked$id, linked$year, linked$enrollment_id, linked$location_id), ]
   linked <- tibble::as_tibble(linked[, c("id", "year", "enrollment_id", "linkage_path", "location_id",
                                           extra_cols, "location_linked", "clinical_presence_verified")])

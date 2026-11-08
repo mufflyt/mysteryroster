@@ -1,5 +1,11 @@
 # mysteryroster (development version)
 
+* `attribute_enrollment_locations()` accepts empty direct, reassignment, and
+  location tables while preserving unmatched edges and unlinked locations.
+  Duplicate keys are checked after whitespace normalization to prevent inflated
+  links. Reserved location metadata names now fail explicitly rather than
+  corrupting linkage provenance. Nine regression tests cover these cases.
+
 * Added `attribute_nonresponse_audit()`, the seventh and final piece of the staged
   OIG-style audit integration. Reconciles a frozen questionnaire against whatever answers
   and contact attempts actually came back, classifying every sampled identifier-year into
