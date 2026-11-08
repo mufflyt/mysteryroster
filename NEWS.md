@@ -1,5 +1,28 @@
 # mysteryroster (development version)
 
+* Added `attribute_nonresponse_audit()`, the seventh and final piece of the staged
+  OIG-style audit integration. Reconciles a frozen questionnaire against whatever answers
+  and contact attempts actually came back, classifying every sampled identifier-year into
+  one of five exhaustive response statuses (`complete_response`/`partial_response`/
+  `refused`/`contacted_no_response`/`not_attempted`) and reporting a weighted response rate
+  with a denominator that keeps unknown-eligibility cases rather than silently dropping
+  them. Refusal and unreachable nonresponse are kept apart (different nonresponse
+  mechanisms), and neither counts as an incorrect answer. Fixes three real validation gaps
+  confirmed, via direct execution of the source material's own 80-test adversarial suite,
+  to be accepted by the original standalone script: a future `verified_at` date, a
+  duplicate assertion filed under two different `question_id`s, and an inconsistent
+  `value_missing` flag are all now hard errors rather than silently accepted.
+  This completes the integration of the OIG-style physician-directory audit methodology
+  (originally drafted, unexecuted, by a parallel ChatGPT session) into mysteryroster proper:
+  `attribute_set_agreement()`, `attribute_field_dictionary()`,
+  `attribute_analysis_populations()`, `attribute_record_presence()`,
+  `attribute_enrollment_locations()`, `attribute_verification_codebook()`,
+  `attribute_verification_questionnaire()`, and `attribute_nonresponse_audit()` -- each
+  rebuilt with `checkmate` validation, full roxygen docs, and hand-traced `testthat`
+  coverage rather than ported as-is, with every genuinely new idea kept and every piece
+  that duplicated existing, more rigorous package capability (`mr_verified_accuracy()`'s
+  weighted bounds, which `validity_estimates()`/`validity_sensitivity_bounds()` already
+  covered better) deliberately left out.
 * Added `attribute_verification_codebook()` and `attribute_verification_questionnaire()`,
   the sixth piece of the staged OIG-style audit integration. The codebook maps all six
   OIG-style per-claim response categories (`correct`/`partially_incorrect`/
