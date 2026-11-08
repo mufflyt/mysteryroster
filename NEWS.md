@@ -1,5 +1,18 @@
 # mysteryroster (development version)
 
+* Added `attribute_set_agreement()`, a set-based sibling to `attribute_agreement()` for
+  attributes where a source can legitimately report more than one value for the same
+  identifier-year -- for example a physician with two practice locations from the same
+  registry in the same year. `attribute_agreement()` merges on `(id, year)` alone, so a
+  source with 2+ rows for one identifier-year silently produces an uncontrolled cartesian
+  product rather than a comparison; `attribute_set_agreement()` instead compares the full
+  *set* of values each source reports, returning both `any_shared` (OIG's own looser
+  directory-audit standard -- the two sources overlap on at least one value) and
+  `same_set` (a stricter extension -- the sets are exactly equal) rather than picking one
+  standard silently. First piece of a staged integration of OIG-style physician-directory
+  audit methodology into the package; population separation, record-presence tracking,
+  enrollment-to-location linkage, and a per-claim verification questionnaire with
+  structured nonresponse are follow-on pieces, not yet landed.
 * Rewrote `?mysteryroster` (the package-level help page) and the top of `README.md`:
   both previously described only the original listing-validity protocol (~16 functions),
   leaving the entire no-gold-standard comparison and truth-fusion side of the package

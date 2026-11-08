@@ -234,6 +234,133 @@ attribute_agreement <- function(sources, attribute, id = "npi", year = "year",
   out
 }
 
+#' Pairwise cross-source agreement when sources may report more than one
+#' value per identifier-year
+#'
+#' [attribute_agreement()] assumes each source has at most one value per
+#' `(id, year)`; merging two sources that violate that assumption produces an
+#' uncontrolled cartesian product, not a comparison (two rows on one side and
+#' one on the other becomes two compared rows, each pairing the single value
+#' against one of the pair, with no row saying whether the two *sets*
+#' actually matched). This is the explicit set-based alternative for
+#' attributes that can legitimately take more than one value from the same
+#' source in the same identifier-year -- for example a physician with two
+#' practice locations reported by the same registry in the same year. Every
+#' source contributes the *set* of distinct values it reports for each
+#' `(id, year)`, and two sources are compared on that set, not value-by-value.
+#'
+#' @details
+#' **Two agreement measures, not one.** OIG-style directory audits treat two
+#' sources as agreeing if they share *any* value in common (`any_shared`) --
+#' the looser standard OIG itself typically applies, since a directory with
+#' 3 listed locations is not wrong just because the comparison source only
+#' confirms 1 of them. `same_set` is a stricter extension: every value on
+#' both sides matches, with none extra on either side. Reporting only one of
+#' the two would silently pick a standard for the caller; both are returned
+#' so the analyst chooses.
+#'
+#' **No freshness fields.** Unlike [attribute_agreement()], this has no
+#' `observed_at`/`as_of` staleness machinery -- a set of values has no single
+#' record date to measure age against. Run [record_age_years()] /
+#' [classify_record_staleness()] separately on whichever single-valued
+#' fields do carry a date.
+#'
+#' @param sources Named list, same shape as [attribute_agreement()]'s
+#'   argument: each element is a data frame with an identifier column, the
+#'   attribute column, and (optionally) a year column. One row per value --
+#'   a source with two practice locations for the same identifier-year
+#'   contributes two rows, not one row with a combined value. Names are the
+#'   source labels and must be unique.
+#' @param attribute Name of the attribute column to compare. Values are
+#'   trimmed and upper-cased before comparison.
+#' @param id Name of the identifier column. Default `"npi"`.
+#' @param year Name of the year column, or `NULL` if the comparison is a
+#'   single cross-section (all rows are treated as one unlabeled year).
+#' @return A tibble, one row per `(id, year, source_a, source_b)` where both
+#'   sources have at least one non-missing attribute value for that
+#'   identifier-year: `values_a`, `values_b` (each source's distinct values,
+#'   sorted and joined with `"|"`), `n_values_a`, `n_values_b`, `any_shared`
+#'   (logical), `same_set` (logical). Attribute `sources` holds the source
+#'   names in order.
+#' @examples
+#' s <- list(
+#'   nppes = data.frame(npi = c("1", "1", "2"), year = 2024,
+#'                       state = c("CO", "NM", "CO")), # npi 1 has two states
+#'   pecos = data.frame(npi = c("1", "2"), year = 2024, state = c("CO", "NM"))
+#' )
+#' sa <- attribute_set_agreement(s, attribute = "state")
+#' sa[, c("id", "values_a", "values_b", "any_shared", "same_set")]
+#' @seealso [attribute_agreement()] for the single-value case this
+#'   generalizes, and `vignette("attribute-agreement")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_set_agreement <- function(sources, attribute, id = "npi", year = "year") {
+  checkmate::assert_list(sources, min.len = 2, names = "unique")
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  nm <- names(sources)
+
+  long <- vector("list", length(nm))
+  names(long) <- nm
+  for (s in nm) {
+    x <- sources[[s]]
+    checkmate::assert_data_frame(x)
+    for (col in c(id, attribute)) {
+      if (!col %in% names(x)) {
+        stop(sprintf("attribute_set_agreement: source '%s' has no column '%s'", s, col), call. = FALSE)
+      }
+    }
+    row <- tibble::tibble(
+      id = trimws(as.character(x[[id]])),
+      year = if (!is.null(year) && year %in% names(x)) x[[year]] else NA,
+      value = toupper(trimws(as.character(x[[attribute]])))
+    )
+    row <- row[!is.na(row$value) & nzchar(row$value) & !is.na(row$id) & nzchar(row$id), ]
+    row$source <- s
+    long[[s]] <- row
+  }
+  long <- dplyr::bind_rows(long)
+  if (!nrow(long)) stop("attribute_set_agreement: no non-missing attribute values in any source", call. = FALSE)
+
+  key <- paste(long$id, long$year, long$source, sep = "\r")
+  idx <- split(seq_len(nrow(long)), key, drop = TRUE)
+  by_source <- dplyr::bind_rows(lapply(idx, function(rows) {
+    tibble::tibble(
+      id = long$id[rows[1]], year = long$year[rows[1]], source = long$source[rows[1]],
+      values = list(sort(unique(long$value[rows])))
+    )
+  }))
+
+  pairs <- utils::combn(nm, 2, simplify = FALSE)
+  out <- vector("list", length(pairs))
+  for (i in seq_along(pairs)) {
+    sa <- pairs[[i]][1]; sb <- pairs[[i]][2]
+    la <- by_source[by_source$source == sa, c("id", "year", "values")]
+    lb <- by_source[by_source$source == sb, c("id", "year", "values")]
+    names(la) <- c("id", "year", "values_a")
+    names(lb) <- c("id", "year", "values_b")
+    m <- merge(la, lb, by = c("id", "year"))
+    if (!nrow(m)) next
+    m$source_a <- sa
+    m$source_b <- sb
+    m$any_shared <- mapply(function(a, b) length(intersect(a, b)) > 0, m$values_a, m$values_b)
+    m$same_set <- mapply(identical, m$values_a, m$values_b)
+    m$n_values_a <- lengths(m$values_a)
+    m$n_values_b <- lengths(m$values_b)
+    m$values_a <- vapply(m$values_a, paste, collapse = "|", FUN.VALUE = character(1))
+    m$values_b <- vapply(m$values_b, paste, collapse = "|", FUN.VALUE = character(1))
+    out[[i]] <- m
+  }
+  out <- dplyr::bind_rows(out)
+  if (!nrow(out)) {
+    stop("attribute_set_agreement: no identifier-year is covered by more than one source", call. = FALSE)
+  }
+  out <- tibble::as_tibble(out[, c("id", "year", "source_a", "source_b", "values_a", "values_b",
+                                   "n_values_a", "n_values_b", "any_shared", "same_set")])
+  attr(out, "sources") <- nm
+  out
+}
+
 #' Coverage and agreement rate per source pair and year
 #'
 #' Aggregates [attribute_agreement()]'s row-level output the way a
