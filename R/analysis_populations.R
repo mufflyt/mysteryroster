@@ -127,3 +127,200 @@ attribute_field_dictionary <- function(fields, sources, lineage_groups = list())
                                     "normalizer", "comparison", "requirement",
                                     "requirement_reference", "specification_date", "lineage")])
 }
+
+#' Separate coverage, completeness, consistency, and accuracy-eligible populations
+#'
+#' An OIG-style audit asks several questions that are easy to conflate into
+#' one denominator but describe genuinely different populations: is an
+#' identifier-year's record present at all in a source's extract
+#' (coverage/completeness), does it have a present record in *two* sources
+#' at once so a field value comparison is even possible (consistency), and
+#' which of those pairwise-overlapping identifier-years were actually
+#' sampled for independent verification (accuracy eligibility and the
+#' sample drawn from it)? This function builds all four from the same three
+#' inputs so a later comparison always states which population its
+#' denominator came from.
+#'
+#' @details
+#' **An incomplete extract's absence is not evidence.** When a source's
+#' snapshot for a year is declared `extract_complete = FALSE` (a scraped
+#' roster or partial dump, say), an identifier missing from `record_index`
+#' for that source-year gets `record_status =
+#' "not_observed_in_incomplete_extract"`, not
+#' `"absent_from_declared_extract"` -- the extract's own incompleteness, not
+#' the identifier's absence from the underlying population, explains why no
+#' record showed up.
+#'
+#' **Consistency is pairwise, not general.** Only `pair`'s two named sources
+#' are checked for co-presence; an identifier-year present in a third source
+#' but absent from one of `pair`'s two sources is not in `consistency`. Call
+#' this function again with a different `pair` for a different comparison.
+#'
+#' **This does not draw a sample.** `accuracy_eligible` is every
+#' identifier-year both of `pair`'s sources cover -- the sampling frame, not
+#' a sample. `accuracy_sample` is empty unless the caller supplies one
+#' (drawn elsewhere, keeping its own sampling weights), and every row
+#' supplied must already be in `accuracy_eligible` -- a sample can't reach
+#' outside the frame it was drawn from.
+#'
+#' @param population Data frame of the target population: one row per
+#'   `(id, year)`, unique and non-missing.
+#' @param record_index Data frame of which sources actually have a record for
+#'   which identifier-year: one row per `(id, year, source)`, unique and
+#'   non-missing, built from each source's own roster -- not from which
+#'   claims happen to be non-missing.
+#' @param manifest Data frame of snapshot metadata: one row per `(year,
+#'   source)`, unique and non-missing, plus a logical `extract_complete`
+#'   column (no `NA`s). Every `(year, source)` appearing in `record_index`
+#'   must appear here; every year appearing in `population` must have at
+#'   least one row here.
+#' @param pair Character vector of exactly two distinct source names (must
+#'   appear in `manifest$source`) to check pairwise consistency and accuracy
+#'   eligibility for.
+#' @param id,year Names of the identifier and year columns, shared across
+#'   `population`, `record_index`, and `accuracy_sample` (`manifest` has no
+#'   identifier column). Defaults `"npi"`, `"year"`.
+#' @param accuracy_sample Optional data frame of `(id, year)` rows sampled
+#'   for independent accuracy verification, unique and non-missing. Every
+#'   row must already be in the identifier-years both of `pair`'s sources
+#'   cover. Default `NULL` -- `accuracy_sample` in the result is then empty.
+#' @return A list: `coverage` (one row per `id`/`year`/`source` triple implied
+#'   by `population` x that year's manifest sources: `id`, `year`, `source`,
+#'   `extract_complete`, `record_present`, `record_status` -- one of
+#'   `"present"`, `"absent_from_declared_extract"`,
+#'   `"not_observed_in_incomplete_extract"`); `completeness` (`coverage`
+#'   filtered to `record_present`); `consistency` (`id`, `year` -- present in
+#'   both of `pair`'s sources); `accuracy_eligible` (identical shape to
+#'   `consistency` -- the accuracy sampling frame); `accuracy_sample` (`id`,
+#'   `year` -- the supplied sample, or empty).
+#' @examples
+#' population <- data.frame(npi = c("1", "2"), year = 2024)
+#' record_index <- data.frame(
+#'   npi = c("1", "2", "1"), year = 2024, source = c("nppes", "nppes", "pecos")
+#' )
+#' manifest <- data.frame(year = 2024, source = c("nppes", "pecos"), extract_complete = TRUE)
+#' populations <- attribute_analysis_populations(
+#'   population, record_index, manifest, pair = c("nppes", "pecos")
+#' )
+#' populations$coverage[, c("id", "source", "record_status")]
+#' populations$consistency # only npi 1 has a present record in both sources
+#' @seealso [attribute_field_dictionary()] and [attribute_set_agreement()] for
+#'   the comparisons these populations are built to feed.
+#' @family no-gold-standard comparison
+#' @export
+attribute_analysis_populations <- function(population, record_index, manifest, pair,
+                                             id = "npi", year = "year", accuracy_sample = NULL) {
+  checkmate::assert_data_frame(population, min.rows = 1)
+  checkmate::assert_data_frame(record_index, min.rows = 1)
+  checkmate::assert_data_frame(manifest, min.rows = 1)
+  checkmate::assert_character(pair, len = 2, any.missing = FALSE, unique = TRUE)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+
+  require_cols <- function(df, cols, label) {
+    missing_cols <- setdiff(cols, names(df))
+    if (length(missing_cols) > 0) {
+      stop(sprintf("attribute_analysis_populations: %s is missing column(s): %s",
+                   label, paste(missing_cols, collapse = ", ")), call. = FALSE)
+    }
+  }
+  require_cols(population, c(id, year), "population")
+  require_cols(record_index, c(id, year, "source"), "record_index")
+  require_cols(manifest, c(year, "source", "extract_complete"), "manifest")
+  checkmate::assert_logical(manifest$extract_complete, any.missing = FALSE)
+
+  assert_key <- function(df, cols, label) {
+    keys <- df[, cols, drop = FALSE]
+    blank <- vapply(keys, function(v) any(is.na(v) | !nzchar(trimws(as.character(v)))), logical(1))
+    if (any(blank) || anyDuplicated(keys) > 0) {
+      stop(sprintf("attribute_analysis_populations: %s has missing/blank or duplicate keys.",
+                   label), call. = FALSE)
+    }
+  }
+  assert_key(population, c(id, year), "population")
+  assert_key(record_index, c(id, year, "source"), "record_index")
+  assert_key(manifest, c(year, "source"), "manifest")
+
+  pop <- data.frame(id = trimws(as.character(population[[id]])), year = population[[year]])
+  ridx <- data.frame(
+    id = trimws(as.character(record_index[[id]])), year = record_index[[year]],
+    source = trimws(as.character(record_index$source)), record_present = TRUE
+  )
+  man <- data.frame(
+    year = manifest[[year]], source = trimws(as.character(manifest$source)),
+    extract_complete = manifest$extract_complete
+  )
+
+  unknown_sources <- setdiff(pair, man$source)
+  if (length(unknown_sources) > 0) {
+    stop(sprintf("attribute_analysis_populations: pair source(s) not in manifest: %s",
+                 paste(unknown_sources, collapse = ", ")), call. = FALSE)
+  }
+  ridx_key <- paste(ridx$year, ridx$source, sep = "\r")
+  man_key <- paste(man$year, man$source, sep = "\r")
+  if (any(!ridx_key %in% man_key)) {
+    stop("attribute_analysis_populations: record_index includes a (year, source) absent from manifest.",
+         call. = FALSE)
+  }
+  missing_years <- setdiff(pop$year, man$year)
+  if (length(missing_years) > 0) {
+    stop("attribute_analysis_populations: every population year needs snapshot metadata in manifest.",
+         call. = FALSE)
+  }
+
+  coverage <- merge(pop, man, by = "year")
+  coverage <- merge(coverage, ridx, by = c("id", "year", "source"), all.x = TRUE)
+  coverage$record_present[is.na(coverage$record_present)] <- FALSE
+  coverage$record_status <- ifelse(
+    coverage$record_present, "present",
+    ifelse(coverage$extract_complete, "absent_from_declared_extract",
+           "not_observed_in_incomplete_extract")
+  )
+  coverage <- coverage[order(coverage$id, coverage$year, coverage$source), ]
+  coverage <- coverage[, c("id", "year", "source", "extract_complete", "record_present", "record_status")]
+
+  completeness <- coverage[coverage$record_present, ]
+
+  pair_grid <- coverage[coverage$source %in% pair, ]
+  key <- paste(pair_grid$id, pair_grid$year, sep = "\r")
+  idx <- split(seq_len(nrow(pair_grid)), key, drop = TRUE)
+  consistency_rows <- lapply(idx, function(rows) {
+    if (sum(pair_grid$record_present[rows]) == 2L) {
+      data.frame(id = pair_grid$id[rows[1]], year = pair_grid$year[rows[1]])
+    }
+  })
+  consistency <- dplyr::bind_rows(consistency_rows)
+  if (!nrow(consistency)) consistency <- data.frame(id = character(0), year = pop$year[0])
+  consistency <- consistency[order(consistency$id, consistency$year), ]
+  accuracy_eligible <- consistency
+
+  if (is.null(accuracy_sample)) {
+    accuracy_sample <- accuracy_eligible[0, ]
+  } else {
+    checkmate::assert_data_frame(accuracy_sample, min.rows = 1)
+    require_cols(accuracy_sample, c(id, year), "accuracy_sample")
+    as_df <- data.frame(id = trimws(as.character(accuracy_sample[[id]])), year = accuracy_sample[[year]])
+    assert_key(as_df, c("id", "year"), "accuracy_sample")
+    key_elig <- paste(accuracy_eligible$id, accuracy_eligible$year, sep = "\r")
+    key_samp <- paste(as_df$id, as_df$year, sep = "\r")
+    if (any(!key_samp %in% key_elig)) {
+      stop("attribute_analysis_populations: accuracy_sample includes identifier-year(s) outside the pair's overlap.",
+           call. = FALSE)
+    }
+    accuracy_sample <- as_df
+  }
+
+  message(sprintf(
+    paste0("attribute_analysis_populations: %d coverage row(s) (%d present), ",
+           "%d consistency pair(s), %d accuracy-sample row(s)"),
+    nrow(coverage), sum(coverage$record_present), nrow(consistency), nrow(accuracy_sample)
+  ))
+
+  list(
+    coverage = tibble::as_tibble(coverage),
+    completeness = tibble::as_tibble(completeness),
+    consistency = tibble::as_tibble(consistency),
+    accuracy_eligible = tibble::as_tibble(accuracy_eligible),
+    accuracy_sample = tibble::as_tibble(accuracy_sample)
+  )
+}

@@ -37,6 +37,7 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_agreement_add_ci]{attribute_agreement_add_ci()}},
 \code{\link[=attribute_agreement_by_covariate]{attribute_agreement_by_covariate()}},
 \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
+\code{\link[=attribute_analysis_populations]{attribute_analysis_populations()}},
 \code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}},
 \code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}},
 \code{\link[=attribute_churn_rate]{attribute_churn_rate()}},

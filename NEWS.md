@@ -1,5 +1,16 @@
 # mysteryroster (development version)
 
+* Added `attribute_analysis_populations()`, the third piece of the staged OIG-style audit
+  integration. Builds four distinct populations from one population frame, a record index,
+  and snapshot manifest metadata, so a later comparison always states which denominator it
+  used instead of conflating them: `coverage`/`completeness` (is a record present at all,
+  with a source's own `extract_complete` flag deciding whether a missing record means
+  `"absent_from_declared_extract"` or the weaker `"not_observed_in_incomplete_extract"`),
+  `consistency` (present in *both* of a named source pair -- the only population where a
+  field-value comparison is even possible), and `accuracy_eligible`/`accuracy_sample` (the
+  pairwise-overlap sampling frame for independent verification, and an optional
+  caller-supplied sample that must stay inside it). `id`/`year` column names are
+  parameterized like `attribute_agreement()`'s, not hardcoded to `npi`.
 * Added `attribute_field_dictionary()`, the second piece of the staged OIG-style audit
   integration (see `attribute_set_agreement()` below). Cross-joins a caller-supplied field
   catalog (`attribute`/`definition`/`location_role`/`normalizer`) over a vector of source
