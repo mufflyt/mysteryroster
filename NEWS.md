@@ -1,5 +1,13 @@
 # mysteryroster (development version)
 
+* Added `attribute_enrollment_locations()`, the fifth piece of the staged OIG-style audit
+  integration. Links both direct individual enrollment edges and group-reassignment edges
+  to practice locations by `(year, enrollment_id)`, keeping every physician-location pair
+  as its own traceable row even when several physicians share one group enrollment with
+  several locations. `clinical_presence_verified` is always `NA` on every row, with no code
+  path that ever sets it otherwise -- group linkage is an administrative association, never
+  evidence the physician was actually seen at that location, and this function does not
+  blur that line.
 * Added `attribute_record_presence()`, the fourth piece of the staged OIG-style audit
   integration. `attribute_analysis_populations()`'s `coverage` only says whether a record is
   present; this keeps apart the three different reasons a field's value could still be
