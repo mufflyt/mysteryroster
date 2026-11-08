@@ -4,25 +4,41 @@
 \alias{validity_sensitivity_bounds}
 \title{Extreme-case bounds for unresolved listings}
 \usage{
-validity_sensitivity_bounds(df, status = "listing_status")
+validity_sensitivity_bounds(
+  df,
+  status = "listing_status",
+  weights = NULL,
+  denominator = c("attempted", "all_sampled")
+)
 }
 \arguments{
-\item{df}{Data frame with a status column.}
-
+\item{df}{Data frame with a status column, or a survey.design object.}
 \item{status}{Column name. Default \code{"listing_status"}.}
+\item{weights}{Optional sampling-weight column name or numeric vector.
+NULL uses unit weights for data frames. A survey design uses its own
+sampling weights and must not also receive this argument.}
+\item{denominator}{\code{"attempted"} (default) excludes not-attempted
+listings from bounds. \code{"all_sampled"} treats unresolved and
+not-attempted listings as uncertain.}
 }
 \value{
-A tibble with \code{scenario}, \code{n_valid}, \code{denominator}, \code{pct_valid}.
+A tibble with scenario, n_valid, denominator and pct_valid.
+With weights, n_valid and denominator are sums of sampling weights,
+not row counts; the weighted attribute is TRUE. Without weights the
+original counts, scenarios and output structure are preserved.
+The not_attempted attribute always reports the unweighted row count.
+When all eligible listings are uncertain the definitive rate is NA
+and bounds are 0 to 100 percent. Empty eligible populations have NA bounds.
 }
 \description{
-Three unweighted scenarios. Observed: unresolved excluded (definitive
-determinations only). Best case: unresolved counted as valid. Worst case:
-unresolved counted as invalid. Not-attempted listings are excluded from
-every denominator and reported separately. The bounds are asserted to be
-ordered worst <= observed <= best.
+Identification bounds obtained by assigning every uncertain listing valid
+or invalid. These are not confidence intervals and do not measure
+sampling uncertainty. The observed rate uses definitive listings only.
 }
 \examples{
 calls <- data.frame(
-  listing_status = c("confirmed_valid", "confirmed_invalid", "unresolved", "not_attempted"))
+  listing_status = listing_status_levels(), weight = c(8, 2, 6, 4))
 validity_sensitivity_bounds(calls)
+validity_sensitivity_bounds(
+  calls, weights = "weight", denominator = "all_sampled")
 }

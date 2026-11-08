@@ -11,43 +11,49 @@ validity_estimates(
   by = NULL,
   definitive_only = FALSE,
   level_ci = 0.95,
-  outcome = NULL
+  outcome = NULL,
+  ci_method = c("beta", "mean")
 )
 }
 \arguments{
-\item{design}{Output of \code{\link[=listing_validity_design]{listing_validity_design()}}.}
-
-\item{status}{Column holding \code{\link[=listing_status_levels]{listing_status_levels()}} values. Default
-\code{"listing_status"}.}
-
+\item{design}{Output of \code{\link{listing_validity_design}}.}
+\item{status}{Column holding \code{\link{listing_status_levels}} values.}
 \item{level}{Which status to estimate. Default \code{"confirmed_valid"}.}
-
-\item{by}{Optional grouping column (for example \code{"stratum"}).}
-
-\item{definitive_only}{If \code{TRUE}, restrict the design to listings whose
-status is \code{confirmed_valid} or \code{confirmed_invalid} (the complete-case
-estimand); otherwise all sampled listings form the denominator.}
-
-\item{level_ci}{Confidence level. Default 0.95.}
-
-\item{outcome}{Optional logical column naming a different estimand, for
-example \code{"location_valid"} (practises at the listed location) or
-\code{"workforce_valid"} (active in the specialty somewhere). When given,
-\code{status}/\code{level} are ignored and rows where the outcome is \code{NA} are
-dropped from the design.}
+\item{by}{Optional grouping column.}
+\item{definitive_only}{Restrict to confirmed valid or invalid listings.
+The default uses all sampled listings as the denominator.}
+\item{level_ci}{Confidence level, strictly between zero and one.}
+\item{outcome}{Optional logical outcome column. When supplied, status and
+level are ignored and missing outcomes are excluded.}
+\item{ci_method}{\code{"beta"} (default) uses \code{survey::svyciprop()}
+with the Korn-Graubard effective-sample-size interval. \code{"mean"}
+reproduces the legacy normal interval from \code{survey::svymean()},
+clipped to [0, 1].}
 }
 \value{
-A tibble with \code{estimate}, \code{se}, \code{ci_low}, \code{ci_high} and the
-unweighted \code{n}, one row overall or per \code{by} group.
+A tibble with estimate, se, unweighted n, ci_low, ci_high and ci_status,
+overall or per group. Empty domains have n = 0 and missing estimates and
+intervals. Groups present before outcome exclusion remain.
 }
 \description{
-Design-weighted proportion of listings in a given status
+Design-weighted proportion of listings in a given status.
+}
+\details{
+Beta intervals are missing at exactly zero or one
+(ci_status = "boundary") and when the estimated variance is zero or
+non-finite ("undefined_variance"); these cases do not support this interval.
+The point estimate is retained. Empty domains have status "empty".
+Otherwise status is "estimated", or "legacy_mean" for the mean method.
+The legacy method can produce zero-width intervals at the boundaries.
+Survey design assumptions and variance settings still apply; these
+intervals describe sampling uncertainty, not unresolved-status bounds.
 }
 \examples{
 calls <- data.frame(
   stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
-  listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+  listing_status = c("confirmed_valid", "confirmed_invalid",
+                     "confirmed_valid", "unresolved"))
 design <- listing_validity_design(calls)
 validity_estimates(design)
-validity_estimates(design, by = "stratum")
+validity_estimates(design, by = "stratum", ci_method = "mean")
 }

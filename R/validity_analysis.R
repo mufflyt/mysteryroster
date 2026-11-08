@@ -10,17 +10,25 @@
 #' @examples
 #' calls <- data.frame(
 #'   stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
-#'   listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+#'   listing_status = c("confirmed_valid", "confirmed_invalid",
+#'                      "confirmed_valid", "unresolved"))
 #' listing_validity_design(calls)
 #' @export
-listing_validity_design <- function(df, strata = "stratum", weights = "weight", ids = NULL) {
+listing_validity_design <- function(
+    df, strata = "stratum", weights = "weight", ids = NULL) {
   checkmate::assert_data_frame(df, min.rows = 1)
   for (col in c(strata, weights, ids)) {
-    if (!col %in% names(df)) stop(sprintf("listing_validity_design: no column '%s'", col), call. = FALSE)
+    if (!col %in% base::names(df)) {
+      base::stop("listing_validity_design: no column '", col, "'",
+                 call. = FALSE)
+    }
   }
   if (!is.numeric(df[[weights]]) ||
       any(!is.finite(df[[weights]]) | df[[weights]] <= 0)) {
-    stop("listing_validity_design: every weight must be positive, finite and non-missing", call. = FALSE)
+    base::stop(
+      "listing_validity_design: every weight must be positive and finite",
+      call. = FALSE
+    )
   }
   survey::svydesign(
     ids     = if (is.null(ids)) ~1 else as.formula(paste0("~", ids)),
