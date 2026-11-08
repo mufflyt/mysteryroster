@@ -73,6 +73,7 @@ locations, every physician links to every one of that group's locations
 -- each physician-location pair is its own traceable row, not collapsed
 or deduplicated, because each is independently a legitimate (if purely
 administrative) association to confirm or rule out.
+
 \strong{Empty extracts and normalized keys.} Any input may have zero rows,
 provided it retains its required columns. Missing locations keep their
 enrollment edges; missing edges leave locations unlinked. Keys must also
@@ -113,8 +114,10 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}},
 \code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}},
 \code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}},
+\code{\link[=attribute_oig_audit_prose]{attribute_oig_audit_prose()}},
 \code{\link[=attribute_record_presence]{attribute_record_presence()}},
 \code{\link[=attribute_set_agreement]{attribute_set_agreement()}},
+\code{\link[=attribute_set_agreement_summary]{attribute_set_agreement_summary()}},
 \code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}},
 \code{\link[=attribute_spell_age]{attribute_spell_age()}},
 \code{\link[=attribute_verification_codebook]{attribute_verification_codebook()}},
