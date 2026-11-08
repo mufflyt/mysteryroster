@@ -324,3 +324,195 @@ attribute_analysis_populations <- function(population, record_index, manifest, p
     accuracy_sample = tibble::as_tibble(accuracy_sample)
   )
 }
+
+#' Distinguish an absent record, an unavailable field, and an empty field value
+#'
+#' [attribute_analysis_populations()]'s `coverage` only says whether a
+#' *record* is present. That one bit hides three different reasons a field's
+#' value could end up missing from a completeness count: the whole record
+#' isn't there, the record is there but this field was never part of that
+#' source's extract at all, or the field was part of the extract but every
+#' row of it happened to be blank. Conflating these means a source penalized
+#' for genuinely never asking a question looks identical to one that asked
+#' and recorded nothing -- this function keeps all three apart, and a fourth,
+#' distinguishable `"populated"` outcome, at the identifier/year/source/
+#' attribute grain.
+#'
+#' @details
+#' **Field availability must be stated, never inferred.** A `(year, source,
+#' attribute)` combination with no row in `source_fields` is an error, not a
+#' silent `FALSE` -- declaring "this field wasn't in the extract" is a fact
+#' about the extract that must be supplied, the same way
+#' [attribute_analysis_populations()] requires `extract_complete` rather than
+#' guessing it from absence.
+#'
+#' **A claim cannot contradict the record/field status that governs it.**
+#' If `claims` has a row for an `(id, year, source, attribute)` where
+#' `coverage` says the record isn't present, or `source_fields` says the
+#' field isn't available, that is a contradiction in the inputs -- this
+#' function errors rather than silently preferring one input over the other.
+#'
+#' **Raw format validity is a separate question.** `n_populated` counts
+#' non-blank values; it says nothing about whether those values are
+#' well-formed (a ZIP of `"ZIP IS UNKNOWN"` still counts as populated here).
+#' Check format separately before treating a field as usable.
+#'
+#' @param coverage [attribute_analysis_populations()]'s `coverage` output (or
+#'   anything with the same `id`, `year`, `source`, `record_present`,
+#'   `record_status` columns).
+#' @param dictionary [attribute_field_dictionary()]'s output (or anything
+#'   with at least `source`, `attribute` columns).
+#' @param source_fields Data frame of explicit field availability: one row
+#'   per `(year, source, attribute)`, unique and non-missing, plus a logical
+#'   `field_available` column with no `NA`s. Every `(year, source,
+#'   attribute)` combination implied by `coverage` x `dictionary` must appear
+#'   here.
+#' @param claims Data frame of raw assertions: `id`, `year`, `source`,
+#'   `attribute`, `value` (character; multiple rows per `(id, year, source,
+#'   attribute)` are allowed and all counted). Only rows matching a `(year,
+#'   source, attribute)` the dictionary defines for that source are used;
+#'   others are silently out of scope (they describe an attribute this
+#'   dictionary doesn't track, not a missing value).
+#' @param id,year Names of the identifier and year columns on `claims` only
+#'   -- `coverage` always carries `id`/`year` as named by
+#'   [attribute_analysis_populations()]. Defaults `"npi"`, `"year"`.
+#' @return A tibble, one row per `id`/`year`/`source`/`attribute` implied by
+#'   `coverage` x `dictionary`: those plus `record_present`, `record_status`,
+#'   `field_available`, `n_field_rows`, `n_populated`, `field_status` (one of
+#'   `coverage`'s own `record_status` values when the record isn't present,
+#'   else `"field_not_in_extract"`, `"field_row_missing"`,
+#'   `"field_value_missing"`, or `"populated"`), and `completeness_eligible`
+#'   (`record_present & field_available` -- the denominator a completeness
+#'   rate should use).
+#' @examples
+#' coverage <- data.frame(
+#'   id = c("1", "1"), year = 2024, source = c("nppes", "pecos"),
+#'   record_present = c(TRUE, TRUE), record_status = "present"
+#' )
+#' dictionary <- data.frame(source = c("nppes", "pecos"), attribute = "practice_zip5")
+#' source_fields <- data.frame(
+#'   year = 2024, source = c("nppes", "pecos"), attribute = "practice_zip5",
+#'   field_available = c(TRUE, FALSE) # pecos never carried this field
+#' )
+#' claims <- data.frame(
+#'   npi = "1", year = 2024, source = "nppes", attribute = "practice_zip5", value = "80204"
+#' )
+#' indicators <- attribute_record_presence(coverage, dictionary, source_fields, claims)
+#' indicators[, c("id", "source", "field_status", "completeness_eligible")]
+#' @seealso [attribute_analysis_populations()] for `coverage`,
+#'   [attribute_field_dictionary()] for `dictionary`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_record_presence <- function(coverage, dictionary, source_fields, claims,
+                                        id = "npi", year = "year") {
+  checkmate::assert_data_frame(coverage, min.rows = 1)
+  checkmate::assert_data_frame(dictionary, min.rows = 1)
+  checkmate::assert_data_frame(source_fields, min.rows = 1)
+  checkmate::assert_data_frame(claims)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+
+  require_cols <- function(df, cols, label) {
+    missing_cols <- setdiff(cols, names(df))
+    if (length(missing_cols) > 0) {
+      stop(sprintf("attribute_record_presence: %s is missing column(s): %s",
+                   label, paste(missing_cols, collapse = ", ")), call. = FALSE)
+    }
+  }
+  require_cols(coverage, c("id", "year", "source", "record_present", "record_status"), "coverage")
+  require_cols(dictionary, c("source", "attribute"), "dictionary")
+  require_cols(source_fields, c("year", "source", "attribute", "field_available"), "source_fields")
+  require_cols(claims, c(id, year, "source", "attribute", "value"), "claims")
+  checkmate::assert_logical(source_fields$field_available, any.missing = FALSE)
+  checkmate::assert_character(claims$value)
+
+  assert_key <- function(df, cols, label) {
+    keys <- df[, cols, drop = FALSE]
+    blank <- vapply(keys, function(v) any(is.na(v) | !nzchar(trimws(as.character(v)))), logical(1))
+    if (any(blank) || anyDuplicated(keys) > 0) {
+      stop(sprintf("attribute_record_presence: %s has missing/blank or duplicate keys.",
+                   label), call. = FALSE)
+    }
+  }
+  assert_key(coverage, c("id", "year", "source"), "coverage")
+  assert_key(dictionary, c("source", "attribute"), "dictionary")
+  assert_key(source_fields, c("year", "source", "attribute"), "source_fields")
+
+  cov <- data.frame(
+    id = trimws(as.character(coverage$id)), year = coverage$year,
+    source = trimws(as.character(coverage$source)),
+    record_present = coverage$record_present, record_status = as.character(coverage$record_status)
+  )
+  dict <- data.frame(
+    source = trimws(as.character(dictionary$source)), attribute = trimws(as.character(dictionary$attribute))
+  )
+  missing_dictionary <- setdiff(unique(cov$source), unique(dict$source))
+  if (length(missing_dictionary) > 0) {
+    stop(sprintf("attribute_record_presence: dictionary is missing coverage source(s): %s",
+                 paste(missing_dictionary, collapse = ", ")), call. = FALSE)
+  }
+
+  indicators <- merge(cov, dict, by = "source")
+
+  fields <- data.frame(
+    year = source_fields$year, source = trimws(as.character(source_fields$source)),
+    attribute = trimws(as.character(source_fields$attribute)), field_available = source_fields$field_available
+  )
+  indicators <- merge(indicators, fields, by = c("year", "source", "attribute"), all.x = TRUE)
+  if (anyNA(indicators$field_available)) {
+    stop("attribute_record_presence: source_fields must state field_available for every (year, source, attribute) coverage x dictionary implies.",
+         call. = FALSE)
+  }
+
+  claims_norm <- data.frame(
+    id = trimws(as.character(claims[[id]])), year = claims[[year]],
+    source = trimws(as.character(claims$source)), attribute = trimws(as.character(claims$attribute)),
+    value = claims$value
+  )
+  ikey <- paste(indicators$id, indicators$year, indicators$source, indicators$attribute, sep = "\r")
+  ckey <- paste(claims_norm$id, claims_norm$year, claims_norm$source, claims_norm$attribute, sep = "\r")
+  claims_scoped <- claims_norm[ckey %in% ikey, ]
+  claims_scoped$populated <- !is.na(claims_scoped$value) & nzchar(trimws(claims_scoped$value))
+
+  if (nrow(claims_scoped) > 0) {
+    key2 <- paste(claims_scoped$id, claims_scoped$year, claims_scoped$source, claims_scoped$attribute, sep = "\r")
+    idx2 <- split(seq_len(nrow(claims_scoped)), key2, drop = TRUE)
+    counted <- dplyr::bind_rows(lapply(idx2, function(rows) {
+      data.frame(
+        id = claims_scoped$id[rows[1]], year = claims_scoped$year[rows[1]],
+        source = claims_scoped$source[rows[1]], attribute = claims_scoped$attribute[rows[1]],
+        n_field_rows = length(rows), n_populated = sum(claims_scoped$populated[rows])
+      )
+    }))
+  } else {
+    counted <- data.frame(id = character(0), year = claims_norm$year[0], source = character(0),
+                           attribute = character(0), n_field_rows = integer(0), n_populated = integer(0))
+  }
+  indicators <- merge(indicators, counted, by = c("id", "year", "source", "attribute"), all.x = TRUE)
+  indicators$n_field_rows[is.na(indicators$n_field_rows)] <- 0L
+  indicators$n_populated[is.na(indicators$n_populated)] <- 0L
+
+  contradiction <- indicators[indicators$n_field_rows > 0L &
+                                 (!indicators$record_present | !indicators$field_available), ]
+  if (nrow(contradiction) > 0) {
+    stop("attribute_record_presence: claims contradict record presence or field availability.", call. = FALSE)
+  }
+
+  indicators$field_status <- dplyr::case_when(
+    !indicators$record_present ~ indicators$record_status,
+    !indicators$field_available ~ "field_not_in_extract",
+    indicators$n_field_rows == 0L ~ "field_row_missing",
+    indicators$n_populated == 0L ~ "field_value_missing",
+    TRUE ~ "populated"
+  )
+  indicators$completeness_eligible <- indicators$record_present & indicators$field_available
+
+  indicators <- indicators[order(indicators$id, indicators$year, indicators$source, indicators$attribute), ]
+  message(sprintf("attribute_record_presence: %d indicator row(s) across %d field_status categor%s",
+                   nrow(indicators), length(unique(indicators$field_status)),
+                   if (length(unique(indicators$field_status)) == 1L) "y" else "ies"))
+
+  tibble::as_tibble(indicators[, c("id", "year", "source", "attribute", "record_present", "record_status",
+                                    "field_available", "n_field_rows", "n_populated", "field_status",
+                                    "completeness_eligible")])
+}

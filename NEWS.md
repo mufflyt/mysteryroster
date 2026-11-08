@@ -1,5 +1,15 @@
 # mysteryroster (development version)
 
+* Added `attribute_record_presence()`, the fourth piece of the staged OIG-style audit
+  integration. `attribute_analysis_populations()`'s `coverage` only says whether a record is
+  present; this keeps apart the three different reasons a field's value could still be
+  missing (the whole record isn't there, the record is there but the field was never part of
+  that source's extract, or the field was in the extract but every row of it was blank) plus
+  a fourth, distinguishable `"populated"` outcome, at the identifier/year/source/attribute
+  grain. Field availability must be stated explicitly in `source_fields` for every
+  combination `coverage` x `dictionary` implies -- never inferred as `FALSE` from an absent
+  row -- and a claim that contradicts the record/field status governing it is a hard error,
+  not a silent preference for one input over the other.
 * Added `attribute_analysis_populations()`, the third piece of the staged OIG-style audit
   integration. Builds four distinct populations from one population frame, a record index,
   and snapshot manifest metadata, so a later comparison always states which denominator it
