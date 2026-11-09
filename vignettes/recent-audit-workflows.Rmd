@@ -378,6 +378,29 @@ expanded_presence |>
   dplyr::count(source, attribute, completeness_eligible, field_status)
 ```
 
+### CMS resources for Medicare Part B and Part D
+
+| Resource | Use in a physician audit |
+|:--|:--|
+| [Part B: Physician & Other Practitioners by Provider and Service][medicare] | Use the rendering NPI and service year to observe published Original Medicare fee-for-service Part B activity. Keep HCPCS and facility or non-facility category for service-level analyses. |
+| [Part D: Prescribers by Provider][part-d-provider] | Use the prescriber NPI and year for a provider-level observation of prescriptions dispensed under Part D, including refills. |
+| [Part D: Prescribers by Provider and Drug][part-d-drug] | Use when the drug matters. Collapse drug rows to one prescriber-year before counting physician coverage. |
+
+The Part B provider ZIP and the Part D by-provider address both come from
+NPPES. Treat those address fields as one lineage alongside NPPES. The
+service and dispensing records are distinct activity observations. Part D
+prescriber geography does not identify the dispensing pharmacy or locate
+the clinical encounter. Keep the two program populations separate when
+interpreting missing records because eligibility, utilization, and public
+release rules differ.
+
+[Part B data dictionary][medicare-dd] ·
+[Part D by-provider data dictionary][part-d-dd]
+
+[part-d-provider]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-part-d-prescribers/medicare-part-d-prescribers-by-provider
+[part-d-drug]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-part-d-prescribers/medicare-part-d-prescribers-by-provider-and-drug/api-docs
+[part-d-dd]: https://data.cms.gov/sites/default/files/2025-04/MUP_DPR_RY25_20250401_DD_PRV_508.pdf
+
 ## Follow the same attribute across years
 
 Use a separate panel with one practice-state value per physician-year and
