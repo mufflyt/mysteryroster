@@ -354,16 +354,16 @@ testthat::test_that(
 })
 
 testthat::test_that(
-  "F28: all six coverage denominators survive empty federal inputs", {
+  "F28: seven coverage denominators survive empty payment and claims inputs", {
   study <- federal_saboteur(base::quote({
     payments <- payments[0, ]
     medicaid <- medicaid[0, ]
     medicare <- medicare[0, ]
   }))
   coverage <- study$expanded_populations$coverage
-  testthat::expect_equal(base::nrow(coverage), 36L)
-  testthat::expect_equal(base::length(base::unique(coverage$source)), 6L)
-  testthat::expect_equal(base::sum(coverage$record_present), 17L)
+  testthat::expect_equal(base::nrow(coverage), 42L)
+  testthat::expect_equal(base::length(base::unique(coverage$source)), 7L)
+  testthat::expect_equal(base::sum(coverage$record_present), 19L)
 })
 
 testthat::test_that(
@@ -499,4 +499,18 @@ testthat::test_that(
     base::sum(federal_present_ids(study, "medicare_provider_service") == "1"),
     1L
   )
+})
+
+testthat::test_that("PL rows contribute only in-frame supplemental sites", {
+  study <- federal_saboteur()
+  testthat::expect_setequal(
+    federal_present_ids(study, "nppes_pl"), base::c("1", "3")
+  )
+  row <- federal_presence_row(study, "3", "nppes_pl", "practice_zip5")
+  testthat::expect_equal(row$n_populated, 1L)
+  lineage <- dplyr::filter(
+    study$expanded_dictionary,
+    source %in% base::c("nppes", "nppes_pl"), attribute == "practice_zip5"
+  )$lineage
+  testthat::expect_identical(lineage, base::rep("nppes_address", 2L))
 })
