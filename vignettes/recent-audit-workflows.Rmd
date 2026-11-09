@@ -209,6 +209,157 @@ paragraph <- mysteryroster::attribute_oig_audit_prose(
 base::cat(paragraph, "\n")
 ```
 
+## Add payment and claims evidence to the snapshot
+
+The three extracts add different kinds of evidence. Keep their row grain,
+identifier role, and address provenance in the audit.
+
+| Extract | What to retain | How to use it |
+|:--|:--|:--|
+| [CMS Open Payments][op] | Covered recipient NPI, program year, recipient business ZIP | Payment-recipient observation and a reported business address |
+| [HHS/DOGE Medicaid Provider Spending by HCPCS][doge] | Billing NPI, servicing NPI, HCPCS, claim month | Claims observations by NPI role. The release has no address field. |
+| [Medicare Physician & Other Practitioners by Provider and Service][medicare] | Rendering NPI, service year, HCPCS, place-of-service category, provider ZIP | Fee-for-service Part B activity. The ZIP comes from NPPES and describes the provider address. |
+
+[op]: https://openpaymentsdata.cms.gov/datasets/download
+[doge]: https://opendata.hhs.gov/datasets/medicaid-provider-spending/
+[medicare]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-physician-other-practitioners/medicare-physician-other-practitioners-by-provider-and-service//data
+
+The [Open Payments dictionary][op-dd] describes `Recipient_Zip_Code` as a
+recipient's primary practice or business ZIP. The
+[Medicare Provider and Service dictionary][medicare-dd] defines
+`Rndrng_Prvdr_Zip5` using NPPES and separately defines the place-of-service
+category. Treat an NPPES and Medicare provider ZIP match as one address
+lineage. A facility category alone does not locate the site of care.
+
+[op-dd]: https://www.cms.gov/files/document/open-payments-methodology-data-dictionary-document-january-2026.pdf
+[medicare-dd]: https://data.cms.gov/sites/default/files/2025-03/bbb1e50e-5ba8-42ed-b072-18368b6f37f9/MUP_PHY_RY25_20250312_DD_PRV_SVC_508.pdf
+
+These synthetic extracts use study-normalized names and ZIP5 values. In a
+real import, keep the release vintage alongside the program or service
+period and preserve identifiers and ZIPs as character strings. HHS describes
+the Medicaid file as a suppressed aggregation, so absence from the public
+file leaves activity unknown. A billing organization outside the physician
+frame stays outside the frame. A billing NPI alone does not identify the
+clinician who performed a service.
+
+```{r federal-extracts}
+payments <- tibble::tibble(
+  npi = base::c("1", "1", "5"), year = 2024L,
+  recipient_business_zip5 = base::c("80204", "80204", "80521")
+)
+medicaid <- tibble::tibble(
+  billing_npi = base::c("900", "900", "2"),
+  servicing_npi = base::c("3", "3", NA_character_),
+  claim_month = base::c("2024-01", "2024-02", "2024-02"),
+  hcpcs = "99213"
+)
+medicare <- tibble::tibble(
+  npi = base::c("1", "1", "3"), year = 2024L, hcpcs = "99213",
+  place_of_service = base::c("F", "O", "O"),
+  nppes_provider_zip5 = base::c("80204", "80204", "80218")
+)
+
+medicaid_roles <- dplyr::bind_rows(
+  billing = dplyr::transmute(medicaid, npi = billing_npi, claim_month),
+  servicing = dplyr::transmute(medicaid, npi = servicing_npi, claim_month),
+  .id = "npi_role"
+) |>
+  dplyr::transmute(
+    npi, year = base::as.integer(base::substr(claim_month, 1, 4)),
+    npi_role
+  ) |>
+  dplyr::semi_join(frame, by = base::c("npi", "year")) |>
+  dplyr::distinct()
+medicaid_roles
+```
+
+Collapse rows to one physician-year per source for coverage. Repeated
+payments or service codes do not multiply physicians. The Medicaid role
+table above still distinguishes how the physician was observed. For these
+three extracts the example uses conservative non-observation statuses.
+In particular, a missing public payment or claim does not imply the
+physician has no practice site.
+
+```{r federal-coverage}
+federal_index <- dplyr::bind_rows(
+  open_payments = dplyr::select(payments, npi, year),
+  medicaid_spending = dplyr::select(medicaid_roles, npi, year),
+  medicare_provider_service = dplyr::select(medicare, npi, year),
+  .id = "source"
+) |>
+  dplyr::distinct()
+federal_manifest <- dplyr::transmute(
+  dplyr::distinct(federal_index, source, year),
+  year, source, extract_complete = FALSE
+)
+expanded_manifest <- dplyr::bind_rows(manifest, federal_manifest)
+expanded_populations <- mysteryroster::attribute_analysis_populations(
+  frame, dplyr::bind_rows(record_index, federal_index), expanded_manifest,
+  pair = base::c("nppes", "pecos")
+)
+dplyr::count(expanded_populations$coverage, source, record_status)
+```
+
+Audit the two address columns under their own field definitions. Medicaid
+contributes to observed-record coverage and has no eligible denominator for
+either ZIP field. The Medicare ZIP's lineage applies to the address, while
+the Medicare rendering record remains a separate utilization observation.
+
+```{r federal-field-presence}
+federal_fields <- tibble::tibble(
+  attribute = base::c("recipient_business_zip5", "nppes_provider_zip5"),
+  definition = base::c("Recipient business ZIP", "NPPES provider ZIP"),
+  location_role = base::c("recipient_business", "registry_provider"),
+  normalizer = "zip5"
+)
+expanded_dictionary <- mysteryroster::attribute_field_dictionary(
+  dplyr::bind_rows(
+    dplyr::distinct(dictionary, attribute, definition, location_role,
+                    normalizer),
+    federal_fields
+  ),
+  sources = expanded_manifest$source,
+  lineage_groups = base::list(
+    medicare_enrollment = base::c("pecos", "dac"),
+    nppes_address = base::c("nppes", "medicare_provider_service")
+  )
+)
+federal_availability <- dplyr::filter(
+  expanded_dictionary, attribute %in% federal_fields$attribute
+) |>
+  dplyr::transmute(
+    year = 2024L, source, attribute,
+    field_available =
+      (source == "open_payments" & attribute == "recipient_business_zip5") |
+      (source == "medicare_provider_service" &
+         attribute == "nppes_provider_zip5")
+  )
+expanded_availability <- dplyr::bind_rows(
+  source_fields,
+  dplyr::mutate(federal_manifest, attribute = "practice_zip5",
+                field_available = FALSE) |>
+    dplyr::select(-extract_complete),
+  federal_availability
+)
+expanded_claims <- dplyr::bind_rows(
+  claims,
+  dplyr::transmute(payments, npi, year, source = "open_payments",
+                   attribute = "recipient_business_zip5",
+                   value = recipient_business_zip5),
+  dplyr::transmute(medicare, npi, year, source = "medicare_provider_service",
+                   attribute = "nppes_provider_zip5",
+                   value = nppes_provider_zip5)
+) |>
+  dplyr::distinct()
+expanded_presence <- mysteryroster::attribute_record_presence(
+  expanded_populations$coverage, expanded_dictionary,
+  expanded_availability, expanded_claims
+)
+expanded_presence |>
+  dplyr::filter(source %in% federal_manifest$source, record_present) |>
+  dplyr::count(source, attribute, completeness_eligible, field_status)
+```
+
 ## Follow the same attribute across years
 
 Use a separate panel with one practice-state value per physician-year and
