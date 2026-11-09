@@ -192,7 +192,7 @@ testthat::test_that(
 testthat::test_that(
   "F13: a matching Medicare ZIP shares NPPES address lineage", {
   study <- federal_saboteur(base::quote({
-    medicare$nppes_provider_zip5[medicare$npi == "3"] <- "80218"
+    medicare$nppes_provider_zip5[medicare$npi == "1"] <- "80045"
   }))
   catalog <- dplyr::filter(
     study$expanded_dictionary,
