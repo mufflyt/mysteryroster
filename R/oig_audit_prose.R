@@ -44,6 +44,10 @@
 #' @param attribute_label Optional human-readable label for `attribute` in
 #'   the prose (for example `"practice ZIP codes"`). Defaults to `attribute`
 #'   itself.
+#' @param entity_label,entity_label_plural Singular and plural nouns for the
+#'   audited entity (for example `"nurse-midwife"` and `"nurse-midwives"`).
+#'   Default `"physician"`; the plural defaults to the singular plus `"s"`,
+#'   so irregular plurals must be given explicitly.
 #' @param linkage Optional [attribute_enrollment_locations()]'s `links`
 #'   element, filtered to `year` internally. `NULL` omits the linkage
 #'   sentence.
@@ -51,7 +55,9 @@
 #'   output (the list with `providers` and `response_rates`), filtered to
 #'   `year` internally. `NULL` omits the verification-response sentence.
 #' @return A single character string: the paragraph, ready to paste into a
-#'   manuscript.
+#'   manuscript. Its first sentence gives the size of the declared study frame
+#'   (rows of `record_presence` for each source) and, separately, how many of
+#'   those entities each source holds a record for.
 #' @examples
 #' record_presence <- data.frame(
 #'   id = c("1", "2", "1", "2"), year = 2024, source = c("nppes", "nppes", "pecos", "pecos"),
@@ -73,12 +79,16 @@
 #' @family no-gold-standard comparison
 #' @export
 attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, year, source_a, source_b,
-                                        attribute, attribute_label = NULL, linkage = NULL, nonresponse = NULL) {
+                                        attribute, attribute_label = NULL, linkage = NULL, nonresponse = NULL,
+                                        entity_label = "physician",
+                                        entity_label_plural = paste0(entity_label, "s")) {
   checkmate::assert_data_frame(record_presence, min.rows = 1)
   checkmate::assert_data_frame(set_agreement_summary, min.rows = 1)
   checkmate::assert_string(source_a, min.chars = 1)
   checkmate::assert_string(source_b, min.chars = 1)
   checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(entity_label, min.chars = 1)
+  checkmate::assert_string(entity_label_plural, min.chars = 1)
   if (identical(source_a, source_b)) {
     stop("attribute_oig_audit_prose: source_a and source_b must differ.", call. = FALSE)
   }
@@ -133,23 +143,32 @@ attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, ye
          call. = FALSE)
   }
 
-  sentences <- sprintf(
-    paste0("In %s, %s and %s contained %s and %s physician records, respectively, within the declared study ",
-           "frame. Among records present in each source, %s were populated in %s and %s, respectively."),
-    year, toupper(source_a), toupper(source_b), count_text(a$n_frame), count_text(b$n_frame),
+  coverage_sentence <- if (a$n_frame == b$n_frame) {
+    sprintf("In %s, the declared study frame contained %s %s; %s and %s held records for %s and %s of them, respectively.",
+            year, count_text(a$n_frame), entity_label_plural, toupper(source_a), toupper(source_b),
+            count_text(a$n_present), count_text(b$n_present))
+  } else {
+    sprintf("In %s, %s and %s held records for %s of %s and %s of %s %s in their declared study frames, respectively.",
+            year, toupper(source_a), toupper(source_b), count_text(a$n_present), count_text(a$n_frame),
+            count_text(b$n_present), count_text(b$n_frame), entity_label_plural)
+  }
+  sentences <- c(coverage_sentence, sprintf(
+    "Among records present in each source, %s were populated in %s and %s, respectively.",
     attribute_label, pct_text(a$n_populated, a$n_present), pct_text(b$n_populated, b$n_present)
-  )
+  ))
 
   if (comparison$n_compared > 0) {
     sentences <- c(sentences, sprintf(
-      paste0("Among %s comparable physicians, at least one value matched in %s, whereas the complete reported ",
+      paste0("Among %s comparable %s, at least one value matched in %s, whereas the complete reported ",
              "value sets agreed in %s."),
-      count_text(comparison$n_compared), pct_text(comparison$n_any_shared, comparison$n_compared),
+      count_text(comparison$n_compared), entity_label_plural, pct_text(comparison$n_any_shared, comparison$n_compared),
       pct_text(comparison$n_same_set, comparison$n_compared)
     ))
   } else {
-    sentences <- c(sentences,
-                   "Cross-source agreement was not estimable because no physicians had usable values in both sources.")
+    sentences <- c(sentences, sprintf(
+      "Cross-source agreement was not estimable because no %s had usable values in both sources.",
+      entity_label_plural
+    ))
   }
 
   if (!is.null(linkage)) {
@@ -160,9 +179,9 @@ attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, ye
     n_direct <- sum(links$linkage_path == "direct_enrollment")
     n_group <- sum(links$linkage_path == "group_reassignment")
     sentences <- c(sentences, sprintf(
-      paste0("Enrollment linkage identified %s direct and %s group-reassignment physician-enrollment-location ",
+      paste0("Enrollment linkage identified %s direct and %s group-reassignment %s-enrollment-location ",
              "associations; these administrative associations did not establish clinical presence."),
-      count_text(n_direct), count_text(n_group)
+      count_text(n_direct), count_text(n_group), entity_label
     ))
   }
 
@@ -172,13 +191,13 @@ attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, ye
     rates <- one_row(nonresponse$response_rates[nonresponse$response_rates$year == year, ],
                      "nonresponse$response_rates selection")
     sentences <- c(sentences, sprintf(
-      paste0("Of %s sampled providers, %s completed verification, %s provided partial responses, and %s refused. ",
-             "After excluding %s confirmed-ineligible providers and retaining unknown eligibility, the weighted ",
+      paste0("Of %s sampled %s, %s completed verification, %s provided partial responses, and %s refused. ",
+             "After excluding %s confirmed-ineligible %s and retaining unknown eligibility, the weighted ",
              "complete-response rate was %s."),
-      count_text(nrow(providers)), count_text(sum(providers$response_status == "complete_response")),
+      count_text(nrow(providers)), entity_label_plural, count_text(sum(providers$response_status == "complete_response")),
       count_text(sum(providers$response_status == "partial_response")),
       count_text(sum(providers$response_status == "refused")), count_text(rates$n_confirmed_ineligible),
-      pct_text(rates$w_complete, rates$w_denominator)
+      entity_label_plural, pct_text(rates$w_complete, rates$w_denominator)
     ))
   }
 

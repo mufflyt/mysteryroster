@@ -13,7 +13,9 @@ attribute_oig_audit_prose(
   attribute,
   attribute_label = NULL,
   linkage = NULL,
-  nonresponse = NULL
+  nonresponse = NULL,
+  entity_label = "physician",
+  entity_label_plural = paste0(entity_label, "s")
 )
 }
 \arguments{
@@ -43,10 +45,17 @@ sentence.}
 \item{nonresponse}{Optional \code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}}'s full
 output (the list with \code{providers} and \code{response_rates}), filtered to
 \code{year} internally. \code{NULL} omits the verification-response sentence.}
+
+\item{entity_label, entity_label_plural}{Singular and plural nouns for the
+audited entity (for example \code{"nurse-midwife"} and \code{"nurse-midwives"}).
+Default \code{"physician"}; the plural defaults to the singular plus \code{"s"},
+so irregular plurals must be given explicitly.}
 }
 \value{
 A single character string: the paragraph, ready to paste into a
-manuscript.
+manuscript. Its first sentence gives the size of the declared study frame
+(rows of \code{record_presence} for each source) and, separately, how many of
+those entities each source holds a record for.
 }
 \description{
 Turns the outputs of this package's OIG-style audit functions --
