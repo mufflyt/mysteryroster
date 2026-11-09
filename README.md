@@ -28,10 +28,12 @@ own disposition codebook.
 
 **When two or more sources disagree on an attribute and neither is a gold
 standard, which one is leading and which is lagging, and when is it safe to
-fuse them into one predicted value?** This is the other roughly 30 functions
+fuse them into one predicted value?** This is the other roughly 33 functions
 in the package (about two-thirds of it by function count) -- single
 cross-section agreement, longitudinal lead-lag and catch-up-curve approaches,
-N-way consensus and corroboration, and truth fusion with explicit abstention.
+N-way consensus and corroboration, truth fusion with explicit abstention, and
+an HHS-OIG-style directory audit protocol (completeness, consistency, and
+independently verified accuracy, kept as three separate populations).
 It shares no functions with the listing-validity workflow above and does not
 require it. Skip to [Beyond membership: does a shared attribute
 agree?](#beyond-membership-does-a-shared-attribute-agree) if this is why
@@ -69,6 +71,12 @@ remotes::install_github("mufflyt/mysteryroster")
   *does* predict a value rather than only making a relative claim:
   majority-vote inference with explicit abstention on ties or weak
   majorities, and the evidence schema it expects.
+- `vignette("recent-audit-workflows")` -- an HHS-OIG-style directory audit,
+  end to end: field dictionary and source lineage, coverage/completeness/
+  consistency/accuracy as four separate populations, the four-way
+  field-presence split, enrollment-to-location linkage without asserting
+  clinical presence, a frozen per-claim verification questionnaire
+  reconciled against nonresponse, and the resulting prose.
 
 ## How the pieces fit
 

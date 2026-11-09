@@ -13,10 +13,13 @@ validity_sensitivity_bounds(
 }
 \arguments{
 \item{df}{Data frame with a status column, or a survey.design object.}
+
 \item{status}{Column name. Default \code{"listing_status"}.}
+
 \item{weights}{Optional sampling-weight column name or numeric vector.
 NULL uses unit weights for data frames. A survey design uses its own
 sampling weights and must not also receive this argument.}
+
 \item{denominator}{\code{"attempted"} (default) excludes not-attempted
 listings from bounds. \code{"all_sampled"} treats unresolved and
 not-attempted listings as uncertain.}
@@ -28,7 +31,8 @@ not row counts; the weighted attribute is TRUE. Without weights the
 original counts, scenarios and output structure are preserved.
 The not_attempted attribute always reports the unweighted row count.
 When all eligible listings are uncertain the definitive rate is NA
-and bounds are 0 to 100 percent. Empty eligible populations have NA bounds.
+and bounds are 0 to 100 percent. Empty eligible populations have NA
+bounds.
 }
 \description{
 Identification bounds obtained by assigning every uncertain listing valid

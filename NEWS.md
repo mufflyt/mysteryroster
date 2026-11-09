@@ -1,5 +1,15 @@
 # mysteryroster (development version)
 
+* Updated `?mysteryroster` (the package-level help page) and the top of `README.md`: the
+  OIG-style directory-audit sub-workflow (`attribute_field_dictionary()` through
+  `attribute_oig_audit_prose()`, 10 functions) and `attribute_verification_status()` (the
+  bridge from a verification questionnaire into `validity_estimates()`/
+  `validity_sensitivity_bounds()`) had landed with no mention in either -- a reader typing
+  `?mysteryroster` or skimming the README's function count got no signal either existed.
+  Also fixed two documentation-generation issues found while regenerating: a broken Rd
+  cross-reference in `validity_estimates()`'s docs (`[0, 1]` read as a markdown link target)
+  and a hand-written `attribute_verification_status.Rd` that roxygen2 had never generated
+  (now regenerated from its source's existing roxygen comments, content unchanged).
 * Corrected OIG-style reporting to count records actually present in each
   source and use available-field completeness denominators. Unavailable
   fields are described explicitly; inconsistent flags, duplicate keys,

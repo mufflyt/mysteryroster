@@ -23,6 +23,7 @@ writes. Clustering (for example by caller or by practice) is optional.
 \examples{
 calls <- data.frame(
   stratum = c("a", "a", "b", "b"), weight = c(2, 2, 1, 1),
-  listing_status = c("confirmed_valid", "confirmed_invalid", "confirmed_valid", "unresolved"))
+  listing_status = c("confirmed_valid", "confirmed_invalid",
+                     "confirmed_valid", "unresolved"))
 listing_validity_design(calls)
 }
