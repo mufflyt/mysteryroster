@@ -1,5 +1,14 @@
 # mysteryroster (development version)
 
+* Fixed a key-collision bug in `attribute_analysis_populations()`, `attribute_record_presence()`,
+  `attribute_verification_questionnaire()`, and `attribute_nonresponse_audit()` (the
+  `sample` argument): each checked key uniqueness on the raw input *before* trimming
+  whitespace, so two rows differing only in padding (`"1"` vs. `" 1 "`) passed validation
+  as distinct and then silently collided once the function's own `trimws()` normalization
+  treated them as the same identifier. Keys are now checked after normalization in all
+  four functions. Prompted by an independent review that found the same pattern in
+  `attribute_enrollment_locations()`; this traced it to three more functions sharing the
+  same validation helper pattern.
 * Added `attribute_set_agreement_summary()` and `attribute_oig_audit_prose()`. The first is
   the set-based sibling `attribute_set_agreement()` was always missing relative to
   `attribute_agreement()`/`attribute_agreement_summary()`: per-source-pair-and-year
