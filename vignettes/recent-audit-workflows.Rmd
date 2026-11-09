@@ -280,8 +280,9 @@ Collapse rows to one physician-year per source for coverage. Repeated
 payments or service codes do not multiply physicians. The Medicaid role
 table above still distinguishes how the physician was observed. For these
 three extracts the example uses conservative non-observation statuses.
-In particular, a missing public payment or claim does not imply the
-physician has no practice site.
+Declare source-years independently of observed records so an extract
+with zero matched physicians remains in the coverage table. A missing
+public payment or claim leaves practice location unknown.
 
 ```{r federal-coverage}
 federal_index <- dplyr::bind_rows(
@@ -291,9 +292,12 @@ federal_index <- dplyr::bind_rows(
   .id = "source"
 ) |>
   dplyr::distinct()
-federal_manifest <- dplyr::transmute(
-  dplyr::distinct(federal_index, source, year),
-  year, source, extract_complete = FALSE
+federal_manifest <- tibble::tibble(
+  year = 2024L,
+  source = base::c(
+    "open_payments", "medicaid_spending", "medicare_provider_service"
+  ),
+  extract_complete = FALSE
 )
 expanded_manifest <- dplyr::bind_rows(manifest, federal_manifest)
 expanded_populations <- mysteryroster::attribute_analysis_populations(
