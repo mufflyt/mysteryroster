@@ -190,3 +190,15 @@ test_that("attribute_oig_audit_prose uses the supplied entity labels throughout"
   expect_true(grepl("Of 2 sampled nurse-midwives", paragraph))
   expect_true(grepl("1 confirmed-ineligible nurse-midwives", paragraph))
 })
+
+test_that("attribute_oig_audit_prose treats equal-sized frames with different identifiers as different frames", {
+  rp <- data.frame(
+    id = c("1", "2", "3", "4"), year = 2024, source = c("a", "a", "b", "b"),
+    attribute = "state", record_present = TRUE, field_status = "populated"
+  )
+  ss <- data.frame(source_a = "a", source_b = "b", year = 2024, n_compared = 0,
+                    n_any_shared = 0, pct_any_shared = NA, n_same_set = 0, pct_same_set = NA)
+  paragraph <- attribute_oig_audit_prose(rp, ss, 2024, "a", "b", "state")
+  expect_false(grepl("the declared study frame contained", paragraph))
+  expect_true(grepl("held records for 2 of 2 and 2 of 2 physicians in their declared study frames", paragraph))
+})

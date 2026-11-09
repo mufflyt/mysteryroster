@@ -127,7 +127,7 @@ attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, ye
       stop(sprintf("attribute_oig_audit_prose: no record_presence rows for source '%s', year %s, attribute '%s'.",
                    source, year, attribute), call. = FALSE)
     }
-    list(n_frame = nrow(row), n_present = sum(row$record_present),
+    list(n_frame = nrow(row), ids = unique(as.character(row$id)), n_present = sum(row$record_present),
          n_populated = sum(row$field_status == "populated"))
   }
   a <- rp_side(source_a)
@@ -143,7 +143,7 @@ attribute_oig_audit_prose <- function(record_presence, set_agreement_summary, ye
          call. = FALSE)
   }
 
-  coverage_sentence <- if (a$n_frame == b$n_frame) {
+  coverage_sentence <- if (a$n_frame == b$n_frame && setequal(a$ids, b$ids)) {
     sprintf("In %s, the declared study frame contained %s %s; %s and %s held records for %s and %s of them, respectively.",
             year, count_text(a$n_frame), entity_label_plural, toupper(source_a), toupper(source_b),
             count_text(a$n_present), count_text(b$n_present))
