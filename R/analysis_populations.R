@@ -1,3 +1,32 @@
+.audit_year <- function(year) {
+  if (base::is.character(year) || base::is.factor(year)) {
+    base::trimws(base::as.character(year))
+  } else {
+    year
+  }
+}
+
+.audit_key <- function(rows, columns, label, unique = TRUE) {
+  keys <- base::lapply(rows[, columns, drop = FALSE], function(value) {
+    base::trimws(base::as.character(value))
+  })
+  if (base::any(base::vapply(keys, function(value) {
+    base::anyNA(value) || base::any(!base::nzchar(value)) ||
+      base::any(base::grepl("\\r", value))
+  }, base::logical(1)))) {
+    base::stop(label, " has missing, blank or invalid keys.", call. = FALSE)
+  }
+  key <- if (base::nrow(rows)) {
+    base::do.call(base::paste, base::c(base::unname(keys), sep = "\r"))
+  } else {
+    base::character()
+  }
+  if (unique && base::anyDuplicated(key)) {
+    base::stop(label, " has duplicate normalized keys.", call. = FALSE)
+  }
+  key
+}
+
 #' An editable field-definition dictionary, cross-joined over sources
 #'
 #' An OIG-style directory audit needs a single place that records, for every
@@ -80,9 +109,12 @@ attribute_field_dictionary <- function(fields, sources, lineage_groups = list())
   }
 
   checkmate::assert_character(sources, min.len = 1, any.missing = FALSE, unique = TRUE)
-  if (any(!nzchar(trimws(sources)))) {
-    stop("attribute_field_dictionary: sources must be non-blank.", call. = FALSE)
+  sources <- base::trimws(sources)
+  if (base::any(!base::nzchar(sources)) || base::anyDuplicated(sources)) {
+    base::stop("sources must be non-blank and unique after trimming.",
+               call. = FALSE)
   }
+  lineage_groups <- base::lapply(lineage_groups, base::trimws)
   checkmate::assert_list(lineage_groups, names = "unique")
 
   all_members <- unlist(lineage_groups, use.names = FALSE)
@@ -229,28 +261,22 @@ attribute_analysis_populations <- function(population, record_index, manifest, p
   require_cols(manifest, c(year, "source", "extract_complete"), "manifest")
   checkmate::assert_logical(manifest$extract_complete, any.missing = FALSE)
 
-  assert_key <- function(df, cols, label) {
-    keys <- df[, cols, drop = FALSE]
-    blank <- vapply(keys, function(v) any(is.na(v) | !nzchar(trimws(as.character(v)))), logical(1))
-    if (any(blank) || anyDuplicated(keys) > 0) {
-      stop(sprintf("attribute_analysis_populations: %s has missing/blank or duplicate keys.",
-                   label), call. = FALSE)
-    }
-  }
-  assert_key(population, c(id, year), "population")
-  assert_key(record_index, c(id, year, "source"), "record_index")
-  assert_key(manifest, c(year, "source"), "manifest")
+  .audit_key(population, c(id, year), "population")
+  .audit_key(record_index, c(id, year, "source"), "record_index")
+  .audit_key(manifest, c(year, "source"), "manifest")
 
-  pop <- data.frame(id = trimws(as.character(population[[id]])), year = population[[year]])
+  pop <- data.frame(id = trimws(as.character(population[[id]])), year = .audit_year(population[[year]]))
   ridx <- data.frame(
-    id = trimws(as.character(record_index[[id]])), year = record_index[[year]],
+    id = trimws(as.character(record_index[[id]])), year = .audit_year(record_index[[year]]),
     source = trimws(as.character(record_index$source)), record_present = TRUE
   )
   man <- data.frame(
-    year = manifest[[year]], source = trimws(as.character(manifest$source)),
+    year = .audit_year(manifest[[year]]), source = trimws(as.character(manifest$source)),
     extract_complete = manifest$extract_complete
   )
 
+  pair <- base::trimws(pair)
+  checkmate::assert_character(pair, min.chars = 1, unique = TRUE)
   unknown_sources <- setdiff(pair, man$source)
   if (length(unknown_sources) > 0) {
     stop(sprintf("attribute_analysis_populations: pair source(s) not in manifest: %s",
@@ -299,8 +325,8 @@ attribute_analysis_populations <- function(population, record_index, manifest, p
   } else {
     checkmate::assert_data_frame(accuracy_sample, min.rows = 1)
     require_cols(accuracy_sample, c(id, year), "accuracy_sample")
-    as_df <- data.frame(id = trimws(as.character(accuracy_sample[[id]])), year = accuracy_sample[[year]])
-    assert_key(as_df, c("id", "year"), "accuracy_sample")
+    as_df <- data.frame(id = trimws(as.character(accuracy_sample[[id]])), year = .audit_year(accuracy_sample[[year]]))
+    .audit_key(as_df, c("id", "year"), "accuracy_sample")
     key_elig <- paste(accuracy_eligible$id, accuracy_eligible$year, sep = "\r")
     key_samp <- paste(as_df$id, as_df$year, sep = "\r")
     if (any(!key_samp %in% key_elig)) {
@@ -424,22 +450,23 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
   require_cols(source_fields, c("year", "source", "attribute", "field_available"), "source_fields")
   require_cols(claims, c(id, year, "source", "attribute", "value"), "claims")
   checkmate::assert_logical(source_fields$field_available, any.missing = FALSE)
+  checkmate::assert_logical(coverage$record_present, any.missing = FALSE)
+  if (base::any(!coverage$record_status %in% base::c(
+    "present", "absent_from_declared_extract",
+    "not_observed_in_incomplete_extract"
+  )) || base::any(coverage$record_present !=
+                  (coverage$record_status == "present"))) {
+    base::stop("coverage record_status disagrees with record_present.",
+               call. = FALSE)
+  }
   checkmate::assert_character(claims$value)
 
-  assert_key <- function(df, cols, label) {
-    keys <- df[, cols, drop = FALSE]
-    blank <- vapply(keys, function(v) any(is.na(v) | !nzchar(trimws(as.character(v)))), logical(1))
-    if (any(blank) || anyDuplicated(keys) > 0) {
-      stop(sprintf("attribute_record_presence: %s has missing/blank or duplicate keys.",
-                   label), call. = FALSE)
-    }
-  }
-  assert_key(coverage, c("id", "year", "source"), "coverage")
-  assert_key(dictionary, c("source", "attribute"), "dictionary")
-  assert_key(source_fields, c("year", "source", "attribute"), "source_fields")
+  .audit_key(coverage, c("id", "year", "source"), "coverage")
+  .audit_key(dictionary, c("source", "attribute"), "dictionary")
+  .audit_key(source_fields, c("year", "source", "attribute"), "source_fields")
 
   cov <- data.frame(
-    id = trimws(as.character(coverage$id)), year = coverage$year,
+    id = trimws(as.character(coverage$id)), year = .audit_year(coverage$year),
     source = trimws(as.character(coverage$source)),
     record_present = coverage$record_present, record_status = as.character(coverage$record_status)
   )
@@ -455,7 +482,7 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
   indicators <- merge(cov, dict, by = "source")
 
   fields <- data.frame(
-    year = source_fields$year, source = trimws(as.character(source_fields$source)),
+    year = .audit_year(source_fields$year), source = trimws(as.character(source_fields$source)),
     attribute = trimws(as.character(source_fields$attribute)), field_available = source_fields$field_available
   )
   indicators <- merge(indicators, fields, by = c("year", "source", "attribute"), all.x = TRUE)
@@ -465,12 +492,13 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
   }
 
   claims_norm <- data.frame(
-    id = trimws(as.character(claims[[id]])), year = claims[[year]],
+    id = trimws(as.character(claims[[id]])), year = .audit_year(claims[[year]]),
     source = trimws(as.character(claims$source)), attribute = trimws(as.character(claims$attribute)),
     value = claims$value
   )
   ikey <- paste(indicators$id, indicators$year, indicators$source, indicators$attribute, sep = "\r")
-  ckey <- paste(claims_norm$id, claims_norm$year, claims_norm$source, claims_norm$attribute, sep = "\r")
+  ckey <- .audit_key(claims_norm, base::c("id", "year", "source", "attribute"),
+                     "claims", unique = FALSE)
   claims_scoped <- claims_norm[ckey %in% ikey, ]
   claims_scoped$populated <- !is.na(claims_scoped$value) & nzchar(trimws(claims_scoped$value))
 

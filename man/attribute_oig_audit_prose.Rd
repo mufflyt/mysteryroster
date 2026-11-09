@@ -59,6 +59,18 @@ for the package's other analyses. Every number in the paragraph is read
 directly from the supplied tables; nothing is invented or estimated here.
 }
 \details{
+\strong{Presence and completeness denominators.} Source record counts include
+only records marked \code{record_present} within the declared study frame.
+Completeness uses \code{completeness_eligible} when supplied, checked against
+presence and field availability. For older tables without that flag,
+eligibility is derived from \code{record_present} and \code{field_status}, with
+\code{field_available} checked when supplied. Unavailable extract fields are
+excluded and described explicitly; a zero eligible denominator is
+reported as not estimable. Duplicate physician-year-source-attribute
+rows, inconsistent flags or statuses, and impossible counts are errors.
+Comparable counts cannot exceed the number of shared physicians with
+populated eligible fields; agreement proportions must match their counts.
+
 \strong{No accuracy section.} The original drafted version of this paragraph
 had an independently-verified-accuracy section backed by a function this
 package never adopted, because its weighted bounds duplicated, less
