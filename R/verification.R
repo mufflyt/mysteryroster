@@ -104,14 +104,16 @@ attribute_verification_questionnaire <- function(sample, claims, id = "npi", yea
                    label), call. = FALSE)
     }
   }
-  assert_key(sample, c(id, year), "sample")
-
   samp <- data.frame(id = trimws(as.character(sample[[id]])), year = sample[[year]])
   cl <- data.frame(
     id = trimws(as.character(claims[[id]])), year = claims[[year]],
     source = trimws(as.character(claims$source)), attribute = trimws(as.character(claims$attribute)),
     value = claims$value
   )
+  # Checked on the normalized (trimmed) frame, not the raw input -- otherwise
+  # whitespace-padded duplicates (" 1 " vs "1") pass validation here and then
+  # silently collide once trimws() above treats them as the same key.
+  assert_key(samp, c("id", "year"), "sample")
 
   samp_key <- paste(samp$id, samp$year, sep = "\r")
   cl_key <- paste(cl$id, cl$year, sep = "\r")
@@ -275,7 +277,6 @@ attribute_nonresponse_audit <- function(sample, questions, answers, contacts, id
                    label), call. = FALSE)
     }
   }
-  assert_key(sample, c(id, year), "sample")
   assert_key(questions, "question_id", "questions")
   if (nrow(answers) > 0) assert_key(answers, "question_id", "answers")
 
@@ -335,6 +336,10 @@ attribute_nonresponse_audit <- function(sample, questions, answers, contacts, id
     id = trimws(as.character(sample[[id]])), year = sample[[year]],
     weight = sample$weight, eligibility_status = sample$eligibility_status
   )
+  # Checked on the normalized (trimmed) frame, not the raw input -- otherwise
+  # whitespace-padded duplicates pass validation here and then silently
+  # collide once trimws() above treats them as the same key.
+  assert_key(samp, c("id", "year"), "sample")
   qs <- questions
   contacts_norm <- data.frame(
     id = trimws(as.character(contacts[[id]])), year = contacts[[year]],

@@ -237,10 +237,6 @@ attribute_analysis_populations <- function(population, record_index, manifest, p
                    label), call. = FALSE)
     }
   }
-  assert_key(population, c(id, year), "population")
-  assert_key(record_index, c(id, year, "source"), "record_index")
-  assert_key(manifest, c(year, "source"), "manifest")
-
   pop <- data.frame(id = trimws(as.character(population[[id]])), year = population[[year]])
   ridx <- data.frame(
     id = trimws(as.character(record_index[[id]])), year = record_index[[year]],
@@ -250,6 +246,12 @@ attribute_analysis_populations <- function(population, record_index, manifest, p
     year = manifest[[year]], source = trimws(as.character(manifest$source)),
     extract_complete = manifest$extract_complete
   )
+  # Checked on the normalized (trimmed) frames, not the raw input -- otherwise
+  # whitespace-padded duplicates (" 1 " vs "1") pass validation here and then
+  # silently collide once trimws() below treats them as the same key.
+  assert_key(pop, c("id", "year"), "population")
+  assert_key(ridx, c("id", "year", "source"), "record_index")
+  assert_key(man, c("year", "source"), "manifest")
 
   unknown_sources <- setdiff(pair, man$source)
   if (length(unknown_sources) > 0) {
@@ -434,10 +436,6 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
                    label), call. = FALSE)
     }
   }
-  assert_key(coverage, c("id", "year", "source"), "coverage")
-  assert_key(dictionary, c("source", "attribute"), "dictionary")
-  assert_key(source_fields, c("year", "source", "attribute"), "source_fields")
-
   cov <- data.frame(
     id = trimws(as.character(coverage$id)), year = coverage$year,
     source = trimws(as.character(coverage$source)),
@@ -446,6 +444,12 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
   dict <- data.frame(
     source = trimws(as.character(dictionary$source)), attribute = trimws(as.character(dictionary$attribute))
   )
+  # Checked on the normalized (trimmed) frames, not the raw input -- otherwise
+  # whitespace-padded duplicates pass validation here and then silently
+  # collide once trimws() above treats them as the same key.
+  assert_key(cov, c("id", "year", "source"), "coverage")
+  assert_key(dict, c("source", "attribute"), "dictionary")
+
   missing_dictionary <- setdiff(unique(cov$source), unique(dict$source))
   if (length(missing_dictionary) > 0) {
     stop(sprintf("attribute_record_presence: dictionary is missing coverage source(s): %s",
@@ -458,6 +462,7 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
     year = source_fields$year, source = trimws(as.character(source_fields$source)),
     attribute = trimws(as.character(source_fields$attribute)), field_available = source_fields$field_available
   )
+  assert_key(fields, c("year", "source", "attribute"), "source_fields")
   indicators <- merge(indicators, fields, by = c("year", "source", "attribute"), all.x = TRUE)
   if (anyNA(indicators$field_available)) {
     stop("attribute_record_presence: source_fields must state field_available for every (year, source, attribute) coverage x dictionary implies.",

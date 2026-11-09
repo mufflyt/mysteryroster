@@ -73,6 +73,20 @@ test_that("attribute_analysis_populations rejects duplicate record_index keys", 
   )
 })
 
+test_that("attribute_analysis_populations rejects a whitespace-padded duplicate key", {
+  # Regression: keys must be checked on the normalized (trimmed) frame, not the raw
+  # input -- otherwise " 1 " and "1" pass validation as distinct and then silently
+  # collide once trimws() normalizes them to the same id.
+  f <- fixture_populations()
+  padded <- f$population[1, ]
+  padded$npi <- paste0(" ", padded$npi, " ")
+  f$population <- rbind(f$population, padded)
+  expect_error(
+    attribute_analysis_populations(f$population, f$record_index, f$manifest, pair = c("nppes", "pecos")),
+    "duplicate keys"
+  )
+})
+
 test_that("attribute_analysis_populations rejects duplicate manifest keys", {
   f <- fixture_populations()
   f$manifest <- rbind(f$manifest, f$manifest[1, ])

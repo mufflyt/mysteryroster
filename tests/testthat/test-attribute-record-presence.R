@@ -119,6 +119,24 @@ test_that("attribute_record_presence rejects NA in field_available", {
   expect_error(attribute_record_presence(coverage, dictionary, source_fields, claims))
 })
 
+test_that("attribute_record_presence rejects a whitespace-padded duplicate coverage key", {
+  # Regression: keys must be checked on the normalized (trimmed) frame, not the raw
+  # input -- otherwise " 1 " and "1" pass validation as distinct and then silently
+  # collide once trimws() normalizes them to the same id.
+  coverage <- data.frame(
+    id = c("1", " 1 "), year = 2024, source = "nppes",
+    record_present = TRUE, record_status = "present"
+  )
+  dictionary <- data.frame(source = "nppes", attribute = "practice_zip5")
+  source_fields <- data.frame(year = 2024, source = "nppes", attribute = "practice_zip5", field_available = TRUE)
+  claims <- data.frame(npi = character(0), year = numeric(0), source = character(0),
+                        attribute = character(0), value = character(0))
+  expect_error(
+    attribute_record_presence(coverage, dictionary, source_fields, claims),
+    "duplicate keys"
+  )
+})
+
 test_that("attribute_record_presence rejects a dictionary missing a coverage source", {
   coverage <- data.frame(
     id = "1", year = 2024, source = c("nppes", "pecos"),

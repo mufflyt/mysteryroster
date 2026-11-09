@@ -73,6 +73,18 @@ test_that("attribute_verification_questionnaire requires unique, non-blank sampl
   )
 })
 
+test_that("attribute_verification_questionnaire rejects a whitespace-padded duplicate sample key", {
+  # Regression: keys must be checked on the normalized (trimmed) frame, not the raw
+  # input -- otherwise " 1 " and "1" pass validation as distinct and then silently
+  # collide once trimws() normalizes them to the same id.
+  sample <- data.frame(npi = c("1", " 1 "), year = 2024)
+  claims <- data.frame(npi = "1", year = 2024, source = "nppes", attribute = "practice_zip5", value = "80204")
+  expect_error(
+    attribute_verification_questionnaire(sample, claims),
+    "duplicate keys"
+  )
+})
+
 test_that("attribute_verification_questionnaire requires the standard columns on both inputs", {
   sample <- data.frame(npi = "1", year = 2024)
   claims <- data.frame(npi = "1", year = 2024, source = "nppes", attribute = "practice_zip5", value = "80204")

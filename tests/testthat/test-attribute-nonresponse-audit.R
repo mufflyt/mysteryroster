@@ -187,6 +187,20 @@ test_that("attribute_nonresponse_audit is stable under shuffled answer row order
   expect_identical(before$response_rates, after$response_rates)
 })
 
+test_that("attribute_nonresponse_audit rejects a whitespace-padded duplicate sample key", {
+  # Regression: keys must be checked on the normalized (trimmed) frame, not the raw
+  # input -- otherwise " 1 " and "1" pass validation as distinct and then silently
+  # collide once trimws() normalizes them to the same id.
+  f <- audit_fixture()
+  padded <- f$sample[1, ]
+  padded$npi <- paste0(" ", padded$npi, " ")
+  f$sample <- rbind(f$sample, padded)
+  expect_error(
+    attribute_nonresponse_audit(f$sample, f$questions, one_answer(f), f$no_contacts),
+    "duplicate keys"
+  )
+})
+
 test_that("attribute_nonresponse_audit requires the standard columns on every input", {
   f <- audit_fixture()
   expect_error(
