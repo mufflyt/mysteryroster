@@ -63,11 +63,13 @@ source_fields <- tibble::tibble(
   year = 2024L, source = registry, attribute = "practice_zip5",
   field_available = base::c(TRUE, TRUE, FALSE)
 )
-nppes_zip <- tibble::tibble(
-  npi = base::c("1", "1", "2", "3", "4", "5", "6"), year = 2024L,
-  practice_zip5 = base::c(
-    "80204", "80045", "80045", "80218", NA, "80521", "80903"
-  )
+nppes_primary_zip <- dplyr::mutate(
+  frame,
+  practice_zip5 = base::c("80204", "80045", "80218", NA, "80521", "80903")
+)
+nppes_zip <- dplyr::bind_rows(
+  nppes_primary_zip,
+  tibble::tibble(npi = "1", year = 2024L, practice_zip5 = "80045")
 )
 pecos_zip <- tibble::tibble(
   npi = base::c("1", "2", "3", "5"), year = 2024L,
@@ -209,17 +211,19 @@ paragraph <- mysteryroster::attribute_oig_audit_prose(
 base::cat(paragraph, "\n")
 ```
 
-## Add payment and claims evidence to the snapshot
+## Add federal evidence to the snapshot
 
-The three extracts add different kinds of evidence. Keep their row grain,
+These extracts add different kinds of evidence. Keep their row grain,
 identifier role, and address provenance in the audit.
 
 | Extract | What to retain | How to use it |
 |:--|:--|:--|
+| [NPPES Practice Location Reference File][nppes-pl] | Individual NPI, snapshot year, supplemental practice address | Count supplemental location observations and keep them in the NPPES address lineage. |
 | [CMS Open Payments][op] | Covered recipient NPI, program year, recipient business ZIP | Payment-recipient observation and a reported business address |
 | [HHS/DOGE Medicaid Provider Spending by HCPCS][doge] | Billing NPI, servicing NPI, HCPCS, claim month | Claims observations by NPI role. The release has no address field. |
 | [Medicare Physician & Other Practitioners by Provider and Service][medicare] | Rendering NPI, service year, HCPCS, place-of-service category, provider ZIP | Fee-for-service Part B activity. The ZIP comes from NPPES and describes the provider address. |
 
+[nppes-pl]: https://download.cms.gov/nppes/NPI_Files.html
 [op]: https://openpaymentsdata.cms.gov/datasets/download
 [doge]: https://opendata.hhs.gov/datasets/medicaid-provider-spending/
 [medicare]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-physician-other-practitioners/medicare-physician-other-practitioners-by-provider-and-service//data
@@ -243,6 +247,12 @@ frame stays outside the frame. A billing NPI alone does not identify the
 clinician who performed a service.
 
 ```{r federal-extracts}
+nppes_pl <- tibble::tibble(
+  npi = base::c("1", "3", "3", "900"), year = 2024L,
+  practice_zip5 = base::c("80045", "80204", "80204", "80218")
+) |>
+  dplyr::semi_join(frame, by = base::c("npi", "year")) |>
+  dplyr::distinct()
 payments <- tibble::tibble(
   npi = base::c("1", "1", "5"), year = 2024L,
   recipient_business_zip5 = base::c("80204", "80204", "80521")
@@ -287,8 +297,9 @@ medicaid_roles
 
 Collapse rows to one physician-year per source for coverage. Repeated
 payments or service codes do not multiply physicians. The Medicaid role
-table above still distinguishes how the physician was observed. For these
-three extracts the example uses conservative non-observation statuses.
+table above still distinguishes how the physician was observed. The payment
+and claims extracts use conservative non-observation statuses. PL coverage
+counts physicians with at least one supplemental location row.
 Declare source-years independently of observed records so an extract
 with zero matched physicians remains in the coverage table. A missing
 public payment or claim leaves practice location unknown. Medicaid rows
@@ -297,6 +308,7 @@ be a valid YYYY-MM value before it can enter the annual coverage table.
 
 ```{r federal-coverage}
 federal_index <- dplyr::bind_rows(
+  nppes_pl = dplyr::select(nppes_pl, npi, year),
   open_payments = dplyr::select(payments, npi, year),
   medicaid_spending = dplyr::select(medicaid_roles, npi, year),
   medicare_provider_service = dplyr::select(medicare, npi, year),
@@ -306,9 +318,10 @@ federal_index <- dplyr::bind_rows(
 federal_manifest <- tibble::tibble(
   year = 2024L,
   source = base::c(
-    "open_payments", "medicaid_spending", "medicare_provider_service"
+    "open_payments", "medicaid_spending", "medicare_provider_service",
+    "nppes_pl"
   ),
-  extract_complete = FALSE
+  extract_complete = base::c(FALSE, FALSE, FALSE, TRUE)
 )
 expanded_manifest <- dplyr::bind_rows(manifest, federal_manifest)
 expanded_populations <- mysteryroster::attribute_analysis_populations(
@@ -339,7 +352,9 @@ expanded_dictionary <- mysteryroster::attribute_field_dictionary(
   sources = expanded_manifest$source,
   lineage_groups = base::list(
     medicare_enrollment = base::c("pecos", "dac"),
-    nppes_address = base::c("nppes", "medicare_provider_service")
+    nppes_address = base::c(
+      "nppes", "nppes_pl", "medicare_provider_service"
+    )
   )
 )
 federal_availability <- dplyr::filter(
@@ -355,12 +370,14 @@ federal_availability <- dplyr::filter(
 expanded_availability <- dplyr::bind_rows(
   source_fields,
   dplyr::mutate(federal_manifest, attribute = "practice_zip5",
-                field_available = FALSE) |>
+                field_available = source == "nppes_pl") |>
     dplyr::select(-extract_complete),
   federal_availability
 )
 expanded_claims <- dplyr::bind_rows(
   claims,
+  dplyr::transmute(nppes_pl, npi, year, source = "nppes_pl",
+                   attribute = "practice_zip5", value = practice_zip5),
   dplyr::transmute(payments, npi, year, source = "open_payments",
                    attribute = "recipient_business_zip5",
                    value = recipient_business_zip5),
@@ -377,6 +394,56 @@ expanded_presence |>
   dplyr::filter(source %in% federal_manifest$source, record_present) |>
   dplyr::count(source, attribute, completeness_eligible, field_status)
 ```
+
+### Compare primary and supplemental NPPES locations
+
+The [CMS PL file][nppes-pl] reports non-primary practice locations.
+Pair it with the main NPPES file from the same dated release. The example
+assigns a year from that release and joins PL rows to the individual
+physician frame. A missing PL row means no supplemental location was
+observed in that extract. A reported site is a candidate for independent
+verification.
+
+For a paired comparison, start with physician-years that have usable ZIPs
+in both the primary NPPES file and PECOS. Keep that denominator fixed
+when adding supplemental sites. Count how many primary disagreements
+become matches to any reported NPPES site. The same method can be used
+for DAC when its comparable practice field is available.
+
+```{r nppes-pl-agreement}
+nppes_with_pl <- dplyr::bind_rows(nppes_primary_zip, nppes_pl) |>
+  dplyr::distinct()
+primary_comparison <- mysteryroster::attribute_set_agreement(
+  base::list(nppes = nppes_primary_zip, pecos = pecos_zip),
+  attribute = "practice_zip5"
+)
+expanded_comparison <- mysteryroster::attribute_set_agreement(
+  base::list(nppes = nppes_with_pl, pecos = pecos_zip),
+  attribute = "practice_zip5"
+)
+pl_comparison <- dplyr::left_join(
+  dplyr::transmute(primary_comparison, id, year,
+                   primary_match = any_shared),
+  dplyr::transmute(expanded_comparison, id, year,
+                   any_site_match = any_shared),
+  by = base::c("id", "year")
+)
+pl_comparison |>
+  dplyr::summarise(
+    n_compared = dplyr::n(),
+    n_primary_disagreements = base::sum(!primary_match),
+    n_recovered = base::sum(!primary_match & any_site_match),
+    pct_recovered = base::ifelse(
+      n_primary_disagreements > 0L,
+      100 * n_recovered / n_primary_disagreements, NA_real_
+    )
+  )
+```
+
+In the toy data, physician 3's PECOS ZIP matches a supplemental NPPES site.
+A ZIP match establishes geographic agreement at the ZIP level. A site
+audit should compare normalized street addresses and independently verify
+the exact listing being audited.
 
 ### CMS resources for Medicare Part B and Part D
 
@@ -433,7 +500,7 @@ low-volume records, so keep absent physician-years as unobserved.
 
 This example uses synthetic rows with CMS column names. It produces a
 Medicare activity index and a separate address ledger. The Part D example
-is a companion to the six-source audit above.
+is a companion to the seven-source audit above.
 
 ```{r medicare-dictionary-mapping}
 part_b_csv <- tibble::tibble(
