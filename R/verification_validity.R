@@ -3,7 +3,8 @@
 #' @param audit Reconciled [attribute_nonresponse_audit()] object. Supply a
 #'   `verification_method` column on the answers before reconciliation.
 #' @param targets Data frame of unique source and attribute pairs. Every
-#'   sampled physician-year is evaluated for each pair.
+#'   sampled physician-year is evaluated for each pair. Include every pair
+#'   represented in the audit, then filter `validity` for analysis.
 #' @param independent_methods Character vector of verification methods
 #'   accepted as independent evidence by the study protocol.
 #' @param id,year Identifier and year column names in the original sample.
@@ -136,6 +137,8 @@ attribute_verification_status <- function(
   fields$n_attempts <- providers$n_attempts[
     base::match(sample_key[sample_row], provider_key)
   ]
+  attempted <- fields$n_attempts > 0 |
+    sample_key[sample_row] %in% item_person[answered]
   grid_key <- .audit_key(fields, target_keys, "verification grid")
   item_key <- .audit_key(items, target_keys, "items", unique = FALSE)
   groups <- base::split(base::seq_len(base::nrow(items)),
@@ -163,7 +166,7 @@ attribute_verification_status <- function(
       "confirmed_invalid"
     } else if (base::all(supported & responses %in% "correct")) {
       "confirmed_valid"
-    } else if (fields$n_attempts[index] == 0 && !base::any(answered[rows])) {
+    } else if (!attempted[index]) {
       "not_attempted"
     } else {
       "unresolved"

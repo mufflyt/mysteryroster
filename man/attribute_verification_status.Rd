@@ -10,7 +10,8 @@ attribute_verification_status(
 \item{audit}{Reconciled \code{\link{attribute_nonresponse_audit}} object.
 Supply a \code{verification_method} column on answers before reconciliation.}
 \item{targets}{Data frame of unique source and attribute pairs. Every
-sampled physician-year is evaluated for each pair.}
+sampled physician-year is evaluated for each pair. Include every pair
+represented in the audit, then filter \code{validity} for analysis.}
 \item{independent_methods}{Character vector of methods accepted as
 independent evidence by the study protocol.}
 \item{id, year}{Identifier and year column names in the original sample.}

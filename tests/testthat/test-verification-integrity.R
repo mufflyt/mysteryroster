@@ -1,4 +1,4 @@
-verification_status_fixture <- function() {
+verification_status_fixture <- function(phone = FALSE) {
   sample <- base::data.frame(
     npi = base::as.character(1:9), year = 2020,
     weight = 1:9, stratum = "a", inclusion_probability = 1 / (1:9),
@@ -15,10 +15,17 @@ verification_status_fixture <- function() {
                    "10002", NA, "10001", "10001", "10001",
                    "10001", "10001")
   )
+  if (phone) {
+    claims <- base::rbind(claims, base::data.frame(
+      npi = "1", year = 2020, source = "registry",
+      attribute = "phone", value = "3035550100"
+    ))
+  }
   questions <- base::suppressMessages(
     attribute_verification_questionnaire(sample, claims)
   )
   selected <- questions$id %in% base::c("1", "2", "3", "4", "5", "7", "9")
+  selected <- selected & questions$attribute == "zip"
   selected <- selected & !(questions$id %in% base::c("2", "3") &
                             questions$value %in% "10002")
   answered <- questions[selected, ]
@@ -71,10 +78,10 @@ testthat::test_that("field validity keeps partial and missing evidence explicit"
   testthat::expect_equal(base::nrow(classified$fields), 18)
   testthat::expect_equal(base::nrow(classified$validity), 6)
   testthat::expect_equal(base::nrow(classified$exclusions), 12)
+  phone <- classified$fields[classified$fields$attribute == "phone", ]
   testthat::expect_equal(
-    classified$fields$exclusion_reason[
-      classified$fields$attribute == "phone"
-    ], base::rep("no_listed_value", 9)
+    phone$exclusion_reason,
+    base::ifelse(phone$id == "7", "confirmed_ineligible", "no_listed_value")
   )
 })
 
@@ -327,4 +334,15 @@ testthat::test_that("custom sample columns reconcile with canonical audit keys",
     zip$provider_key, fixture$audit$sample$provider_key
   )
   testthat::expect_identical(zip$wave, fixture$audit$sample$wave)
+})
+
+testthat::test_that("answers establish an attempt for the physician-year", {
+  fixture <- verification_status_fixture(phone = TRUE)
+  classified <- attribute_verification_status(
+    fixture$audit, fixture$targets, fixture$methods
+  )
+  phone <- classified$validity[classified$validity$attribute == "phone", ]
+  testthat::expect_equal(phone$id, "1")
+  testthat::expect_equal(phone$n_attempts, 0L)
+  testthat::expect_equal(phone$listing_status, "unresolved")
 })

@@ -7,8 +7,8 @@
 }
 
 .audit_key <- function(rows, columns, label, unique = TRUE) {
-  keys <- base::lapply(rows[, columns, drop = FALSE], function(value) {
-    base::trimws(base::as.character(value))
+  keys <- base::lapply(columns, function(column) {
+    base::trimws(base::as.character(rows[[column]]))
   })
   if (base::any(base::vapply(keys, function(value) {
     base::anyNA(value) || base::any(!base::nzchar(value)) ||
