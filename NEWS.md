@@ -754,6 +754,13 @@
   the OB/GYN midwifery study: study years, source-specific mechanisms, and
   interpretive verbs. It also lists the input rows it requires. Behaviour
   is unchanged.
+* Added `vignette("oig-style-source-audit")`: an OIG OEI-07-09-00440-style completeness
+  and consistency audit across six simulated nurse-midwife location sources, using
+  `attribute_field_dictionary()`, `attribute_record_presence()`, `attribute_set_agreement()`,
+  `wilson_ci()`, `attribute_odd_one_out()` and `attribute_oig_audit_prose()`. Keeps absent,
+  blank and malformed fields out of disagreement, flags shared lineage per pair, and reports
+  the d/2 error floor a disagreement implies. Simulated data only, with no person-level
+  records.
 
 # mysteryroster 0.3.0
 
