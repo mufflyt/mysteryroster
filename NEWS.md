@@ -1,5 +1,23 @@
 # mysteryroster (development version)
 
+* Corrected OIG-style reporting to count records actually present in each
+  source and use available-field completeness denominators. Unavailable
+  fields are described explicitly; inconsistent flags, duplicate keys,
+  impossible counts, and unsupported comparison populations are rejected.
+* Added weighted sensitivity bounds for data frames and survey designs,
+  with explicit attempted-only or all-sampled denominators. Default survey
+  proportion intervals now use the beta method; boundary, empty, and
+  undefined intervals carry a diagnostic rather than false precision.
+  The legacy clipped normal method remains selectable.
+* Added `attribute_verification_status()` to map frozen claim answers to
+  explicit physician/source/field targets. Independent verification methods
+  must be declared. Sampling metadata, exclusions, unresolved reasons, and
+  contributing answers remain available for audit and downstream analysis.
+* Hardened record-presence and analysis-population validation after key
+  normalization, with logical flag and status reconciliation. Updated the
+  listing-validity vignette to distinguish all-sampled estimates from
+  accuracy conditional on definitive determinations.
+
 * Added `attribute_set_agreement_summary()` and `attribute_oig_audit_prose()`. The first is
   the set-based sibling `attribute_set_agreement()` was always missing relative to
   `attribute_agreement()`/`attribute_agreement_summary()`: per-source-pair-and-year

@@ -139,7 +139,7 @@ test_that("attribute_record_presence ignores claims for an attribute the diction
   dictionary <- data.frame(source = "nppes", attribute = "practice_zip5")
   source_fields <- data.frame(year = 2024, source = "nppes", attribute = "practice_zip5", field_available = TRUE)
   claims <- data.frame(
-    npi = c("1", "1"), year = 2024, source = "nppes",
+    npi = c("1", NA_character_), year = 2024, source = "nppes",
     attribute = c("practice_zip5", "credential"), value = c("80204", "MD")
   )
   indicators <- suppressMessages(attribute_record_presence(coverage, dictionary, source_fields, claims))

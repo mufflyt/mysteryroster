@@ -125,12 +125,18 @@ table(calls$listing_status)    # confirmed_valid / confirmed_invalid / unresolve
 # 5. Design-weighted estimates, bounds, and a survey-weighted model.
 design <- listing_validity_design(calls)
 validity_estimates(design, by = "stratum")
-validity_sensitivity_bounds(calls)
+validity_sensitivity_bounds(design, denominator = "all_sampled")
 validity_model(design, ~ stratum + rural)
 
 # 6. The flow diagram's numbers, closure-checked.
 listing_flow_counts(calls, by = "stratum")
 ```
+
+The default estimate is the share of all sampled listings confirmed valid.
+Use `definitive_only = TRUE` for accuracy among definitive determinations.
+Proportion intervals use the survey design; boundary or undefined intervals
+are reported as `NA` with a `ci_status` rather than a zero-width interval.
+`ci_method = "mean"` retains the previous clipped normal method explicitly.
 
 ## Beyond membership: does a shared attribute agree?
 
@@ -374,7 +380,7 @@ available before it is actually implemented.
 | Design weights for a call log sampled elsewhere (N / n from a population table) | `listing_weights()` |
 | Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `obgyn_disposition_map()`, `listing_status_levels()` |
 | Design-weighted validity, overall and by stratum; complete-case estimate; location-valid or workforce-valid outcome | `listing_validity_design()`, `validity_estimates()` |
-| Extreme-case bounds for unresolved listings | `validity_sensitivity_bounds()` |
+| Weighted bounds with explicit attempted or all-sampled denominators | `validity_sensitivity_bounds()` |
 | Survey-weighted logistic regression | `validity_model()` |
 | Study-flow counts | `listing_flow_counts()` |
 | Cascade stages with both denominators (of attempted, of prior stage), weighted or not | `validation_cascade()` |
@@ -405,14 +411,18 @@ available before it is actually implemented.
 
 ## Design rules
 
-- **One listing is the unit.** Nothing here aggregates to the physician; do
-  that before sampling with your own one-listing-per-NPI rule.
+- **Define the sampling unit first.** The listing-validity workflow analyzes
+  sampled listings. `attribute_verification_status()` maps claim answers to
+  explicit physician/source/field targets while retaining sampling metadata.
+  Analyze each source/field target separately to avoid counting repeated
+  targets as independent sampled physicians.
 - **Presence is never inferred.** A reached office, a non-missing new-patient
   answer, or board certification does not make a listing valid; only the
   disposition categories in the map do.
 - **Unresolved is explicit.** It is reported as its own category, and the
   bounds table shows what the estimate would be if every unresolved listing
-  were valid, or invalid.
+  were valid, or invalid. Bounds use attempted listings by default;
+  `denominator = "all_sampled"` includes not-attempted listings as unknown.
 - **Counts must partition.** Every count-producing function asserts that its
   categories sum to the input, and registry totals must close on their zones.
 - **Codebook drift stops the run.** A disposition string outside the map is an
