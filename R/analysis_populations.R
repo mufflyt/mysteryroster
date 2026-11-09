@@ -22,7 +22,7 @@
     base::character()
   }
   if (unique && base::anyDuplicated(key)) {
-    base::stop(label, " has duplicate normalized keys.", call. = FALSE)
+    base::stop(label, " has duplicate keys after normalization.", call. = FALSE)
   }
   key
 }
@@ -497,8 +497,12 @@ attribute_record_presence <- function(coverage, dictionary, source_fields, claim
     value = claims$value
   )
   ikey <- paste(indicators$id, indicators$year, indicators$source, indicators$attribute, sep = "\r")
-  ckey <- .audit_key(claims_norm, base::c("id", "year", "source", "attribute"),
-                     "claims", unique = FALSE)
+  field_keys <- base::c("year", "source", "attribute")
+  tracked_fields <- base::unique(indicators[, field_keys, drop = FALSE])
+  claims_norm <- base::merge(claims_norm, tracked_fields, by = field_keys,
+                             sort = FALSE)
+  ckey <- .audit_key(claims_norm, base::c("id", field_keys), "claims",
+                     unique = FALSE)
   claims_scoped <- claims_norm[ckey %in% ikey, ]
   claims_scoped$populated <- !is.na(claims_scoped$value) & nzchar(trimws(claims_scoped$value))
 
