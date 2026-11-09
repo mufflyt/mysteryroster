@@ -1,0 +1,378 @@
+---
+title: "An OIG-Style Completeness and Consistency Audit With No Gold Standard"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{An OIG-Style Completeness and Consistency Audit With No Gold Standard}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+```
+
+```{r setup}
+library(mysteryroster)
+```
+
+In 2013 the HHS Office of Inspector General compared NPPES with PECOS on
+three axes (*Improvements Are Needed To Ensure Provider Enumeration and
+Medicare Enrollment Data Are Accurate, Complete, and Consistent*,
+OEI-07-09-00440). **Accuracy** needed providers to verify their own records.
+**Completeness** (is each field populated) and **consistency** (do two
+databases say the same thing about the same NPI) need no truth at all. OIG
+found 97.4% of providers inconsistent on at least one of ten fields, with
+practice ZIP mismatched for 88.6%.
+
+This vignette runs the two truth-free axes across six simulated
+practice-location sources for nurse-midwives, using the package's OIG-style
+functions. It improves on the original report in four ways:
+
+- every field is reported separately, not only "any of ten fields";
+- a midwife missing from one source is never counted as a disagreement;
+- each pair is flagged when its two sources share an upstream feed;
+- each disagreement rate gives a floor on error that needs no truth.
+
+## The data
+
+The six sources mirror the structure of a real midwifery audit (the
+`midwifery` repository's `analysis/oig_style_source_consistency.R`), but every
+record here is simulated. The identifiers are placeholders. Coverage and
+agreement rates are set to land roughly where that audit's aggregate results
+did, and no person-level data is used.
+
+- **NPPES** lists every midwife, one location each.
+- **PECOS** reassignment records list the *organization* a midwife bills
+  through, sometimes several. This is the mechanism OIG's Appendix A blamed
+  for its practice-ZIP mismatch.
+- **DAC** is built from PECOS enrollment but lists practice locations.
+- **Open Payments** gives one recipient address per payment.
+- **Doximity** often copies NPPES.
+- **Healthgrades** lists one or more offices.
+
+```{r simulate}
+set.seed(20261108)
+n <- 3000
+ids <- sprintf("M%04d", seq_len(n))
+states <- c("CO", "NM", "TX", "CA", "NY", "OR", "WA", "FL")
+zip_pool <- lapply(seq_along(states), function(i) sprintf("%05d", 10000 * i + sample(0:9999, 40)))
+names(zip_pool) <- states
+home_state <- sample(states, n, TRUE)
+home_zip <- vapply(home_state, function(s) sample(zip_pool[[s]], 1), "")
+
+# Each listed location keeps the midwife's home ZIP with probability p_zip,
+# moves to another ZIP in the same state up to p_state, and otherwise to
+# another state.
+draw <- function(idx, p_zip, p_state) {
+  u <- runif(length(idx))
+  st <- home_state[idx]
+  zp <- home_zip[idx]
+  same_state <- u >= p_zip & u < p_state
+  zp[same_state] <- vapply(st[same_state], function(s) sample(zip_pool[[s]], 1), "")
+  moved <- u >= p_state
+  st[moved] <- vapply(st[moved], function(s) sample(setdiff(states, s), 1), "")
+  zp[moved] <- vapply(st[moved], function(s) sample(zip_pool[[s]], 1), "")
+  data.frame(npi = ids[idx], state = st, zip = zp)
+}
+listed <- function(share) sample(n, round(share * n))
+extra <- function(idx, share) sample(idx, round(share * length(idx)))
+
+nppes <- draw(seq_len(n), 0.92, 0.97)
+pecos_ids <- listed(0.47)
+pecos <- rbind(draw(pecos_ids, 0.18, 0.86), draw(extra(pecos_ids, 0.30), 0.15, 0.80))
+dac_ids <- listed(0.41)
+dac <- rbind(draw(dac_ids, 0.55, 0.92), draw(extra(dac_ids, 0.25), 0.40, 0.90))
+op_ids <- listed(0.34)
+op <- rbind(draw(op_ids, 0.84, 0.97), draw(extra(op_ids, 0.25), 0.80, 0.97))
+dox_ids <- listed(0.39)
+doximity <- nppes[dox_ids, ]
+reseeded <- runif(length(dox_ids)) > 0.85
+doximity[reseeded, ] <- draw(dox_ids[reseeded], 0.60, 0.92)
+hg_ids <- listed(0.50)
+healthgrades <- rbind(draw(hg_ids, 0.80, 0.96), draw(extra(hg_ids, 0.40), 0.60, 0.92))
+
+# A few blank and malformed fields, so completeness has something to find.
+nppes$zip[sample(n, 15)] <- "802"
+nppes$state[sample(n, 10)] <- ""
+healthgrades$state[sample(nrow(healthgrades), 40)] <- ""
+
+raw <- list(nppes = nppes, pecos = pecos, dac = dac, open_payments = op,
+            doximity = doximity, healthgrades = healthgrades)
+sapply(raw, function(d) c(rows = nrow(d), midwives = length(unique(d$npi))))
+```
+
+## Declare fields and lineage first
+
+`attribute_field_dictionary()` records what each field means and which
+sources share lineage. DAC is derived from PECOS enrollment, so the two form
+one lineage group. Nothing in the data can reveal that; it has to be
+declared.
+
+```{r dictionary}
+fields <- data.frame(
+  attribute = c("practice_state", "practice_zip5"),
+  definition = c("Two-letter practice state", "First five digits of the practice ZIP"),
+  location_role = "practice",
+  normalizer = c("state_abb", "zip5")
+)
+dictionary <- attribute_field_dictionary(fields, sources = names(raw),
+                                         lineage_groups = list(cms_enrollment = c("pecos", "dac")))
+unique(dictionary[, c("source", "lineage")])
+```
+
+## Completeness: absent, blank, malformed, usable
+
+OIG's completeness arm asked whether each field was populated in records
+that exist. `attribute_record_presence()` keeps three reasons for a missing
+value apart: the record is absent, the field was never in the extract, or the
+field is blank. It treats any non-blank value as populated, so a
+malformed-value check is added on top.
+
+```{r presence}
+coverage <- expand.grid(id = ids, source = names(raw), stringsAsFactors = FALSE)
+coverage$year <- 2026
+coverage$record_present <- mapply(function(i, s) i %in% raw[[s]]$npi, coverage$id, coverage$source)
+coverage$record_status <- ifelse(coverage$record_present, "present", "not_in_source")
+
+claims <- do.call(rbind, lapply(names(raw), function(s) {
+  d <- raw[[s]]
+  rbind(data.frame(npi = d$npi, year = 2026, source = s, attribute = "practice_state", value = d$state),
+        data.frame(npi = d$npi, year = 2026, source = s, attribute = "practice_zip5", value = d$zip))
+}))
+
+source_fields <- expand.grid(year = 2026, source = names(raw), attribute = fields$attribute,
+                             stringsAsFactors = FALSE)
+source_fields$field_available <- TRUE
+
+presence <- attribute_record_presence(coverage, dictionary, source_fields, claims)
+with(presence[presence$attribute == "practice_zip5", ], table(source, field_status))
+```
+
+```{r usable}
+usable <- lapply(raw, function(d) {
+  data.frame(npi = d$npi,
+             practice_state = ifelse(d$state %in% state.abb, d$state, NA),
+             practice_zip5 = ifelse(grepl("^[0-9]{5}$", d$zip), d$zip, NA))
+})
+completeness <- do.call(rbind, lapply(names(raw), function(s) {
+  do.call(rbind, lapply(fields$attribute, function(a) {
+    p <- presence[presence$source == s & presence$attribute == a, ]
+    ok <- unique(usable[[s]]$npi[!is.na(usable[[s]][[a]])])
+    data.frame(source = s, attribute = a,
+               absent = sum(!p$record_present),
+               blank = sum(p$field_status == "field_value_missing"),
+               malformed = sum(p$field_status == "populated") - length(ok),
+               usable = length(ok))
+  }))
+}))
+completeness
+```
+
+```{r fig-completeness, fig.height = 3.8, fig.alt = "Stacked horizontal bars, one per source, splitting the simulated cohort into midwives absent from the source, present with a blank or malformed ZIP, and present with a usable ZIP."}
+z <- completeness[completeness$attribute == "practice_zip5", ]
+m <- t(as.matrix(z[, c("usable", "blank", "malformed", "absent")]))
+colnames(m) <- z$source
+fills <- c("#1b7837", "#fdb863", "#e66101", "grey80")
+op_par <- par(mar = c(7, 8, 2, 1))
+barplot(m[, rev(seq_len(ncol(m)))], horiz = TRUE, las = 1, border = NA, col = fills,
+        main = "Practice ZIP5: mostly absent, rarely blank")
+title(xlab = "Midwives in the cohort", line = 2.2)
+legend("bottom", inset = c(0, -0.62), xpd = TRUE, horiz = TRUE, bty = "n", cex = 0.8,
+       legend = c("usable", "blank", "malformed", "absent"), fill = fills, border = NA)
+par(op_par)
+```
+
+Only NPPES lists everyone. For every other source, the gap is mostly
+midwives the source does not list, which is a question of coverage, not data
+quality. Fields missing from records that do exist, the thing OIG actually
+measured, are rare.
+
+## Consistency: any-match, field by field
+
+OIG counted a provider with several licenses or addresses as consistent if
+*any* value matched. `attribute_set_agreement()` compares each source's set
+of usable values for a midwife and returns both the any-match rule
+(`any_shared`) and the strict rule (`same_set`). Only midwives with a usable
+value in *both* sources enter the denominator.
+
+```{r set-agreement}
+set_input <- function(attr) {
+  lapply(usable, function(d) {
+    v <- unique(d[!is.na(d[[attr]]), c("npi", attr)])
+    v$year <- 2026
+    v
+  })
+}
+agree <- rbind(
+  transform(attribute_set_agreement_summary(attribute_set_agreement(set_input("practice_state"), "practice_state")),
+            attribute = "practice_state"),
+  transform(attribute_set_agreement_summary(attribute_set_agreement(set_input("practice_zip5"), "practice_zip5")),
+            attribute = "practice_zip5")
+)
+ci <- wilson_ci(agree$n_any_shared, agree$n_compared, as_percent = TRUE)
+agree$pct_any <- round(100 * agree$pct_any_shared, 1)
+agree$ci <- sprintf("%.1f-%.1f", ci$ci_low, ci$ci_high)
+agree$pct_same <- round(100 * agree$pct_same_set, 1)
+agree$lineage <- ifelse(paste(pmin(agree$source_a, agree$source_b), pmax(agree$source_a, agree$source_b)) == "dac pecos",
+                        "shared (CMS enrollment)",
+                        ifelse(agree$source_a == "nppes" & agree$source_b %in% c("doximity", "healthgrades") |
+                                 agree$source_b == "nppes" & agree$source_a %in% c("doximity", "healthgrades"),
+                               "possible NPPES seeding", "separately collected"))
+agree[agree$attribute == "practice_zip5",
+      c("source_a", "source_b", "lineage", "n_compared", "pct_any", "ci", "pct_same")]
+```
+
+```{r fig-heatmap, fig.height = 4.2, fig.alt = "Two six-by-six heatmaps of any-match agreement between every pair of sources. Practice state agreement is high in every cell; practice ZIP5 agreement is much lower, and lowest in every cell involving PECOS."}
+pair_matrix <- function(attr) {
+  s <- names(raw)
+  m <- matrix(NA, length(s), length(s), dimnames = list(s, s))
+  a <- agree[agree$attribute == attr, ]
+  m[cbind(a$source_a, a$source_b)] <- a$pct_any
+  m[cbind(a$source_b, a$source_a)] <- a$pct_any
+  m
+}
+draw_heat <- function(m, title) {
+  k <- nrow(m)
+  pal <- colorRampPalette(c("#b2182b", "#f7f7f7", "#2166ac"))(101)
+  image(seq_len(k), seq_len(k), t(m[k:1, ]), col = pal, zlim = c(0, 100),
+        axes = FALSE, xlab = "", ylab = "", main = title)
+  axis(1, seq_len(k), colnames(m), las = 2, cex.axis = 0.7, tick = FALSE)
+  axis(2, seq_len(k), rev(rownames(m)), las = 1, cex.axis = 0.7, tick = FALSE)
+  v <- t(m[k:1, ])
+  text(rep(seq_len(k), k), rep(seq_len(k), each = k), ifelse(is.na(v), "", round(v)), cex = 0.7)
+}
+op_par <- par(mfrow = c(1, 2), mar = c(6, 6.5, 2, 0.5))
+draw_heat(pair_matrix("practice_state"), "State, % any match")
+draw_heat(pair_matrix("practice_zip5"), "ZIP5, % any match")
+par(op_par)
+```
+
+The two panels tell different stories. Sources mostly agree on the state, and
+disagree on the ZIP. Every pair involving PECOS sits at the bottom, *including
+PECOS against DAC*, which shares its lineage. PECOS lists the organization a
+midwife bills through, and DAC lists where she practices, so they describe
+different addresses even though both come from CMS enrollment. Shared lineage
+can drive agreement up (Doximity against NPPES) or leave it unchanged, so it
+has to be declared and reported, not inferred from the numbers.
+
+### Missing is not a disagreement
+
+For one pair, the counts below show where the midwives each source lists end
+up. Only the "usable in both" row is a comparison.
+
+```{r missing-vs-disagree}
+pair_breakdown <- function(a, b, attr) {
+  ua <- tapply(!is.na(usable[[a]][[attr]]), usable[[a]]$npi, any)
+  ub <- tapply(!is.na(usable[[b]][[attr]]), usable[[b]]$npi, any)
+  both <- intersect(names(ua), names(ub))
+  c(listed_by_one_only = length(union(names(ua), names(ub))) - length(both),
+    listed_by_both_but_unusable_in_one = sum(!(ua[both] & ub[both])),
+    usable_in_both = sum(ua[both] & ub[both]))
+}
+pair_breakdown("nppes", "healthgrades", "practice_state")
+```
+
+## The error floor
+
+Call a source wrong for a midwife when its listed locations are not her full
+set of practice locations. Then two sources whose sets share nothing cannot
+both be right, so with disagreement rate \(d\) among the compared midwives,
+the worse of the two is wrong for at least \(d/2\) of them. The bound needs
+no truth. It is only a floor, though: it does not say which source is worse,
+and two sources that agree can both be wrong. It also depends on that
+definition. If a source counts as right whenever every location it lists is
+real, the bound fails: a midwife working at two sites, listed at one in each
+source, has two incomplete sources but no wrong one. Taking the floor from the upper end of the agreement
+interval gives a conservative version.
+
+```{r fig-floor, fig.height = 4.6, fig.alt = "Dot plot of the ZIP5 error floor for each of the fifteen source pairs, with Wilson-interval error bars, coloured by lineage. Pairs with PECOS have floors near 40 percent; NPPES against Doximity is lowest."}
+z <- agree[agree$attribute == "practice_zip5", ]
+z$floor <- (100 - z$pct_any) / 2
+z$floor_lo <- (100 - ci$ci_high[agree$attribute == "practice_zip5"]) / 2
+z$floor_hi <- (100 - ci$ci_low[agree$attribute == "practice_zip5"]) / 2
+z <- z[order(z$floor), ]
+cols <- c("separately collected" = "grey30", "shared (CMS enrollment)" = "#d95f02",
+          "possible NPPES seeding" = "#7570b3")
+op_par <- par(mar = c(4.5, 11, 2, 1))
+plot(z$floor, seq_len(nrow(z)), xlim = c(0, 50), pch = 19, col = cols[z$lineage], yaxt = "n",
+     xlab = "Worse source wrong for at least this % of compared midwives", ylab = "",
+     main = "ZIP5 error floor, d/2")
+segments(z$floor_lo, seq_len(nrow(z)), z$floor_hi, seq_len(nrow(z)), col = cols[z$lineage])
+axis(2, seq_len(nrow(z)), paste(z$source_a, "/", z$source_b), las = 1, cex.axis = 0.7)
+legend("bottomright", names(cols), col = cols, pch = 19, bty = "n", cex = 0.75)
+par(op_par)
+```
+
+## Which source is the lone dissenter?
+
+With three or more sources, `attribute_odd_one_out()` finds midwives where
+exactly one source differs from a value every other source shares. It needs
+one value per source, so a source listing several locations contributes its
+most frequent one, which is stricter than the any-match rule above. The
+second run drops DAC so that the CMS enrollment lineage votes once.
+
+```{r odd-one-out}
+primary <- function(d, attr) {
+  d <- d[!is.na(d[[attr]]), ]
+  tab <- aggregate(list(n = d$npi), list(npi = d$npi, value = d[[attr]]), length)
+  tab <- tab[order(tab$npi, -tab$n), ]
+  tab <- tab[!duplicated(tab$npi), ]
+  setNames(data.frame(tab$npi, 2026, tab$value), c("npi", "year", attr))
+}
+odd_rates <- function(src, attr) {
+  rec <- attribute_odd_one_out(lapply(usable[src], primary, attr = attr), attribute = attr)
+  list(structure = table(rec$structure), rates = attribute_odd_one_out_rate(rec))
+}
+zip_all <- odd_rates(names(raw), "practice_zip5")
+zip_all$structure
+as.data.frame(zip_all$rates)
+as.data.frame(odd_rates(setdiff(names(raw), "dac"), "practice_zip5")$rates)
+```
+
+```{r fig-odd, fig.height = 3.6, fig.alt = "Horizontal bars of how often each source is the lone dissenter on practice ZIP5. PECOS is the odd one out far more often than any other source; NPPES and Doximity least often."}
+r <- as.data.frame(zip_all$rates)
+op_par <- par(mar = c(4, 8, 2, 1))
+barplot(rev(100 * r$odd_rate), names.arg = rev(r$source), horiz = TRUE, las = 1, border = NA,
+        xlim = c(0, 5 * ceiling(20 * max(r$odd_rate)) + 5),
+        col = "#4d4d4d", xlab = "% of eligible midwives where this source alone disagrees",
+        main = "ZIP5: who is the odd one out?")
+par(op_par)
+```
+
+PECOS is the lone dissenter far more often than any other source, which
+fits it describing a different address. NPPES is rarely the odd one out, but
+that is weak evidence for NPPES: Doximity copies it, so NPPES sitting in the
+majority can be an echo rather than corroboration. Being the odd one out
+says a source is out of step with the others, not that it is wrong.
+
+## Writing it up
+
+`attribute_oig_audit_prose()` builds an OIG-shaped results paragraph from the
+completeness and agreement tables. Every number in it is read from those
+tables.
+
+```{r prose}
+cat(strwrap(attribute_oig_audit_prose(
+  presence, attribute_set_agreement_summary(attribute_set_agreement(set_input("practice_zip5"), "practice_zip5")),
+  year = 2026, source_a = "nppes", source_b = "pecos",
+  attribute = "practice_zip5", attribute_label = "practice ZIP codes"
+)), sep = "\n")
+```
+
+The paragraph says "physician records" whatever the profession, and its
+first sentence gives the size of the frame (here `r n`) for each source, not
+the number of records present. Report the present counts from `completeness`
+alongside it.
+
+## What this does not show
+
+- **Which source is right.** Agreement, consensus and the error floor are all
+  relative. A unanimous answer can be wrong when the sources share an
+  upstream feed.
+- **Timing.** A midwife who moved between two sources' snapshot dates
+  disagrees without either source being wrong for its own date. OIG checked
+  this with two snapshot dates; `vignette("lead-lag-staleness")` does it with
+  full panels.
+- **Accuracy.** Estimating each source's error rate, rather than a floor on
+  it, needs a verified sample. See `attribute_verification_questionnaire()`,
+  `attribute_nonresponse_audit()` and `validity_estimates()`.
