@@ -4,7 +4,7 @@
 #' This package supports two largely independent workflows, built around two
 #' different questions. Neither requires the other.
 #'
-#' **Is a physician listing valid?** (roughly 16 functions, no `@family` tag
+#' **Is a physician listing valid?** (roughly 17 functions, no `@family` tag
 #' -- see `vignette("listing-validity-study")`.) The analytic unit is one
 #' physician-location listing. The functions follow the order of a
 #' registry-validity protocol: cross-link registries ([registry_overlap()]),
@@ -14,21 +14,31 @@
 #' exhaustive statuses ([classify_listing_status()]), then estimate
 #' ([listing_validity_design()], [validity_estimates()],
 #' [validity_sensitivity_bounds()], [validity_model()]) and report the flow
-#' ([listing_flow_counts()]).
+#' ([listing_flow_counts()]). [attribute_verification_status()] is the bridge
+#' from a frozen per-claim verification questionnaire (see the next workflow)
+#' into this one -- it maps answered claims to explicit physician/source/field
+#' targets so a verification survey's results can feed
+#' [validity_estimates()]/[validity_sensitivity_bounds()] directly, declaring
+#' its independent verification methods rather than assuming any survey
+#' response is independent evidence.
 #'
 #' **When two or more sources disagree and neither is a gold standard, which
 #' one is right, or at least which is leading and which is lagging?**
-#' (roughly 30 functions, tagged `@family no-gold-standard comparison` or
+#' (roughly 33 functions, tagged `@family no-gold-standard comparison` or
 #' `@family truth fusion` -- see `vignette("attribute-agreement")`,
 #' `vignette("lead-lag-staleness")`, `vignette("consensus-and-corroboration")`,
-#' and `vignette("truth-fusion")`.) The analytic unit is one identifier's
-#' value for one attribute in one source-year. Four sub-workflows, in the
-#' order a comparison typically grows into:
+#' `vignette("truth-fusion")`, and `vignette("recent-audit-workflows")`.) The
+#' analytic unit is one identifier's value for one attribute in one
+#' source-year. Five sub-workflows, in the order a comparison typically grows
+#' into:
 #' \describe{
 #'   \item{Single cross-section}{Do two sources agree right now, and how
 #'     stale is each record ([attribute_agreement()],
 #'     [attribute_agreement_summary()], [record_age_years()],
-#'     [record_age_band()], [classify_record_staleness()])?}
+#'     [record_age_band()], [classify_record_staleness()])? When a source can
+#'     legitimately report more than one value per identifier-year, compare
+#'     the full value sets instead ([attribute_set_agreement()],
+#'     [attribute_set_agreement_summary()]).}
 #'   \item{Longitudinal, pairwise}{Using repeated annual panels, which source
 #'     moves first, how long until the other adopts or reverts
 #'     ([attribute_lead_lag_matrix()], [attribute_lead_lag_duration()]), or
@@ -52,11 +62,28 @@
 #'     then predict by majority vote or an optional probabilistic backend,
 #'     with explicit abstention ([attribute_truth_fusion()],
 #'     [attribute_truth_backends()]).}
+#'   \item{OIG-style directory audit}{An HHS-OIG-style audit protocol
+#'     (completeness, consistency, and independently verified accuracy, kept
+#'     as three separate populations, never one conflated denominator):
+#'     declare the field catalog and source lineage
+#'     ([attribute_field_dictionary()]), separate coverage from completeness
+#'     from the pairwise-overlap accuracy sampling frame
+#'     ([attribute_analysis_populations()]), distinguish an absent record
+#'     from an unavailable field from an empty value
+#'     ([attribute_record_presence()]), link direct and group-reassignment
+#'     enrollment edges to practice locations without asserting clinical
+#'     presence ([attribute_enrollment_locations()]), freeze a per-claim
+#'     verification questionnaire and reconcile its answers and nonresponse
+#'     ([attribute_verification_codebook()],
+#'     [attribute_verification_questionnaire()],
+#'     [attribute_nonresponse_audit()]), and compose the whole audit as
+#'     manuscript prose ([attribute_oig_audit_prose()]).}
 #' }
 #' Manuscript-ready prose for any of the above, rather than hand-written
 #' `sprintf()`, comes from [format_no_gold_standard_prose()],
 #' [format_proportion_comparison_prose()], [format_ranking_prose()],
-#' [attribute_catch_up_curve_prose()], and [attribute_truth_fusion_prose()].
+#' [attribute_catch_up_curve_prose()], [attribute_truth_fusion_prose()], and
+#' [attribute_oig_audit_prose()].
 #' None of these functions ever assumes either source is correct --
 #' agreement is concordance, not accuracy, throughout.
 #'

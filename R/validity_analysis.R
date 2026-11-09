@@ -52,7 +52,7 @@ listing_validity_design <- function(
 #'   level are ignored and missing outcomes are excluded.
 #' @param ci_method `"beta"` (default) uses [survey::svyciprop()] with the
 #'   Korn-Graubard effective-sample-size interval. `"mean"` reproduces the
-#'   legacy normal interval from [survey::svymean()], clipped to [0, 1].
+#'   legacy normal interval from [survey::svymean()], clipped to `[0, 1]`.
 #' @return A tibble with estimate, se, unweighted n, ci_low, ci_high and
 #'   ci_status, overall or per group. Empty domains have n = 0 and missing
 #'   estimates and intervals. Groups present before outcome exclusion remain.

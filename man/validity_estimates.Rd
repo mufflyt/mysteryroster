@@ -16,32 +16,38 @@ validity_estimates(
 )
 }
 \arguments{
-\item{design}{Output of \code{\link{listing_validity_design}}.}
-\item{status}{Column holding \code{\link{listing_status_levels}} values.}
+\item{design}{Output of \code{\link[=listing_validity_design]{listing_validity_design()}}.}
+
+\item{status}{Column holding \code{\link[=listing_status_levels]{listing_status_levels()}} values.}
+
 \item{level}{Which status to estimate. Default \code{"confirmed_valid"}.}
+
 \item{by}{Optional grouping column.}
+
 \item{definitive_only}{Restrict to confirmed valid or invalid listings.
 The default uses all sampled listings as the denominator.}
+
 \item{level_ci}{Confidence level, strictly between zero and one.}
+
 \item{outcome}{Optional logical outcome column. When supplied, status and
 level are ignored and missing outcomes are excluded.}
-\item{ci_method}{\code{"beta"} (default) uses \code{survey::svyciprop()}
-with the Korn-Graubard effective-sample-size interval. \code{"mean"}
-reproduces the legacy normal interval from \code{survey::svymean()},
-clipped to [0, 1].}
+
+\item{ci_method}{\code{"beta"} (default) uses \code{\link[survey:svyciprop]{survey::svyciprop()}} with the
+Korn-Graubard effective-sample-size interval. \code{"mean"} reproduces the
+legacy normal interval from \code{\link[survey:svymean]{survey::svymean()}}, clipped to \verb{[0, 1]}.}
 }
 \value{
-A tibble with estimate, se, unweighted n, ci_low, ci_high and ci_status,
-overall or per group. Empty domains have n = 0 and missing estimates and
-intervals. Groups present before outcome exclusion remain.
+A tibble with estimate, se, unweighted n, ci_low, ci_high and
+ci_status, overall or per group. Empty domains have n = 0 and missing
+estimates and intervals. Groups present before outcome exclusion remain.
 }
 \description{
-Design-weighted proportion of listings in a given status.
+Design-weighted proportion of listings in a given status
 }
 \details{
-Beta intervals are missing at exactly zero or one
-(ci_status = "boundary") and when the estimated variance is zero or
-non-finite ("undefined_variance"); these cases do not support this interval.
+Beta intervals are missing at exactly zero or one (ci_status = "boundary")
+and when the estimated variance is zero or non-finite
+("undefined_variance"); these cases do not support this interval.
 Non-finite or invalid interval limits yield "undefined_interval".
 The point estimate is retained. Empty domains have status "empty".
 Otherwise status is "estimated", or "legacy_mean" for the mean method.
