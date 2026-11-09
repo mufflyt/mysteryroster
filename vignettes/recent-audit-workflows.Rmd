@@ -259,6 +259,9 @@ medicare <- tibble::tibble(
   nppes_provider_zip5 = base::c("80204", "80204", "80218")
 )
 
+```
+
+```{r federal-roles}
 medicaid_roles <- dplyr::bind_rows(
   billing = dplyr::transmute(medicaid, npi = billing_npi, claim_month),
   servicing = dplyr::transmute(medicaid, npi = servicing_npi, claim_month),
