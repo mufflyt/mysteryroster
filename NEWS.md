@@ -755,6 +755,12 @@
   interpretive verbs. It also lists the input rows it requires. Behaviour
   is unchanged.
 
+* `attribute_oig_audit_prose()` gains `entity_label` and `entity_label_plural` (default
+  `"physician"`), replacing the hardcoded "physician"/"provider" nouns, so the paragraph
+  reads correctly for nurse-midwives or any other audited group. Its first sentence now
+  reports the study-frame size once and each source's present-record count separately;
+  it previously gave the frame size for both sources as if each held that many records.
+
 # mysteryroster 0.3.0
 
 * Added `@examples` to the 22 exported functions that had none -- only

@@ -32,7 +32,7 @@ test_that("attribute_oig_audit_prose omits linkage and nonresponse sentences whe
     attribute = "practice_zip5"
   )
   expect_false(grepl("Enrollment linkage", paragraph))
-  expect_false(grepl("sampled providers", paragraph))
+  expect_false(grepl("sampled physicians", paragraph))
 })
 
 test_that("attribute_oig_audit_prose adds the linkage sentence when supplied", {
@@ -59,7 +59,7 @@ test_that("attribute_oig_audit_prose adds the verification sentence when nonresp
     f$record_presence, f$set_summary, year = 2024, source_a = "nppes", source_b = "pecos",
     attribute = "practice_zip5", nonresponse = nonresponse
   )
-  expect_true(grepl("Of 2 sampled providers, 1 completed verification", paragraph))
+  expect_true(grepl("Of 2 sampled physicians, 1 completed verification", paragraph))
   expect_true(grepl("complete-response rate was 40.0%", paragraph))
 })
 
@@ -147,5 +147,58 @@ test_that("attribute_oig_audit_prose runs end to end through the real package pi
   )
   expect_type(paragraph, "character")
   expect_true(grepl("In 2026", paragraph))
-  expect_true(grepl("3 and 3 physician records", paragraph))
+  expect_true(grepl("the declared study frame contained 3 physicians; NPPES and PECOS held records for 3 and 2 of them", paragraph))
+})
+
+test_that("attribute_oig_audit_prose reports records present, not the frame size, for each source", {
+  f <- prose_fixture()
+  paragraph <- attribute_oig_audit_prose(
+    f$record_presence, f$set_summary, year = 2024, source_a = "nppes", source_b = "pecos",
+    attribute = "practice_zip5"
+  )
+  expect_true(grepl("frame contained 2 physicians; NPPES and PECOS held records for 2 and 1 of them", paragraph))
+})
+
+test_that("attribute_oig_audit_prose reports each frame when the two sources' frames differ", {
+  rp <- data.frame(
+    id = c("1", "2", "3", "1", "2"), year = 2024, source = c("a", "a", "a", "b", "b"),
+    attribute = "state", record_present = c(TRUE, TRUE, FALSE, TRUE, TRUE), field_status = "populated"
+  )
+  ss <- data.frame(source_a = "a", source_b = "b", year = 2024, n_compared = 2,
+                    n_any_shared = 2, pct_any_shared = 1, n_same_set = 2, pct_same_set = 1)
+  paragraph <- attribute_oig_audit_prose(rp, ss, 2024, "a", "b", "state")
+  expect_true(grepl("A and B held records for 2 of 3 and 2 of 2 physicians in their declared study frames", paragraph))
+})
+
+test_that("attribute_oig_audit_prose uses the supplied entity labels throughout", {
+  f <- prose_fixture()
+  links <- data.frame(id = "1", year = 2024, enrollment_id = "group_a", location_id = "site_a",
+                      linkage_path = "group_reassignment", location_linked = TRUE)
+  nonresponse <- list(
+    providers = data.frame(id = c("1", "2"), year = 2024, response_status = c("complete_response", "refused")),
+    response_rates = data.frame(year = 2024, w_denominator = 10, w_complete = 4, n_confirmed_ineligible = 1)
+  )
+  paragraph <- attribute_oig_audit_prose(
+    f$record_presence, f$set_summary, year = 2024, source_a = "nppes", source_b = "pecos",
+    attribute = "practice_zip5", linkage = links, nonresponse = nonresponse,
+    entity_label = "nurse-midwife", entity_label_plural = "nurse-midwives"
+  )
+  expect_false(grepl("physician|provider", paragraph))
+  expect_true(grepl("contained 2 nurse-midwives", paragraph))
+  expect_true(grepl("comparable nurse-midwives", paragraph))
+  expect_true(grepl("nurse-midwife-enrollment-location", paragraph))
+  expect_true(grepl("Of 2 sampled nurse-midwives", paragraph))
+  expect_true(grepl("1 confirmed-ineligible nurse-midwives", paragraph))
+})
+
+test_that("attribute_oig_audit_prose treats equal-sized frames with different identifiers as different frames", {
+  rp <- data.frame(
+    id = c("1", "2", "3", "4"), year = 2024, source = c("a", "a", "b", "b"),
+    attribute = "state", record_present = TRUE, field_status = "populated"
+  )
+  ss <- data.frame(source_a = "a", source_b = "b", year = 2024, n_compared = 0,
+                    n_any_shared = 0, pct_any_shared = NA, n_same_set = 0, pct_same_set = NA)
+  paragraph <- attribute_oig_audit_prose(rp, ss, 2024, "a", "b", "state")
+  expect_false(grepl("the declared study frame contained", paragraph))
+  expect_true(grepl("held records for 2 of 2 and 2 of 2 physicians in their declared study frames", paragraph))
 })
