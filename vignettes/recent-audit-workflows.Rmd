@@ -262,6 +262,15 @@ medicare <- tibble::tibble(
 ```
 
 ```{r federal-roles}
+known_month <- !base::is.na(medicaid$claim_month)
+valid_month <- base::grepl(
+  "^[0-9]{4}-(0[1-9]|1[0-2])$", medicaid$claim_month
+)
+if (base::any(known_month & !valid_month)) {
+  base::stop("claim_month must use YYYY-MM with month 01 through 12.",
+             call. = FALSE)
+}
+
 medicaid_roles <- dplyr::bind_rows(
   billing = dplyr::transmute(medicaid, npi = billing_npi, claim_month),
   servicing = dplyr::transmute(medicaid, npi = servicing_npi, claim_month),
@@ -282,7 +291,9 @@ table above still distinguishes how the physician was observed. For these
 three extracts the example uses conservative non-observation statuses.
 Declare source-years independently of observed records so an extract
 with zero matched physicians remains in the coverage table. A missing
-public payment or claim leaves practice location unknown.
+public payment or claim leaves practice location unknown. Medicaid rows
+with missing months do not establish dated activity. A supplied month must
+be a valid YYYY-MM value before it can enter the annual coverage table.
 
 ```{r federal-coverage}
 federal_index <- dplyr::bind_rows(
