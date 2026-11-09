@@ -1,0 +1,312 @@
+---
+title: "Auditing Provider Records Across Sources and Years"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Auditing Provider Records Across Sources and Years}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+A directory audit asks whether a source contains the physician, whether a
+field is populated, whether reported values agree across sources, and whether
+independent evidence confirms those values. Each question has its own
+denominator. This vignette runs all 19 public functions and both print methods
+added in the 72-hour window ending November 8, 2026, at 7:26 p.m. Mountain Time.
+All examples are synthetic. Source names illustrate the workflow. Field
+availability and lineage in a real study come from its dated extracts and
+documentation.
+
+## Audit a snapshot
+
+Start with a physician-year frame, an index of records actually delivered, and
+metadata declaring the completeness of each extract. The dictionary separates
+practice and mailing fields and records shared source lineage. Review
+requirements and normalization rules before interpreting a field as usable.
+
+```{r audit-frame}
+frame <- tibble::tibble(npi = base::as.character(1:6), year = 2024L)
+registry <- base::c("nppes", "pecos", "dac")
+record_index <- dplyr::bind_rows(
+  dplyr::mutate(frame, source = "nppes"),
+  dplyr::mutate(frame[1:5, ], source = "pecos"),
+  dplyr::mutate(frame, source = "dac")
+)
+manifest <- tibble::tibble(
+  year = 2024L, source = registry, extract_complete = TRUE
+)
+study_populations <- mysteryroster::attribute_analysis_populations(
+  frame, record_index, manifest, pair = base::c("nppes", "pecos"),
+  accuracy_sample = frame[1:5, ]
+)
+dictionary <- mysteryroster::attribute_field_dictionary(
+  tibble::tibble(
+    attribute = "practice_zip5", definition = "ZIP of a practice site",
+    location_role = "practice", normalizer = "zip5"
+  ),
+  sources = registry,
+  lineage_groups = base::list(medicare_enrollment = base::c("pecos", "dac"))
+)
+dictionary[, base::c("source", "attribute", "lineage", "requirement")]
+dplyr::count(study_populations$coverage, source, record_status)
+```
+
+The synthetic DAC extract lacks the ZIP column. The NPPES record for physician
+4 has an explicit blank ZIP. PECOS has a record for that physician but no ZIP
+assertion. Keep these three cases separate from an absent physician record.
+
+```{r presence-and-agreement}
+source_fields <- tibble::tibble(
+  year = 2024L, source = registry, attribute = "practice_zip5",
+  field_available = base::c(TRUE, TRUE, FALSE)
+)
+nppes_zip <- tibble::tibble(
+  npi = base::c("1", "1", "2", "3", "4", "5", "6"), year = 2024L,
+  practice_zip5 = base::c(
+    "80204", "80045", "80045", "80218", NA, "80521", "80903"
+  )
+)
+pecos_zip <- tibble::tibble(
+  npi = base::c("1", "2", "3", "5"), year = 2024L,
+  practice_zip5 = base::c("80204", "80045", "80204", "80521")
+)
+claims <- dplyr::bind_rows(
+  nppes = nppes_zip, pecos = pecos_zip, .id = "source"
+) |>
+  dplyr::rename(value = practice_zip5) |>
+  dplyr::mutate(attribute = "practice_zip5")
+
+presence <- mysteryroster::attribute_record_presence(
+  study_populations$coverage, dictionary, source_fields, claims
+)
+dplyr::count(presence, source, completeness_eligible, field_status)
+
+agreement <- mysteryroster::attribute_set_agreement(
+  base::list(nppes = nppes_zip, pecos = pecos_zip),
+  attribute = "practice_zip5"
+)
+agreement[, base::c("id", "any_shared", "same_set")]
+agreement_summary <- mysteryroster::attribute_set_agreement_summary(agreement)
+agreement_summary
+```
+
+Physician 1 shares one ZIP between sources but has a second ZIP in NPPES. That
+counts as an any-shared match and a complete-set disagreement. Agreement
+requires usable values from both sources and describes what the sources report.
+
+## Link enrollment to practice sites
+
+An individual enrollment and a reassignment to a group can each lead to sites.
+The group has two sites in this example. Physician 3's enrollment has no
+matching location record. Keep the link path and inspect unmatched enrollments
+before interpreting the site list. Administrative linkage alone leaves
+clinical presence unverified.
+
+```{r enrollment-linkage}
+individual <- tibble::tibble(
+  npi = base::c("1", "3"), year = 2024L,
+  enrollment_id = base::c("individual_a", "individual_unmatched")
+)
+reassignment <- tibble::tibble(
+  npi = "1", year = 2024L, enrollment_id = "group_a"
+)
+locations <- tibble::tibble(
+  year = 2024L,
+  enrollment_id = base::c("individual_a", "group_a", "group_a"),
+  location_id = base::c("direct_site", "group_site_1", "group_site_2"),
+  practice_zip5 = base::c("80204", "80204", "80045")
+)
+linkage <- mysteryroster::attribute_enrollment_locations(
+  individual, reassignment, locations
+)
+linkage$links[, base::c("id", "linkage_path", "location_id")]
+linkage$unmatched_enrollments
+```
+
+## Freeze the questions and account for nonresponse
+
+The questionnaire creates one question per distinct assertion. Store that
+table before fieldwork and record answers by question ID. Here, telephone
+verification confirms both listed ZIPs for physician 1 and finds an error
+for physician 2. Physician 3 has an unsuccessful contact attempt, physician 4
+has a missing ZIP, and physician 5 is never called.
+
+```{r verification}
+mysteryroster::attribute_verification_codebook()
+
+sample <- dplyr::mutate(
+  frame[1:5, ], stratum = "overlap",
+  weight = base::c(1, 3, 2, 4, 6),
+  eligibility_status = base::c(
+    "eligible", "eligible", "eligible", "eligible", "unknown"
+  )
+)
+frozen <- mysteryroster::attribute_verification_questionnaire(
+  sample, dplyr::filter(claims, source == "nppes")
+)
+answered <- dplyr::filter(frozen, id %in% base::c("1", "2"))
+answers <- tibble::tibble(
+  question_id = answered$question_id,
+  answer = base::ifelse(answered$id == "1", "correct", "never_correct"),
+  verified_at = base::as.Date("2024-11-15"),
+  respondent_role = "office_staff", verification_method = "telephone"
+)
+contacts <- tibble::tibble(
+  npi = base::c("1", "2", "3"), year = 2024L,
+  contacted_at = base::as.Date("2024-11-15"),
+  channel = "telephone",
+  outcome = base::c("reached", "reached", "no_answer")
+)
+audit <- mysteryroster::attribute_nonresponse_audit(
+  sample, frozen, answers, contacts
+)
+audit$providers[, base::c("id", "n_attempts", "response_status")]
+audit$response_rates
+```
+
+Specify the independent methods allowed by the study protocol. The adapter
+returns one row per sampled physician-year and target, including explicit
+exclusions. Its eligible rows carry the original sampling weights. Include
+every source and attribute pair represented in the audit when defining
+targets, then analyze each pair separately.
+
+```{r weighted-validity}
+classified <- mysteryroster::attribute_verification_status(
+  audit, tibble::tibble(source = "nppes", attribute = "practice_zip5"),
+  independent_methods = "telephone"
+)
+classified$fields[, base::c(
+  "id", "weight", "listing_status", "exclusion_reason"
+)]
+design <- mysteryroster::listing_validity_design(classified$validity)
+mysteryroster::validity_estimates(design, definitive_only = TRUE)
+mysteryroster::validity_sensitivity_bounds(
+  design, denominator = "all_sampled"
+)
+```
+
+The definitive estimate uses listings with a confirmed outcome. The bounds
+include attempted and unattempted eligible listings and assign unknown
+outcomes to the two extremes. A missing ZIP is excluded from accuracy for
+listed values and still contributes to the completeness analysis above.
+
+## Write the audit paragraph
+
+Pass the underlying tables to the prose function. This paragraph describes
+coverage, completeness, agreement, linkage, and response. Report the weighted
+verification estimates alongside it as a separate result.
+
+```{r audit-prose, results="asis"}
+paragraph <- mysteryroster::attribute_oig_audit_prose(
+  presence, agreement_summary, year = 2024L,
+  source_a = "nppes", source_b = "pecos", attribute = "practice_zip5",
+  attribute_label = "practice ZIP codes",
+  linkage = linkage$links, nonresponse = audit
+)
+base::cat(paragraph, "\n")
+```
+
+## Follow the same attribute across years
+
+Use a separate panel with one practice-state value per physician-year and
+source. Coverage counts populated values against an explicit universe.
+Churn counts changes between consecutive observed years. A registry can
+have high coverage and high churn, and churn can reflect actual moves.
+
+```{r annual-panel}
+nppes_state <- tibble::tibble(
+  npi = base::c("1", "1", "1", "1", "2", "2", "2"),
+  year = base::c(2020:2023, 2020:2022),
+  state = base::c("CO", "CO", "CO", "CO", "NM", "NM", "TX")
+)
+pecos_state <- tibble::tibble(
+  npi = nppes_state$npi, year = nppes_state$year,
+  state = base::c("NM", "NM", "CO", "CO", "NM", "TX", "TX")
+)
+panels <- base::list(nppes = nppes_state, pecos = pecos_state)
+universe <- dplyr::distinct(
+  dplyr::bind_rows(nppes_state, pecos_state), npi, year
+)
+coverage <- mysteryroster::attribute_coverage(
+  panels, attribute = "state", universe = universe
+)
+coverage$by_year
+churn <- mysteryroster::attribute_churn_rate(
+  pecos_state, attribute = "state"
+)
+churn$overall
+mysteryroster::format_ranking_prose(
+  group = coverage$overall$source, value = coverage$overall$pct,
+  n = coverage$overall$n_total, value_label = "coverage", suffix = "%"
+)$sentence
+```
+
+The lead-lag duration starts with physicians whose two sources disagree in a
+specified base year. The catch-up curve instead follows the first appearances
+of physician-value pairs over the whole panel. Its pooled reference starts
+when any source first reports a value. A source still under observation can
+contribute a censored event when it has yet to show that value. Use an external
+reference with `reference = "exclude_self"` when self-confirmation would answer
+the wrong study question, and declare shared lineage where applicable.
+
+```{r timing}
+duration <- mysteryroster::attribute_lead_lag_duration(
+  nppes_state, pecos_state, attribute = "state",
+  base_year = base::min(universe$year),
+  source_a_label = "NPPES", source_b_label = "PECOS"
+)
+base::print(duration)
+duration$b_adopts[base::c("median", "p25", "p75", "mean", "sd")]
+
+catch_up <- mysteryroster::attribute_catch_up_curve(
+  panels, attribute = "state", reference = "pooled"
+)
+base::print(catch_up)
+catch_up$median_horizon
+mysteryroster::attribute_catch_up_curve_prose(
+  catch_up, display_label = base::c(nppes = "NPPES", pecos = "PECOS")
+)$sentence
+```
+
+The two print calls exercise the new methods for
+`mysteryroster_lead_lag_duration` and `mysteryroster_catch_up_curve`.
+A missing catch-up median means the curve did not reach the 50% threshold
+within the observed horizon. Timing patterns can help prioritize records
+for verification.
+
+## Report proportions and consensus predictions
+
+Use the proportion helper for an ordinary two-sample comparison when the
+groups are independent. The example below uses two separate synthetic
+samples. For the same physicians measured twice, use a paired analysis.
+For survey samples, use the design-based workflow above.
+
+```{r proportions}
+comparison <- mysteryroster::format_proportion_comparison_prose(
+  n_a = 45, n_total_a = 100, n_b = 63, n_total_b = 100,
+  label_a = "sample A", label_b = "sample B", unit_label = "records",
+  condition_label = "had a populated practice ZIP"
+)
+comparison$combined_text
+```
+
+The truth-fusion prose helper summarizes a consensus fit, including
+abstention. Treat its predictions as candidates for follow-up. Independent
+verification can establish whether the predicted values are correct.
+
+```{r consensus}
+fusion_claims <- tibble::tibble(
+  entity_id = base::c("1", "1", "2", "2"), attribute = "state",
+  source_id = base::c("nppes", "pecos", "nppes", "pecos"),
+  claimed_value = base::c("CO", "CO", "NY", "NJ"), reference_year = 2024L
+)
+consensus <- mysteryroster::attribute_truth_fusion(
+  fusion_claims, method = "majority"
+)
+mysteryroster::attribute_truth_fusion_prose(
+  consensus, result_label = "the synthetic practice-state fit"
+)$combined_text
+```
