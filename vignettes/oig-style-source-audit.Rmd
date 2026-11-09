@@ -139,7 +139,6 @@ claims <- do.call(rbind, lapply(names(raw), function(s) {
   rbind(data.frame(npi = d$npi, year = 2026, source = s, attribute = "practice_state", value = d$state),
         data.frame(npi = d$npi, year = 2026, source = s, attribute = "practice_zip5", value = d$zip))
 }))
-claims <- claims[nzchar(claims$value), ]
 
 source_fields <- expand.grid(year = 2026, source = names(raw), attribute = fields$attribute,
                              stringsAsFactors = FALSE)
@@ -166,7 +165,7 @@ completeness <- do.call(rbind, lapply(names(raw), function(s) {
                usable = length(ok))
   }))
 }))
-completeness[completeness$attribute == "practice_zip5", ]
+completeness
 ```
 
 ```{r fig-completeness, fig.height = 3.8, fig.alt = "Stacked horizontal bars, one per source, splitting the simulated cohort into midwives absent from the source, present with a blank or malformed ZIP, and present with a usable ZIP."}
@@ -275,11 +274,15 @@ pair_breakdown("nppes", "healthgrades", "practice_state")
 
 ## The error floor
 
-If two sources disagree for a midwife, at least one is wrong for her. With
-disagreement rate \(d\) among the compared midwives, the worse of the two is
-wrong for at least \(d/2\) of them. The bound needs no truth. It is only a
-floor, though: it does not say which source is worse, and two sources that
-agree can both be wrong. Taking the floor from the upper end of the agreement
+Call a source wrong for a midwife when its listed locations are not her full
+set of practice locations. Then two sources whose sets share nothing cannot
+both be right, so with disagreement rate \(d\) among the compared midwives,
+the worse of the two is wrong for at least \(d/2\) of them. The bound needs
+no truth. It is only a floor, though: it does not say which source is worse,
+and two sources that agree can both be wrong. It also depends on that
+definition. If a source counts as right whenever every location it lists is
+real, the bound fails: a midwife working at two sites, listed at one in each
+source, has two incomplete sources but no wrong one. Taking the floor from the upper end of the agreement
 interval gives a conservative version.
 
 ```{r fig-floor, fig.height = 4.6, fig.alt = "Dot plot of the ZIP5 error floor for each of the fifteen source pairs, with Wilson-interval error bars, coloured by lineage. Pairs with PECOS have floors near 40 percent; NPPES against Doximity is lowest."}
