@@ -1,5 +1,11 @@
 # mysteryroster (development version)
 
+* Updated `DESCRIPTION`'s `Description:` field, the CRAN-facing summary shown by
+  `library(help = "mysteryroster")` and package search listings -- stale since before this
+  session: it covered only the original listing-validity workflow and single-cross-section/
+  lead-lag comparisons, with zero mention of N-way consensus/corroboration, truth fusion, or
+  the entire OIG-style directory audit sub-workflow (all of which already existed, or had
+  just landed, by the time this was caught).
 * Added `@examples` to the two exported functions that had none: `attribute_verification_status()`
   and `format_no_gold_standard_prose()`. The first is a full worked chain from
   `attribute_verification_questionnaire()` through `attribute_nonresponse_audit()` to

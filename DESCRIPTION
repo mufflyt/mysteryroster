@@ -14,9 +14,21 @@ Description: Tools for studies that test whether physician listings in national
     survey-weighted regression, and study-flow counts. Also compares a shared
     attribute (such as practice state) pairwise across sources with no gold
     standard, freshness-tuned by each source's own last-updated or vintage date,
-    and offers three longitudinal lead-lag approaches (panel convergence, spell-age
-    stratified agreement, and administrative enrollment timing) for determining
-    which of two equally fallible sources is leading versus lagging. Specialty-
+    including a set-based comparison for attributes a source may legitimately
+    report more than one value for; offers three longitudinal lead-lag approaches
+    (panel convergence, spell-age stratified agreement, and administrative
+    enrollment timing) for determining which of two equally fallible sources is
+    leading versus lagging; extends to three or more sources at once (unanimous,
+    majority, or genuine split; a lone dissenter; which source the group converges
+    toward); and fuses declared same-lineage sources into one predicted value by
+    majority vote, with explicit abstention on ties or weak majorities. A separate
+    sub-workflow runs an HHS Office of Inspector General-style directory audit
+    protocol, keeping completeness, consistency, and independently verified
+    accuracy as three distinct populations rather than one conflated denominator:
+    a field dictionary with declared source lineage, population separation,
+    four-way field-presence classification, enrollment-to-location linkage that
+    never asserts clinical presence, and a frozen per-claim verification
+    questionnaire reconciled against structured nonresponse. Specialty-
     agnostic: the ENT registry-validity study and the OB/GYN subspecialty study
     use the same functions with different registries and disposition codebooks.
 License: MIT + file LICENSE
