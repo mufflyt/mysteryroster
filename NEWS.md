@@ -1,5 +1,10 @@
 # mysteryroster (development version)
 
+* Added `vignette("source-comparison-midwifery")` and
+  `vignette("truth-fusion-evidence-ledger-cross-check")` to the README -- two of the
+  package's 12 vignettes that existed with no pointer to them anywhere in the README,
+  found by cross-checking every `vignettes/*.Rmd` file against every `vignette("...")`
+  mention in `README.md` directly rather than trusting either list by itself.
 * Updated `DESCRIPTION`'s `Description:` field, the CRAN-facing summary shown by
   `library(help = "mysteryroster")` and package search listings -- stale since before this
   session: it covered only the original listing-validity workflow and single-cross-section/
