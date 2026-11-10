@@ -67,6 +67,10 @@ remotes::install_github("mufflyt/mysteryroster")
   to converge toward, whether exactly one source is a lone dissenter,
   agreement stratified by any covariate, and Wilson confidence
   intervals on any of the above.
+- `vignette("source-comparison-midwifery")` -- one simulated, calibrated
+  panel run through every comparison dimension this toolkit offers at
+  once (timing, agreement, staleness, volatility, coverage, convergence,
+  independence, weight), to show what each genuinely adds over the others.
 - `vignette("truth-fusion")` -- the one function in this package that
   *does* predict a value rather than only making a relative claim:
   majority-vote inference with explicit abstention on ties or weak
@@ -353,7 +357,13 @@ when two sources share an upstream feed, and a real convergence failure
 at this package's own default settings), and
 `vignette("truth-fusion-case-study-midwifery")` for all three methods
 run together, on both real (no-ground-truth) data and a constructed
-example where weighted inference provably beats majority vote. CI
+example where weighted inference provably beats majority vote --
+and `vignette("truth-fusion-evidence-ledger-cross-check")` for the
+follow-up question that case study's own findings raised: is a
+backend's low agreement with majority vote a property of the method,
+or of how thin the underlying evidence ledger is, independently
+re-checked against a second, separately-built analysis of the same
+real panel. CI
 actually installs and exercises both optional backends on every push
 (`R-CMD-check-crowd-kit`, `R-CMD-check-truthdiscovery`, each in its own
 Python environment -- the two packages' dependencies conflict in one),
