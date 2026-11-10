@@ -2127,6 +2127,42 @@ enrollment_move_lead_lag <- function(panel, intervals,
 #'   blank line), each a single character string.
 #' @seealso `vignette("lead-lag-staleness")` for the full output on example
 #'   inputs.
+#' @examples
+#' # lead_lag_df needs exactly these four attribute rows and columns --
+#' # round numbers here stand in for a real attribute_lead_lag_matrix()/
+#' # attribute_lead_lag_duration() result; see Details for what each means.
+#' lead_lag_df <- tibble::tibble(
+#'   attribute = c("state", "city", "zip5", "street"),
+#'   n_paired_transitions = 100L, n_concordant_at_t = 80L,
+#'   a_breaks_concordance_first = 12L, b_breaks_concordance_first = 8L,
+#'   both_move_together_at_t1 = 5L, n_discordant_at_t = 20L,
+#'   b_adopts_a_at_t1_n = 10L, b_adopts_a_at_t1_pct = 50,
+#'   a_reverts_to_b_at_t1_n = 6L, a_reverts_to_b_at_t1_pct = 30,
+#'   persistent_discordant_at_t1_pct = 20, base_year = 2022L,
+#'   disc_base_n = 20L, b_adopts_a_multi_n = 12L, b_adopts_a_multi_pct = 60,
+#'   a_reverts_b_multi_n = 8L, a_reverts_b_multi_pct = 40,
+#'   cross_section_disc_n = 20L, cross_section_in_prior_b_n = 4L,
+#'   cross_section_in_prior_b_pct = 20
+#' )
+#' # freshness_df needs exactly these three spell-age strata.
+#' freshness_df <- tibble::tibble(
+#'   comparison = "DAC (2026) vs NPPES (2026)", stratification = "nppes_street_spell_age",
+#'   stratum = c("0 yrs (updated in snapshot yr)", "1-2 yrs", "11+ yrs (un-updated >=11 yrs)"),
+#'   n = c(70L, 150L, 100L), state_agree_pct = c(87.6, 91.8, 89.1),
+#'   city_agree_pct = c(51.9, 62.7, 47.7), zip5_agree_pct = c(43.4, 57.8, 36.3),
+#'   street_agree_pct = c(34.0, 43.7, 20.4)
+#' )
+#' # enrollment_df is [enrollment_move_lead_lag()]'s own output, unchanged.
+#' panel <- data.frame(npi = c("1", "1"), year = c(2023, 2024), state = c("CO", "NM"))
+#' intervals <- data.frame(
+#'   npi = c("1", "1"), state = c("NM", "CO"),
+#'   interval_start = as.Date(c("2023-05-01", "2020-01-01")),
+#'   interval_end = as.Date(c("2099-12-31", "2025-03-31"))
+#' )
+#' enrollment_df <- enrollment_move_lead_lag(panel, intervals)
+#'
+#' prose <- format_no_gold_standard_prose(lead_lag_df, freshness_df, enrollment_df)
+#' names(prose)
 #' @family no-gold-standard comparison
 #' @export
 format_no_gold_standard_prose <- function(lead_lag_df, freshness_df, enrollment_df,

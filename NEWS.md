@@ -1,5 +1,15 @@
 # mysteryroster (development version)
 
+* Added `@examples` to the two exported functions that had none: `attribute_verification_status()`
+  and `format_no_gold_standard_prose()`. The first is a full worked chain from
+  `attribute_verification_questionnaire()` through `attribute_nonresponse_audit()` to
+  `attribute_verification_status()`, showing all three listing-status outcomes (confirmed valid,
+  confirmed invalid, and unresolved because a definitive answer came through a verification method
+  the study protocol doesn't accept as independent evidence). The second reuses
+  `enrollment_move_lead_lag()`'s own minimal example for its `enrollment_df` argument rather than
+  inventing a new one, plus small hand-built `lead_lag_df`/`freshness_df` inputs satisfying the
+  exact attribute rows and freshness strata the function requires; both were verified to actually
+  execute (via `tools::Rd2ex()`), not just parse.
 * Updated `?mysteryroster` (the package-level help page) and the top of `README.md`: the
   OIG-style directory-audit sub-workflow (`attribute_field_dictionary()` through
   `attribute_oig_audit_prose()`, 10 functions) and `attribute_verification_status()` (the

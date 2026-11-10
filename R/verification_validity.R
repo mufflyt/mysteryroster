@@ -19,6 +19,35 @@
 #' no listed value, entirely inapplicable fields, and confirmed ineligible
 #' physicians are explicitly excluded. A physician without contact attempts
 #' or answers has status `not_attempted` for otherwise eligible fields.
+#' @examples
+#' sample <- data.frame(
+#'   npi = c("1", "2", "3"), year = 2026, weight = c(2, 3, 5), eligibility_status = "eligible"
+#' )
+#' claims <- data.frame(npi = sample$npi, year = 2026, source = "nppes",
+#'                       attribute = "practice_zip5", value = "80204")
+#' questions <- attribute_verification_questionnaire(sample, claims)
+#' # verification_method is supplied on the answers, not required by
+#' # attribute_nonresponse_audit() itself -- it passes through untouched.
+#' answers <- data.frame(
+#'   question_id = questions$question_id,
+#'   answer = c("correct", "never_correct", "unable_to_verify"),
+#'   verified_at = as.Date("2026-11-08"), respondent_role = "physician",
+#'   verification_method = c("state_board_license_verification",
+#'                           "state_board_license_verification", "self_report")
+#' )
+#' contacts <- data.frame(npi = sample$npi, year = 2026, contacted_at = as.Date("2026-11-08"),
+#'                         channel = "telephone", outcome = "reached")
+#' audit <- attribute_nonresponse_audit(sample, questions, answers, contacts)
+#'
+#' targets <- data.frame(source = "nppes", attribute = "practice_zip5")
+#' status <- attribute_verification_status(
+#'   audit, targets, independent_methods = "state_board_license_verification"
+#' )
+#' status$validity[, c("id", "listing_status", "unresolved_reasons")]
+#' # id 1: confirmed_valid (independently verified correct)
+#' # id 2: confirmed_invalid (independently verified incorrect)
+#' # id 3: unresolved -- self_report isn't in independent_methods, so an
+#' #       otherwise-definitive answer doesn't count as independent evidence
 #' @seealso [validity_estimates()], [validity_sensitivity_bounds()].
 #' @export
 attribute_verification_status <- function(
