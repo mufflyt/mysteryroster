@@ -1,5 +1,17 @@
 # mysteryroster (development version)
 
+* Fixed a `DESCRIPTION` WARNING and a top-level-files NOTE that `R CMD check`
+  has been raising on every CI run without failing it -- the workflow's
+  `error-on: '"error"'` only fails on ERROR, so neither was ever surfaced.
+  `Depends: R (>= 4.5.2)` named a non-zero patchlevel with no feature in the
+  codebase that actually requires it (confirmed via `git log -S` on the
+  commit that bumped it from `4.1.0`: it just matched whatever R was
+  installed that day); relaxed to `R (>= 4.5.0)` in `DESCRIPTION` and the
+  README badge. The tracked top-level `docs/` directory (project research
+  notes -- ablation findings, the evidence-ledger design/results, the
+  saboteur test matrix, the validation protocol) was missing from
+  `.Rbuildignore`, unlike `doc`/`Meta`; added `^docs$` alongside them.
+  `R CMD check` is clean (0 errors, 0 warnings, 0 notes) after both fixes.
 * Added `vignette("source-comparison-midwifery")` and
   `vignette("truth-fusion-evidence-ledger-cross-check")` to the README -- two of the
   package's 12 vignettes that existed with no pointer to them anywhere in the README,
