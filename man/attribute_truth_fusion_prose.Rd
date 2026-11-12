@@ -61,6 +61,7 @@ attribute_truth_fusion_prose(fit, result_label = "this example")$combined_text
 Other truth fusion:
 \code{\link[=attribute_claims_collapse_lineage]{attribute_claims_collapse_lineage()}},
 \code{\link[=attribute_claims_validate]{attribute_claims_validate()}},
+\code{\link[=attribute_hierarchical_truth_fusion]{attribute_hierarchical_truth_fusion()}},
 \code{\link[=attribute_truth_backends]{attribute_truth_backends()}},
 \code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}},
 \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}},

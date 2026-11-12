@@ -266,3 +266,61 @@ test_that("audit prose rejects whitespace keys that conceal duplicates", {
     presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
   ), "noncanonical whitespace")
 })
+
+test_that("attribute_oig_audit_html builds self-contained HTML with SVG, tables, prose, and optional file output", {
+  fixture <- prose_fixture()
+  links <- data.frame(
+    id = "1", year = 2024, enrollment_id = "group_a",
+    location_id = c("site_a", "site_b"),
+    linkage_path = "group_reassignment", location_linked = TRUE
+  )
+  nonresponse <- list(
+    providers = data.frame(
+      id = c("1", "2"), year = 2024,
+      response_status = c("complete_response", "refused")
+    ),
+    response_rates = data.frame(
+      year = 2024, w_denominator = 10, w_complete = 4, n_confirmed_ineligible = 0
+    )
+  )
+  val_est <- data.frame(
+    estimate = 0.85, se = 0.04, n = 20L, ci_low = 0.75, ci_high = 0.93
+  )
+  val_bounds <- data.frame(
+    scenario = c("worst_case", "point", "best_case"),
+    pct_valid = c(68.0, 85.0, 92.0),
+    ci_low = c(55.0, 75.0, 82.0),
+    ci_high = c(79.0, 93.0, 97.0),
+    stringsAsFactors = FALSE
+  )
+  ll <- list(
+    base_year = 2019L,
+    disc_base_n = 12L,
+    combined_text = "Among 12 discordant pairs in 2019, PECOS adopted NPPES in a median of 1.0 years."
+  )
+  out_file <- tempfile(fileext = ".html")
+  html <- attribute_oig_audit_html(
+    fixture$record_presence, fixture$set_summary, year = 2024,
+    source_a = "nppes", source_b = "pecos", attribute = "practice_zip5",
+    attribute_label = "practice ZIP codes <5-digit>",
+    linkage = links, nonresponse = nonresponse,
+    provider_noun = "nurse-midwife",
+    verification_mode = "administrative_registry",
+    validity_estimate = val_est, validity_bounds = val_bounds,
+    lead_lag = ll, title = "Midwifery OIG Audit & Report",
+    file = out_file
+  )
+  expect_true(file.exists(out_file))
+  expect_match(html, "^<!DOCTYPE html>")
+  expect_match(html, "<svg class=\"oig-flow-svg\"", fixed = TRUE)
+  expect_match(html, "Midwifery OIG Audit &amp; Report", fixed = TRUE)
+  expect_match(html, "practice ZIP codes &lt;5-digit&gt;", fixed = TRUE)
+  expect_match(html, "nurse-midwife records", fixed = TRUE)
+  expect_match(html, "comparable nurse-midwives", fixed = TRUE)
+  expect_match(html, "file-based registry matching does not constitute a respondent survey", fixed = TRUE)
+  expect_match(html, "OIG Table 3: Record Presence &amp; Field Completeness", fixed = TRUE)
+  expect_match(html, "OIG Table 4: Cross-Source Consistency &amp; Set Agreement", fixed = TRUE)
+  expect_match(html, "Appendix A: Enrollment-to-Location Linkage", fixed = TRUE)
+  expect_match(html, "OIG Tables 1 &amp; 2: Independent Verification &amp; Listing Accuracy", fixed = TRUE)
+  expect_match(html, "Among 12 discordant pairs in 2019", fixed = TRUE)
+})

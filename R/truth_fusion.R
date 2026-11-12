@@ -1104,3 +1104,269 @@ attribute_truth_fusion_prose <- function(result, compare_to = NULL,
 
   out
 }
+
+#' Coarse-to-fine hierarchical geographic truth fusion across multiple directory sources
+#'
+#' Flat truth-fusion algorithms ([attribute_truth_fusion()]) treat every
+#' attribute value as an unstructured categorical label. When three sources
+#' report `80204` (Denver), `80206` (Denver), and `98101` (Seattle) for a
+#' clinician's 5-digit practice ZIP code, flat majority or Dawid-Skene voting
+#' sees a three-way `1-1-1` tie at the `zip5` grain and abstains (`NA`),
+#' discarding the fact that two of the three sources agree on both the practice
+#' state (`CO`) and the 3-digit Sectional Center Facility (`802`).
+#'
+#' This function performs **coarse-to-fine hierarchical truth fusion** along an
+#' ordered geographic tree (by default `c("state", "scf3", "zip5")`, or any
+#' user-supplied hierarchy such as `c("state", "scf3", "zip5", "street")`). At
+#' each level $k$, a source is eligible to vote on child grain $k$ only if its
+#' coarser value at level $k-1$ matches the resolved parent consensus value,
+#' guaranteeing **parent-child tree consistency** (a resolved `zip5` can never
+#' contradict the resolved `scf3` or `state`). Every `(id, year)` entity is
+#' resolved to the **finest geographic grain supported by cross-source
+#' consensus**.
+#'
+#' @param sources Named list of source data frames (at least 2), each containing
+#'   `id`, optional `year`, and either the columns named in `hierarchy` or a
+#'   5-digit ZIP column (`zip_col`) from which `"scf3"` is automatically derived
+#'   when `"scf3"` is included in `hierarchy`.
+#' @param hierarchy Character vector of column names ordered from coarsest to
+#'   finest geographic grain. Default `c("state", "scf3", "zip5")`.
+#' @param id,year Names of identifier and year columns. Defaults `"npi"`,
+#'   `"year"`.
+#' @param zip_col Name of the 5-digit ZIP column used to derive `"scf3"` if
+#'   `"scf3"` is in `hierarchy` but not explicitly present as a column. Default
+#'   `"zip5"`.
+#' @param rule Consensus rule at each level:
+#'   \itemize{
+#'     \item `"strict_majority"` (default) -- requires support $> 0.50$ of
+#'       active sources (or $> 0.50$ of total source weight) at that grain.
+#'     \item `"plurality_unique"` -- accepts the modal value at level $k$
+#'       whenever there is a unique winner with support $\ge 2$ sources (or
+#'       unanimous when only 1 parent-consistent source remains and
+#'       `allow_single_child = TRUE`).
+#'   }
+#' @param source_weights Optional named numeric vector of positive reliability
+#'   weights per source (names matching `names(sources)`). Default `NULL` (equal
+#'   weights).
+#' @param allow_single_child Logical: when a coarser grain (e.g. `scf3 = "802"`)
+#'   is resolved by $\ge 2$ sources, and only one of those parent-consistent
+#'   sources provides a non-missing finer value, or when a higher-weight source
+#'   breaks a tie among parent-consistent children, should the child grain
+#'   resolve? Default `FALSE` (requires strict consensus at the child grain too).
+#' @return A list with two tibbles:
+#'   \describe{
+#'     \item{`entities`}{One row per `(id, year)` with `n_sources_present`,
+#'       per-grain fused values (`fused_<grain>`) and support proportions
+#'       (`support_<grain>`), `finest_resolved_grain`,
+#'       `finest_resolved_value`, and `resolution_depth` (`0` = unresolved,
+#'       `1..length(hierarchy)`).}
+#'     \item{`resolution_summary`}{Summary table across hierarchy levels
+#'       reporting `grain`, `depth`, `n_resolved_exact_at_grain`,
+#'       `pct_resolved_exact`, `n_resolved_at_or_finer`, and
+#'       `pct_resolved_at_or_finer`.}
+#'   }
+#' @examples
+#' s1 <- data.frame(npi = c("1", "2", "3"), year = 2026,
+#'                  state = c("CO", "CO", "CO"), zip5 = c("80204", "80204", "80204"))
+#' s2 <- data.frame(npi = c("1", "2", "3"), year = 2026,
+#'                  state = c("CO", "CO", "CO"), zip5 = c("80204", "80206", "80301"))
+#' s3 <- data.frame(npi = c("1", "2", "3"), year = 2026,
+#'                  state = c("CO", "WA", "WY"), zip5 = c("80204", "98101", "82001"))
+#' hf <- attribute_hierarchical_truth_fusion(list(nppes = s1, pecos = s2, tmsis = s3))
+#' hf$entities[, c("id", "fused_state", "fused_scf3", "fused_zip5", "finest_resolved_grain")]
+#' hf$resolution_summary
+#' @seealso [attribute_truth_fusion()], [attribute_consensus_tier()].
+#' @family truth fusion
+#' @export
+attribute_hierarchical_truth_fusion <- function(sources,
+                                                hierarchy = c("state", "scf3", "zip5"),
+                                                id = "npi",
+                                                year = "year",
+                                                zip_col = "zip5",
+                                                rule = c("strict_majority", "plurality_unique"),
+                                                source_weights = NULL,
+                                                allow_single_child = FALSE) {
+  checkmate::assert_list(sources, min.len = 2, names = "unique")
+  checkmate::assert_character(hierarchy, min.len = 2, any.missing = FALSE, unique = TRUE)
+  checkmate::assert_string(id, min.chars = 1)
+  rule <- match.arg(rule)
+  checkmate::assert_flag(allow_single_child)
+
+  src_names <- names(sources)
+  if (is.null(source_weights)) {
+    w_map <- stats::setNames(rep(1.0, length(src_names)), src_names)
+  } else {
+    checkmate::assert_numeric(source_weights, lower = 1e-6, any.missing = FALSE)
+    miss_w <- setdiff(src_names, names(source_weights))
+    if (length(miss_w) > 0L) {
+      stop(sprintf("attribute_hierarchical_truth_fusion: source_weights is missing: %s.",
+                   paste(miss_w, collapse = ", ")), call. = FALSE)
+    }
+    w_map <- as.numeric(source_weights[src_names])
+    names(w_map) <- src_names
+  }
+
+  has_yr <- !is.null(year) && all(vapply(sources, function(df) year %in% names(df), logical(1)))
+
+  norm_zip <- function(x) {
+    d <- gsub("[^0-9]", "", trimws(as.character(x)))
+    short <- !is.na(d) & nchar(d) >= 3L & nchar(d) <= 4L
+    d[short] <- sprintf("%05d", suppressWarnings(as.integer(d[short])))
+    z <- ifelse(!is.na(d) & nchar(d) >= 5L, substr(d, 1L, 5L), NA_character_)
+    z[z == "00000"] <- NA_character_
+    z
+  }
+
+  # Stack all sources into long entity-year-source rows with all hierarchy columns
+  stacked_list <- lapply(src_names, function(sn) {
+    df <- sources[[sn]]
+    checkmate::assert_data_frame(df, min.rows = 1)
+    if (!id %in% names(df)) {
+      stop(sprintf("attribute_hierarchical_truth_fusion: sources$%s is missing '%s'.", sn, id), call. = FALSE)
+    }
+    # Auto-derive scf3 if requested and zip_col is present
+    if ("scf3" %in% hierarchy && !"scf3" %in% names(df)) {
+      z_use <- if (zip_col %in% names(df)) zip_col else if ("zip5" %in% names(df)) "zip5" else NULL
+      if (is.null(z_use)) {
+        stop(sprintf("attribute_hierarchical_truth_fusion: sources$%s lacks 'scf3' and '%s'.", sn, zip_col), call. = FALSE)
+      }
+      z_clean <- norm_zip(df[[z_use]])
+      df$scf3 <- ifelse(!is.na(z_clean), substr(z_clean, 1L, 3L), NA_character_)
+    }
+    miss_h <- setdiff(hierarchy, names(df))
+    if (length(miss_h) > 0L) {
+      stop(sprintf("attribute_hierarchical_truth_fusion: sources$%s is missing hierarchy column(s): %s.",
+                   sn, paste(miss_h, collapse = ", ")), call. = FALSE)
+    }
+    out_s <- tibble::tibble(
+      id = trimws(as.character(df[[id]])),
+      year = if (has_yr) df[[year]] else NA,
+      source_id = sn,
+      weight = unname(w_map[sn])
+    )
+    for (h_col in hierarchy) {
+      val <- if (h_col %in% c("zip5", zip_col)) {
+        norm_zip(df[[h_col]])
+      } else {
+        v <- toupper(trimws(as.character(df[[h_col]])))
+        ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+      }
+      out_s[[h_col]] <- val
+    }
+    out_s <- out_s[!is.na(out_s$id) & nzchar(out_s$id), , drop = FALSE]
+    # Deduplicate exact rows per source
+    unique(out_s)
+  })
+
+  all_claims <- dplyr::bind_rows(stacked_list)
+  by_key <- split(all_claims, paste(all_claims$id, all_claims$year, sep = "\r"), drop = TRUE)
+
+  K <- length(hierarchy)
+
+  ent_rows <- lapply(by_key, function(g) {
+    u_sources <- unique(g$source_id)
+    n_src <- length(u_sources)
+    total_src_wt <- sum(w_map[u_sources])
+
+    fused_vals <- stats::setNames(rep(NA_character_, K), hierarchy)
+    support_vals <- stats::setNames(rep(NA_real_, K), hierarchy)
+
+    # Track rows consistent with resolved parent levels
+    eligible_g <- g
+    finest_grain <- "unresolved"
+    finest_val <- NA_character_
+    res_depth <- 0L
+
+    for (k in seq_len(K)) {
+      h_col <- hierarchy[k]
+      sub_k <- eligible_g[!is.na(eligible_g[[h_col]]), , drop = FALSE]
+      if (nrow(sub_k) == 0L) break
+
+      # Deduplicate to one vote per (source_id, value) at level k
+      votes_k <- unique(sub_k[, c("source_id", "weight", h_col), drop = FALSE])
+      val_wt <- tapply(votes_k$weight, votes_k[[h_col]], sum)
+      val_cnt <- tapply(votes_k$source_id, votes_k[[h_col]], function(s) length(unique(s)))
+
+      max_w <- max(val_wt)
+      winners <- names(val_wt)[abs(val_wt - max_w) < 1e-9]
+
+      if (length(winners) != 1L) {
+        # Tie at grain k -> cannot resolve grain k or finer grains
+        break
+      }
+
+      win_val <- winners[1]
+      win_cnt <- as.integer(val_cnt[win_val])
+      # Support relative to all sources present for this entity-year
+      supp_prop <- as.numeric(max_w / total_src_wt)
+
+      passes <- if (rule == "strict_majority") {
+        (supp_prop > 0.50) || (k > 1L && allow_single_child && length(unique(sub_k$source_id)) == 1L)
+      } else {
+        (win_cnt >= 2L) || (n_src == 1L) || (k > 1L && allow_single_child)
+      }
+
+      if (!passes) break
+
+      fused_vals[h_col] <- win_val
+      support_vals[h_col] <- round(supp_prop, 4)
+      finest_grain <- h_col
+      finest_val <- win_val
+      res_depth <- k
+
+      # Restrict eligible rows for level k+1 to those matching win_val at level k
+      eligible_g <- eligible_g[!is.na(eligible_g[[h_col]]) & (eligible_g[[h_col]] == win_val), , drop = FALSE]
+    }
+
+    row_out <- tibble::tibble(
+      id = g$id[1],
+      year = g$year[1],
+      n_sources_present = as.integer(n_src)
+    )
+    for (h_col in hierarchy) {
+      row_out[[paste0("fused_", h_col)]] <- unname(fused_vals[h_col])
+      row_out[[paste0("support_", h_col)]] <- unname(support_vals[h_col])
+    }
+    row_out$finest_resolved_grain <- finest_grain
+    row_out$finest_resolved_value <- finest_val
+    row_out$resolution_depth <- as.integer(res_depth)
+    row_out
+  })
+
+  entities_df <- dplyr::bind_rows(ent_rows)
+  entities_df <- entities_df[order(entities_df$id, entities_df$year), , drop = FALSE]
+  n_tot <- nrow(entities_df)
+
+  sum_rows <- lapply(seq_len(K), function(k) {
+    h_col <- hierarchy[k]
+    n_exact <- sum(entities_df$resolution_depth == k)
+    n_at_or_finer <- sum(entities_df$resolution_depth >= k)
+    tibble::tibble(
+      grain = h_col,
+      depth = as.integer(k),
+      n_entities = as.integer(n_tot),
+      n_resolved_exact_at_grain = as.integer(n_exact),
+      pct_resolved_exact = round(100 * n_exact / n_tot, 2),
+      n_resolved_at_or_finer = as.integer(n_at_or_finer),
+      pct_resolved_at_or_finer = round(100 * n_at_or_finer / n_tot, 2)
+    )
+  })
+  n_unres <- sum(entities_df$resolution_depth == 0L)
+  sum_tbl <- dplyr::bind_rows(
+    sum_rows,
+    tibble::tibble(
+      grain = "unresolved",
+      depth = 0L,
+      n_entities = as.integer(n_tot),
+      n_resolved_exact_at_grain = as.integer(n_unres),
+      pct_resolved_exact = round(100 * n_unres / n_tot, 2),
+      n_resolved_at_or_finer = as.integer(n_unres),
+      pct_resolved_at_or_finer = round(100 * n_unres / n_tot, 2)
+    )
+  )
+
+  list(
+    entities = tibble::as_tibble(entities_df),
+    resolution_summary = tibble::as_tibble(sum_tbl)
+  )
+}

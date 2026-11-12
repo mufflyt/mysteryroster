@@ -2407,3 +2407,702 @@ format_no_gold_standard_prose <- function(lead_lag_df, freshness_df, enrollment_
     combined_text          = paste(p1, p2, p3, sep = "\n\n")
   )
 }
+
+#' Six-category mutually exclusive longitudinal trajectory decomposition of base-year disagreements
+#'
+#' [attribute_lead_lag_duration()] reports the two directional adoption streams
+#' (`b_adopts` and `a_reverts`) separately, which are neither exhaustive nor
+#' mutually exclusive: an identifier where Source B later adopts Source A's
+#' base-year value *and* Source A later adopts Source B's base-year value is
+#' counted in both streams, while an identifier where both sources later
+#' converge on a new third value (`C != A_base` and `C != B_base`) is counted
+#' in neither. Moreover, among unresolved disagreements, some identifiers are
+#' observed all the way to the end of the panel without ever agreeing
+#' (uncensored persistent discordance), whereas others drop out of one or both
+#' sources before the end of the panel (right-censored loss to follow-up).
+#'
+#' This function partitions all `disc_base_n` base-year disagreements into six
+#' strictly mutually exclusive longitudinal trajectories whose counts sum to
+#' `disc_base_n` (`100.0%`).
+#'
+#' @details
+#' **The six mutually exclusive trajectories:**
+#' \enumerate{
+#'   \item `"b_only_adopted_a_base"` -- Source B later adopted Source A's
+#'     `base_year` value (and Source A did not adopt Source B's `base_year`
+#'     value).
+#'   \item `"a_only_adopted_b_base"` -- Source A later adopted Source B's
+#'     `base_year` value (and Source B did not adopt Source A's `base_year`
+#'     value).
+#'   \item `"bidirectional_cross_adoption"` -- Both directional adoptions
+#'     occurred in follow-up years (`B` adopted `A_base` and `A` adopted
+#'     `B_base`).
+#'   \item `"converged_new_third_value"` -- Neither source adopted the other's
+#'     `base_year` value, but both sources reported the *same* new value
+#'     (`A_t == B_t`) in at least one follow-up year `t > base_year`.
+#'   \item `"unresolved_uncensored_persistent"` -- Never converged through any
+#'     of trajectories 1--4, and both sources observed the identifier in
+#'     `max_panel_year`.
+#'   \item `"unresolved_right_censored"` -- Never converged through any of
+#'     trajectories 1--4, and one or both sources lacked an observation for the
+#'     identifier in `max_panel_year` (administrative or attrition censoring).
+#' }
+#'
+#' @param source_a,source_b Longitudinal data frames with `id`, `year`, and
+#'   `attribute` (one row per `(id, year)` each).
+#' @param attribute Single attribute column name to evaluate (e.g. `"zip5"` or
+#'   `"state"`).
+#' @param id,year Names of identifier and year columns. Defaults `"npi"`,
+#'   `"year"`.
+#' @param base_year Baseline year for disagreement. If `NULL` (default), uses
+#'   the earliest shared year that has at least one follow-up year.
+#' @param max_panel_year Terminal panel year used to distinguish uncensored
+#'   persistent discordance from right-censored loss to follow-up. If `NULL`
+#'   (default), uses `max(intersect(source_a[[year]], source_b[[year]]))`.
+#' @param source_a_label,source_b_label Human-readable source labels for the
+#'   summary table and manuscript sentence. Defaults `"Source A"`, `"Source B"`.
+#' @param conf_level Confidence level for Wilson intervals via [wilson_ci()].
+#'   Default `0.95`.
+#' @return A list with four elements:
+#'   \describe{
+#'     \item{`base_year`, `max_panel_year`, `disc_base_n`}{Scalars describing
+#'       the baseline cohort.}
+#'     \item{`trajectories`}{Tibble with one row per discordant identifier at
+#'       `base_year`: `id`, `a_base_value`, `b_base_value`, `b_adopted_a_base`,
+#'       `b_first_adopt_year`, `a_adopted_b_base`, `a_first_adopt_year`,
+#'       `converged_third_value`, `first_third_converge_year`,
+#'       `observed_at_max_year`, `last_paired_year`, `trajectory_code`, and
+#'       `trajectory_label`.}
+#'     \item{`summary`}{Tibble with the 6 mutually exclusive rows, plus a
+#'       `"resolved_total"` subtotal row (trajectories 1--4) and a `"total"`
+#'       row (`100.0%`), with `n`, `disc_base_n`, `pct`, `ci_low`, `ci_high`,
+#'       and `median_years_to_resolution`.}
+#'     \item{`prose`}{A manuscript-ready paragraph reporting the 6-way
+#'       decomposition.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6"),
+#'   year = c(2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019),
+#'   zip5 = c("80204", "80204", "80204", "80301", "80204", "80301",
+#'            "80204", "98101", "80204", "80204", "80204")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6"),
+#'   year = c(2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019),
+#'   zip5 = c("80301", "80204", "80301", "80301", "80301", "80204",
+#'            "80301", "98101", "80301", "80301", "80301")
+#' )
+#' dec <- attribute_disagreement_trajectories(
+#'   a, b, attribute = "zip5", base_year = 2019, max_panel_year = 2026,
+#'   source_a_label = "PECOS", source_b_label = "NPPES"
+#' )
+#' dec$summary[, c("trajectory_code", "n", "pct")]
+#' @seealso [attribute_lead_lag_duration()], [attribute_lead_lag_matrix()],
+#'   [attribute_catch_up_curve()].
+#' @family no-gold-standard comparison
+#' @export
+attribute_disagreement_trajectories <- function(source_a,
+                                                source_b,
+                                                attribute,
+                                                id = "npi",
+                                                year = "year",
+                                                base_year = NULL,
+                                                max_panel_year = NULL,
+                                                source_a_label = "Source A",
+                                                source_b_label = "Source B",
+                                                conf_level = 0.95) {
+  checkmate::assert_data_frame(source_a, min.rows = 1)
+  checkmate::assert_data_frame(source_b, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  .assert_nonblank_string(source_a_label, "attribute_disagreement_trajectories: source_a_label")
+  .assert_nonblank_string(source_b_label, "attribute_disagreement_trajectories: source_b_label")
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("attribute_disagreement_trajectories: conf_level must be strictly between 0 and 1.", call. = FALSE)
+  }
+
+  for (col in c(id, year, attribute)) {
+    if (!col %in% names(source_a)) {
+      stop(sprintf("attribute_disagreement_trajectories: source_a has no column '%s'.", col), call. = FALSE)
+    }
+    if (!col %in% names(source_b)) {
+      stop(sprintf("attribute_disagreement_trajectories: source_b has no column '%s'.", col), call. = FALSE)
+    }
+  }
+
+  clean_df <- function(df, label) {
+    res <- tibble::tibble(id = trimws(as.character(df[[id]])))
+    if (any(is.na(res$id) | !nzchar(res$id))) {
+      stop(sprintf("attribute_disagreement_trajectories: %s has missing or empty id values.", label), call. = FALSE)
+    }
+    res$year <- .parse_whole_integer(df[[year]], sprintf("attribute_disagreement_trajectories: %s year", label), allow_na = FALSE)
+    .assert_unique_keys(res, c("id", "year"), sprintf("attribute_disagreement_trajectories: %s", label))
+    v <- toupper(trimws(as.character(df[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res[!is.na(res$value), , drop = FALSE]
+  }
+
+  da <- clean_df(source_a, "source_a")
+  db <- clean_df(source_b, "source_b")
+
+  shared_years <- sort(intersect(unique(da$year), unique(db$year)))
+  if (length(shared_years) == 0L) {
+    stop("attribute_disagreement_trajectories: source_a and source_b share no years.", call. = FALSE)
+  }
+  if (is.null(base_year)) {
+    cand <- shared_years[shared_years < max(shared_years)]
+    base_year <- if (length(cand)) min(cand) else min(shared_years)
+  }
+  base_year <- as.integer(base_year)
+
+  if (is.null(max_panel_year)) {
+    max_panel_year <- max(shared_years)
+  }
+  max_panel_year <- as.integer(max_panel_year)
+
+  a_base <- da[da$year == base_year, c("id", "value"), drop = FALSE]
+  names(a_base)[2] <- "a_base_value"
+  b_base <- db[db$year == base_year, c("id", "value"), drop = FALSE]
+  names(b_base)[2] <- "b_base_value"
+
+  base_joined <- merge(a_base, b_base, by = "id")
+  d_base <- base_joined[base_joined$a_base_value != base_joined$b_base_value, , drop = FALSE]
+  d_base <- d_base[order(d_base$id), , drop = FALSE]
+  disc_base_n <- nrow(d_base)
+
+  codes <- c(
+    "b_only_adopted_a_base",
+    "a_only_adopted_b_base",
+    "bidirectional_cross_adoption",
+    "converged_new_third_value",
+    "unresolved_uncensored_persistent",
+    "unresolved_right_censored"
+  )
+  labels <- c(
+    sprintf("1. %s Only Adopted %s %d Value", source_b_label, source_a_label, base_year),
+    sprintf("2. %s Only Adopted %s %d Value", source_a_label, source_b_label, base_year),
+    sprintf("3. Bidirectional Cross-Adoption (Both Adopted Other's %d Value)", base_year),
+    sprintf("4. Converged on New Third Value (Neither %d Value)", base_year),
+    sprintf("5. Unresolved Persistent Discordance (Observed Through %d)", max_panel_year),
+    sprintf("6. Unresolved Right-Censored (Lost to Paired Follow-Up Before %d)", max_panel_year)
+  )
+
+  if (disc_base_n == 0L) {
+    empty_traj <- tibble::tibble(
+      id = character(0),
+      a_base_value = character(0),
+      b_base_value = character(0),
+      b_adopted_a_base = logical(0),
+      b_first_adopt_year = integer(0),
+      a_adopted_b_base = logical(0),
+      a_first_adopt_year = integer(0),
+      converged_third_value = logical(0),
+      first_third_converge_year = integer(0),
+      observed_at_max_year = logical(0),
+      last_paired_year = integer(0),
+      trajectory_code = character(0),
+      trajectory_label = character(0)
+    )
+    sum_tbl <- tibble::tibble(
+      trajectory_code = c(codes, "resolved_total", "total"),
+      trajectory_label = c(labels, "Subtotal: Any Longitudinal Resolution (Trajectories 1-4)", "Total Base-Year Disagreements"),
+      n = 0L,
+      disc_base_n = 0L,
+      pct = NA_real_,
+      ci_low = NA_real_,
+      ci_high = NA_real_,
+      median_years_to_resolution = NA_real_
+    )
+    return(list(
+      base_year = base_year,
+      max_panel_year = max_panel_year,
+      disc_base_n = 0L,
+      trajectories = empty_traj,
+      summary = sum_tbl,
+      prose = sprintf("No identifiers disagreed between %s and %s in %d.", source_a_label, source_b_label, base_year)
+    ))
+  }
+
+  # Future B adoptions of A_base
+  b_fut <- merge(d_base[, c("id", "a_base_value")], db[db$year > base_year, , drop = FALSE], by = "id")
+  b_hit <- b_fut[b_fut$value == b_fut$a_base_value, , drop = FALSE]
+  b_first <- if (nrow(b_hit) > 0L) tapply(b_hit$year, b_hit$id, min) else integer(0)
+
+  # Future A adoptions of B_base
+  a_fut <- merge(d_base[, c("id", "b_base_value")], da[da$year > base_year, , drop = FALSE], by = "id")
+  a_hit <- a_fut[a_fut$value == a_fut$b_base_value, , drop = FALSE]
+  a_first <- if (nrow(a_hit) > 0L) tapply(a_hit$year, a_hit$id, min) else integer(0)
+
+  # Paired follow-up rows (year >= base_year)
+  paired_all <- merge(
+    da[da$id %in% d_base$id & da$year >= base_year, c("id", "year", "value"), drop = FALSE],
+    db[db$id %in% d_base$id & db$year >= base_year, c("id", "year", "value"), drop = FALSE],
+    by = c("id", "year"), suffixes = c("_a", "_b")
+  )
+  last_paired <- tapply(paired_all$year, paired_all$id, max)
+
+  # Paired follow-up rows after base_year where A_t == B_t != A_base and != B_base
+  paired_fut <- merge(paired_all[paired_all$year > base_year, , drop = FALSE], d_base, by = "id")
+  third_hit <- paired_fut[
+    paired_fut$value_a == paired_fut$value_b &
+      paired_fut$value_a != paired_fut$a_base_value &
+      paired_fut$value_a != paired_fut$b_base_value, , drop = FALSE
+  ]
+  third_first <- if (nrow(third_hit) > 0L) tapply(third_hit$year, third_hit$id, min) else integer(0)
+
+  ids_max_a <- unique(da$id[da$year == max_panel_year])
+  ids_max_b <- unique(db$id[db$year == max_panel_year])
+  ids_max_both <- intersect(ids_max_a, ids_max_b)
+
+  d_base$b_first_adopt_year <- as.integer(unname(b_first[d_base$id]))
+  d_base$b_adopted_a_base <- !is.na(d_base$b_first_adopt_year)
+  d_base$a_first_adopt_year <- as.integer(unname(a_first[d_base$id]))
+  d_base$a_adopted_b_base <- !is.na(d_base$a_first_adopt_year)
+  d_base$first_third_converge_year <- as.integer(unname(third_first[d_base$id]))
+  d_base$converged_third_value <- !is.na(d_base$first_third_converge_year)
+  d_base$observed_at_max_year <- d_base$id %in% ids_max_both
+  d_base$last_paired_year <- as.integer(unname(last_paired[d_base$id]))
+
+  d_base$trajectory_code <- dplyr::case_when(
+    d_base$b_adopted_a_base & !d_base$a_adopted_b_base ~ codes[1],
+    !d_base$b_adopted_a_base & d_base$a_adopted_b_base ~ codes[2],
+    d_base$b_adopted_a_base & d_base$a_adopted_b_base ~ codes[3],
+    !d_base$b_adopted_a_base & !d_base$a_adopted_b_base & d_base$converged_third_value ~ codes[4],
+    d_base$observed_at_max_year ~ codes[5],
+    TRUE ~ codes[6]
+  )
+  code_to_label <- stats::setNames(labels, codes)
+  d_base$trajectory_label <- unname(code_to_label[d_base$trajectory_code])
+
+  d_base$years_to_resolution <- dplyr::case_when(
+    d_base$trajectory_code == codes[1] ~ as.numeric(d_base$b_first_adopt_year - base_year),
+    d_base$trajectory_code == codes[2] ~ as.numeric(d_base$a_first_adopt_year - base_year),
+    d_base$trajectory_code == codes[3] ~ as.numeric(pmin(d_base$b_first_adopt_year, d_base$a_first_adopt_year) - base_year),
+    d_base$trajectory_code == codes[4] ~ as.numeric(d_base$first_third_converge_year - base_year),
+    TRUE ~ NA_real_
+  )
+
+  make_row <- function(c_code, c_label, mask) {
+    n_k <- sum(mask)
+    ci <- wilson_ci(n_k, disc_base_n, conf_level = conf_level, as_percent = TRUE)
+    yrs <- d_base$years_to_resolution[mask]
+    yrs <- yrs[!is.na(yrs)]
+    med_yr <- if (length(yrs) > 0L) round(stats::median(yrs), 1) else NA_real_
+    tibble::tibble(
+      trajectory_code = c_code,
+      trajectory_label = c_label,
+      n = as.integer(n_k),
+      disc_base_n = as.integer(disc_base_n),
+      pct = round(100 * n_k / disc_base_n, 2),
+      ci_low = round(ci$ci_low, 2),
+      ci_high = round(ci$ci_high, 2),
+      median_years_to_resolution = med_yr
+    )
+  }
+
+  row_list <- lapply(seq_along(codes), function(i) {
+    make_row(codes[i], labels[i], d_base$trajectory_code == codes[i])
+  })
+  resolved_mask <- d_base$trajectory_code %in% codes[1:4]
+  sum_tbl <- dplyr::bind_rows(
+    row_list,
+    make_row("resolved_total", "Subtotal: Any Longitudinal Resolution (Trajectories 1-4)", resolved_mask),
+    tibble::tibble(
+      trajectory_code = "total",
+      trajectory_label = "Total Base-Year Disagreements",
+      n = as.integer(disc_base_n),
+      disc_base_n = as.integer(disc_base_n),
+      pct = 100.0,
+      ci_low = 100.0,
+      ci_high = 100.0,
+      median_years_to_resolution = NA_real_
+    )
+  )
+
+  get_n <- function(cd) sum_tbl$n[sum_tbl$trajectory_code == cd][1]
+  get_p <- function(cd) sum_tbl$pct[sum_tbl$trajectory_code == cd][1]
+  fmt_c <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
+
+  prose <- sprintf(
+    paste0(
+      "Among %s identifiers where %s and %s disagreed on %s in %d, a mutually exclusive longitudinal trajectory ",
+      "decomposition through %d showed that %s (%.1f%%) resolved during follow-up: %s (%.1f%%) via %s adopting ",
+      "%s's %d value alone, %s (%.1f%%) via %s adopting %s's %d value alone, %s (%.1f%%) via bidirectional ",
+      "cross-adoption, and %s (%.1f%%) via convergence on a new third value. The remaining %s (%.1f%%) ",
+      "never converged during the observation window, comprising %s (%.1f%%) with uncensored persistent ",
+      "discordance observed through %d and %s (%.1f%%) right-censored prior to %d."
+    ),
+    fmt_c(disc_base_n), source_a_label, source_b_label, attribute, base_year,
+    max_panel_year,
+    fmt_c(get_n("resolved_total")), get_p("resolved_total"),
+    fmt_c(get_n(codes[1])), get_p(codes[1]), source_b_label, source_a_label, base_year,
+    fmt_c(get_n(codes[2])), get_p(codes[2]), source_a_label, source_b_label, base_year,
+    fmt_c(get_n(codes[3])), get_p(codes[3]),
+    fmt_c(get_n(codes[4])), get_p(codes[4]),
+    fmt_c(get_n(codes[5]) + get_n(codes[6])), round(100 - get_p("resolved_total"), 1),
+    fmt_c(get_n(codes[5])), get_p(codes[5]), max_panel_year,
+    fmt_c(get_n(codes[6])), get_p(codes[6]), max_panel_year
+  )
+
+  list(
+    base_year = base_year,
+    max_panel_year = max_panel_year,
+    disc_base_n = as.integer(disc_base_n),
+    trajectories = tibble::as_tibble(d_base),
+    summary = tibble::as_tibble(sum_tbl),
+    prose = prose
+  )
+}
+
+.us_state_contiguity_pairs <- function() {
+  # Canonical land/bridge border adjacency pairs for US states + DC
+  adj <- list(
+    AL = c("FL", "GA", "MS", "TN"),
+    AZ = c("CA", "CO", "NM", "NV", "UT"),
+    AR = c("LA", "MO", "MS", "OK", "TN", "TX"),
+    CA = c("AZ", "NV", "OR"),
+    CO = c("AZ", "KS", "NE", "NM", "OK", "UT", "WY"),
+    CT = c("MA", "NY", "RI"),
+    DE = c("MD", "NJ", "PA"),
+    DC = c("MD", "VA"),
+    FL = c("AL", "GA"),
+    GA = c("AL", "FL", "NC", "SC", "TN"),
+    ID = c("MT", "NV", "OR", "UT", "WA", "WY"),
+    IL = c("IA", "IN", "KY", "MO", "WI"),
+    IN = c("IL", "KY", "MI", "OH"),
+    IA = c("IL", "MN", "MO", "NE", "SD", "WI"),
+    KS = c("CO", "MO", "NE", "OK"),
+    KY = c("IL", "IN", "MO", "OH", "TN", "VA", "WV"),
+    LA = c("AR", "MS", "TX"),
+    ME = c("NH"),
+    MD = c("DC", "DE", "PA", "VA", "WV"),
+    MA = c("CT", "NH", "NY", "RI", "VT"),
+    MI = c("IN", "MN", "OH", "WI"),
+    MN = c("IA", "MI", "ND", "SD", "WI"),
+    MS = c("AL", "AR", "LA", "TN"),
+    MO = c("AR", "IA", "IL", "KS", "KY", "NE", "OK", "TN"),
+    MT = c("ID", "ND", "SD", "WY"),
+    NE = c("CO", "IA", "KS", "MO", "SD", "WY"),
+    NV = c("AZ", "CA", "ID", "OR", "UT"),
+    NH = c("MA", "ME", "VT"),
+    NJ = c("DE", "NY", "PA"),
+    NM = c("AZ", "CO", "OK", "TX", "UT"),
+    NY = c("CT", "MA", "NJ", "PA", "RI", "VT"),
+    NC = c("GA", "SC", "TN", "VA"),
+    ND = c("MN", "MT", "SD"),
+    OH = c("IN", "KY", "MI", "PA", "WV"),
+    OK = c("AR", "CO", "KS", "MO", "NM", "TX"),
+    OR = c("CA", "ID", "NV", "WA"),
+    PA = c("DE", "MD", "NJ", "NY", "OH", "WV"),
+    RI = c("CT", "MA", "NY"),
+    SC = c("GA", "NC"),
+    SD = c("IA", "MN", "MT", "ND", "NE", "WY"),
+    TN = c("AL", "AR", "GA", "KY", "MO", "MS", "NC", "VA"),
+    TX = c("AR", "LA", "NM", "OK"),
+    UT = c("AZ", "CO", "ID", "NM", "NV", "WY"),
+    VT = c("MA", "NH", "NY"),
+    VA = c("DC", "KY", "MD", "NC", "TN", "WV"),
+    WA = c("ID", "OR"),
+    WV = c("KY", "MD", "OH", "PA", "VA"),
+    WI = c("IA", "IL", "MI", "MN"),
+    WY = c("CO", "ID", "MT", "NE", "SD", "UT")
+  )
+  pairs <- unlist(lapply(names(adj), function(st) paste(st, adj[[st]], sep = "->")), use.names = FALSE)
+  unique(pairs)
+}
+
+#' Markov transition matrix and multi-state mover/stayer practice typology
+#'
+#' Standard longitudinal churn analyses ([attribute_churn_rate()] and
+#' [enrollment_move_lead_lag()]) treat every year-to-year state change as a
+#' permanent relocation. In practice, clinicians living near state borders or
+#' working in multi-state health systems or locum tenens roles exhibit distinct
+#' longitudinal mobility regimes: some never change states (`Strict Stayer`),
+#' some maintain concurrent enrollment in adjacent states while keeping a single
+#' primary directory state (`Concurrent Multi-State Stayer`), some make a single
+#' permanent move (`One-Time Permanent Mover`), some oscillate back and forth
+#' between two states (`Alternating / Return Commuter`, e.g. `A -> B -> A`), and
+#' some practice across three or more states (`Multi-State Serial Mover / Traveler`).
+#'
+#' This function classifies every clinician's longitudinal trajectory across an
+#' $M$-year primary directory panel (plus optional multi-valued concurrent
+#' enrollment records such as `T-MSIS` or `PECOS`) into those five mutually
+#' exclusive mobility regimes, flags whether state transitions occur across
+#' **contiguous US border states** (e.g. `KS <-> MO`, `NY <-> NJ`, `OR <-> WA`),
+#' and estimates both the **3-state behavioral Markov transition matrix**
+#' (`stay`, `move_new_state`, `return_prior_state`) and the **state-to-state
+#' Markov transition matrix**.
+#'
+#' @param panel Longitudinal primary directory data frame (one row per
+#'   `(id, year)`) containing `id`, `year`, and `state_col`.
+#' @param concurrent_source Optional data frame of multi-state enrollment or
+#'   practice records (such as `T-MSIS` or `PECOS`, where an `(id, year)` may
+#'   have multiple states), containing `id`, optional `year`, and `state_col`.
+#' @param id,year,state_col Column names for identifier, year, and 2-letter
+#'   postal state. Defaults `"npi"`, `"year"`, `"state"`.
+#' @param conf_level Confidence level for Wilson intervals via [wilson_ci()].
+#'   Default `0.95`.
+#' @return A list with four tibbles:
+#'   \describe{
+#'     \item{`clinicians`}{One row per unique `id` observed in $\ge 2$ panel
+#'       years, with `n_years_observed`, `n_unique_states`, `n_transitions`,
+#'       `ever_returned_to_prior_state`, `any_contiguous_border_move`,
+#'       `concurrent_multistate`, `state_sequence`, and mutually exclusive
+#'       `mobility_regime`.}
+#'     \item{`regime_summary`}{Mutually exclusive 5-regime summary table (plus a
+#'       `"Total"` row summing to `100.0%`) with `n`, `n_clinicians`, `pct`,
+#'       `ci_low`, `ci_high`, and `pct_contiguous_border`.}
+#'     \item{`behavioral_markov`}{Transition probabilities between consecutive
+#'       annual steps (`stay_same_state`, `move_to_new_state`,
+#'       `return_to_prior_state`, plus breakdown of moves into
+#'       `contiguous_border_move` vs `non_contiguous_move`).}
+#'     \item{`state_transition_matrix`}{Pairwise state-to-state transition counts
+#'       and empirical Markov transition probabilities $P(S_{t+1} = j \mid S_t = i)$,
+#'       with `is_same_state` and `is_contiguous_border`.}
+#'   }
+#' @examples
+#' panel <- data.frame(
+#'   npi = c(rep("1", 4), rep("2", 4), rep("3", 4), rep("4", 4), rep("5", 4)),
+#'   year = rep(2021:2024, 5),
+#'   state = c(
+#'     "CO", "CO", "CO", "CO", # 1: Strict Stayer
+#'     "KS", "KS", "KS", "KS", # 2: Concurrent Multi-State Stayer (via concurrent_source)
+#'     "CO", "CO", "WY", "WY", # 3: One-Time Permanent Mover
+#'     "NY", "NJ", "NY", "NJ", # 4: Alternating / Return Commuter
+#'     "CO", "WY", "UT", "AZ"  # 5: Multi-State Serial Mover
+#'   )
+#' )
+#' conc <- data.frame(npi = c("2", "2"), year = c(2022, 2022), state = c("KS", "MO"))
+#' ms <- attribute_mover_stayer_transition_matrix(panel, concurrent_source = conc)
+#' ms$regime_summary[, c("mobility_regime", "n", "pct")]
+#' ms$behavioral_markov
+#' @seealso [attribute_churn_rate()], [enrollment_move_lead_lag()].
+#' @family no-gold-standard comparison
+#' @export
+attribute_mover_stayer_transition_matrix <- function(panel,
+                                                     concurrent_source = NULL,
+                                                     id = "npi",
+                                                     year = "year",
+                                                     state_col = "state",
+                                                     conf_level = 0.95) {
+  checkmate::assert_data_frame(panel, min.rows = 2)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_string(state_col, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("attribute_mover_stayer_transition_matrix: conf_level must be strictly between 0 and 1.", call. = FALSE)
+  }
+
+  for (col in c(id, year, state_col)) {
+    if (!col %in% names(panel)) {
+      stop(sprintf("attribute_mover_stayer_transition_matrix: panel is missing column '%s'.", col), call. = FALSE)
+    }
+  }
+
+  df <- tibble::tibble(
+    id = trimws(as.character(panel[[id]])),
+    year = .parse_whole_integer(panel[[year]], "attribute_mover_stayer_transition_matrix: panel year", allow_na = FALSE),
+    state = toupper(trimws(as.character(panel[[state_col]])))
+  )
+  df <- df[!is.na(df$id) & nzchar(df$id) & !is.na(df$state) & nzchar(df$state), , drop = FALSE]
+  .assert_unique_keys(df, c("id", "year"), "attribute_mover_stayer_transition_matrix: panel")
+  df <- df[order(df$id, df$year), , drop = FALSE]
+
+  # Identify clinicians with concurrent multi-state enrollment
+  conc_multi_ids <- character(0)
+  if (!is.null(concurrent_source)) {
+    checkmate::assert_data_frame(concurrent_source)
+    for (col in c(id, state_col)) {
+      if (!col %in% names(concurrent_source)) {
+        stop(sprintf("attribute_mover_stayer_transition_matrix: concurrent_source is missing column '%s'.", col), call. = FALSE)
+      }
+    }
+    c_id <- trimws(as.character(concurrent_source[[id]]))
+    c_st <- toupper(trimws(as.character(concurrent_source[[state_col]]))
+    )
+    c_yr <- if (year %in% names(concurrent_source)) as.character(concurrent_source[[year]]) else rep("ALL", nrow(concurrent_source))
+    keep_c <- !is.na(c_id) & nzchar(c_id) & !is.na(c_st) & nzchar(c_st)
+    c_df <- unique(data.frame(id = c_id[keep_c], year = c_yr[keep_c], state = c_st[keep_c], stringsAsFactors = FALSE))
+    # Also combine with primary panel state for that id
+    p_for_c <- unique(data.frame(id = df$id, year = if (year %in% names(concurrent_source)) as.character(df$year) else "ALL", state = df$state, stringsAsFactors = FALSE))
+    comb_c <- unique(rbind(c_df, p_for_c[p_for_c$id %in% c_df$id, , drop = FALSE]))
+    st_per_id_yr <- tapply(comb_c$state, paste(comb_c$id, comb_c$year, sep = "\r"), function(x) length(unique(x)))
+    multi_keys <- names(st_per_id_yr)[st_per_id_yr >= 2L]
+    conc_multi_ids <- unique(sub("\r.*$", "", multi_keys))
+  }
+
+  contig_set <- .us_state_contiguity_pairs()
+
+  by_id <- split(df, df$id, drop = TRUE)
+  by_id <- by_id[vapply(by_id, nrow, integer(1)) >= 2L]
+  if (length(by_id) == 0L) {
+    stop("attribute_mover_stayer_transition_matrix: no clinicians observed in >= 2 years.", call. = FALSE)
+  }
+
+  regime_levels <- c(
+    "1. Strict Single-State Stayer",
+    "2. Concurrent Multi-State Stayer (1 Primary State, >=2 Concurrent States)",
+    "3. One-Time Permanent Mover (A -> B)",
+    "4. Alternating / Return Commuter (A -> B -> A)",
+    "5. Multi-State Serial Mover / Traveler (>=3 Primary States)"
+  )
+
+  step_from <- character(0)
+  step_to <- character(0)
+  step_type <- character(0)
+  step_contig <- logical(0)
+
+  clin_rows <- lapply(by_id, function(g) {
+    st_vec <- g$state
+    n_yrs <- length(st_vec)
+    u_st <- unique(st_vec)
+    n_u <- length(u_st)
+
+    from_s <- st_vec[-n_yrs]
+    to_s <- st_vec[-1L]
+    moved <- from_s != to_s
+    n_trans <- sum(moved)
+
+    # Track whether any transition returned to a state already visited prior to the current spell
+    ever_return <- FALSE
+    s_types <- character(n_yrs - 1L)
+    seen_states <- st_vec[1]
+    for (t_idx in seq_len(n_yrs - 1L)) {
+      cur_s <- st_vec[t_idx]
+      nxt_s <- st_vec[t_idx + 1L]
+      if (nxt_s == cur_s) {
+        s_types[t_idx] <- "stay_same_state"
+      } else if (nxt_s %in% seen_states) {
+        s_types[t_idx] <- "return_to_prior_state"
+        ever_return <- TRUE
+      } else {
+        s_types[t_idx] <- "move_to_new_state"
+      }
+      seen_states <- unique(c(seen_states, nxt_s))
+    }
+
+    pair_codes <- paste(from_s, to_s, sep = "->")
+    is_contig <- moved & (pair_codes %in% contig_set)
+    any_contig <- any(is_contig)
+
+    step_from <<- c(step_from, from_s)
+    step_to <<- c(step_to, to_s)
+    step_type <<- c(step_type, s_types)
+    step_contig <<- c(step_contig, is_contig)
+
+    is_conc <- g$id[1] %in% conc_multi_ids
+
+    reg <- dplyr::case_when(
+      n_u == 1L & !is_conc ~ regime_levels[1],
+      n_u == 1L & is_conc ~ regime_levels[2],
+      n_u == 2L & n_trans == 1L & !ever_return ~ regime_levels[3],
+      n_u == 2L & (n_trans >= 2L | ever_return) ~ regime_levels[4],
+      TRUE ~ regime_levels[5]
+    )
+
+    # Compress consecutive run-length sequence e.g. CO -> WY -> CO
+    rle_st <- rle(st_vec)$values
+    seq_str <- paste(rle_st, collapse = "->")
+
+    tibble::tibble(
+      id = g$id[1],
+      n_years_observed = as.integer(n_yrs),
+      n_unique_states = as.integer(n_u),
+      n_transitions = as.integer(n_trans),
+      ever_returned_to_prior_state = ever_return,
+      any_contiguous_border_move = any_contig,
+      concurrent_multistate = is_conc,
+      state_sequence = seq_str,
+      mobility_regime = factor(reg, levels = regime_levels, ordered = TRUE)
+    )
+  })
+
+  clin_df <- dplyr::bind_rows(clin_rows)
+  n_tot_c <- nrow(clin_df)
+
+  reg_rows <- lapply(regime_levels, function(rl) {
+    sub_c <- clin_df[clin_df$mobility_regime == rl, , drop = FALSE]
+    n_k <- nrow(sub_c)
+    ci <- wilson_ci(n_k, n_tot_c, conf_level = conf_level, as_percent = TRUE)
+    pct_cb <- if (n_k > 0L) round(100 * mean(sub_c$any_contiguous_border_move), 1) else NA_real_
+    tibble::tibble(
+      mobility_regime = rl,
+      n = as.integer(n_k),
+      n_clinicians = as.integer(n_tot_c),
+      pct = round(100 * n_k / n_tot_c, 2),
+      ci_low = round(ci$ci_low, 2),
+      ci_high = round(ci$ci_high, 2),
+      pct_with_contiguous_border_move = pct_cb
+    )
+  })
+  regime_summary <- dplyr::bind_rows(
+    reg_rows,
+    tibble::tibble(
+      mobility_regime = "Total",
+      n = as.integer(n_tot_c),
+      n_clinicians = as.integer(n_tot_c),
+      pct = 100.0,
+      ci_low = 100.0,
+      ci_high = 100.0,
+      pct_with_contiguous_border_move = round(100 * mean(clin_df$any_contiguous_border_move), 1)
+    )
+  )
+
+  n_steps <- length(step_type)
+  n_moves <- sum(step_type != "stay_same_state")
+  behav_tbl <- tibble::tibble(
+    transition_type = c(
+      "stay_same_state",
+      "move_to_new_state",
+      "return_to_prior_state",
+      "any_move_contiguous_border",
+      "any_move_non_contiguous"
+    ),
+    n_transitions = as.integer(c(
+      sum(step_type == "stay_same_state"),
+      sum(step_type == "move_to_new_state"),
+      sum(step_type == "return_to_prior_state"),
+      sum(step_contig),
+      sum((step_type != "stay_same_state") & !step_contig)
+    )),
+    n_total_steps = as.integer(n_steps),
+    pct_of_all_steps = round(100 * c(
+      sum(step_type == "stay_same_state"),
+      sum(step_type == "move_to_new_state"),
+      sum(step_type == "return_to_prior_state"),
+      sum(step_contig),
+      sum((step_type != "stay_same_state") & !step_contig)
+    ) / n_steps, 2),
+    pct_of_moves = if (n_moves > 0L) round(100 * c(
+      NA_real_,
+      sum(step_type == "move_to_new_state") / n_moves,
+      sum(step_type == "return_to_prior_state") / n_moves,
+      sum(step_contig) / n_moves,
+      sum((step_type != "stay_same_state") & !step_contig) / n_moves
+    ), 2) else rep(NA_real_, 5L)
+  )
+
+  # State-to-state Markov transition matrix
+  pair_df <- data.frame(from_state = step_from, to_state = step_to, stringsAsFactors = FALSE)
+  pair_counts <- as.data.frame(table(pair_df$from_state, pair_df$to_state), stringsAsFactors = FALSE)
+  names(pair_counts) <- c("from_state", "to_state", "n_transitions")
+  pair_counts <- pair_counts[pair_counts$n_transitions > 0L, , drop = FALSE]
+  origin_totals <- tapply(pair_counts$n_transitions, pair_counts$from_state, sum)
+  pair_counts$n_origin_steps <- as.integer(unname(origin_totals[pair_counts$from_state]))
+  pair_counts$transition_prob <- round(pair_counts$n_transitions / pair_counts$n_origin_steps, 4)
+  pair_counts$is_same_state <- pair_counts$from_state == pair_counts$to_state
+  pair_counts$is_contiguous_border <- !pair_counts$is_same_state &
+    (paste(pair_counts$from_state, pair_counts$to_state, sep = "->") %in% contig_set)
+  pair_counts <- pair_counts[order(pair_counts$from_state, -pair_counts$n_transitions, pair_counts$to_state), , drop = FALSE]
+
+  list(
+    clinicians = tibble::as_tibble(clin_df),
+    regime_summary = tibble::as_tibble(regime_summary),
+    behavioral_markov = tibble::as_tibble(behav_tbl),
+    state_transition_matrix = tibble::as_tibble(pair_counts)
+  )
+}

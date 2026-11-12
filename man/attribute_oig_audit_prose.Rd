@@ -13,7 +13,11 @@ attribute_oig_audit_prose(
   attribute,
   attribute_label = NULL,
   linkage = NULL,
-  nonresponse = NULL
+  nonresponse = NULL,
+  provider_noun = "physician",
+  provider_plural = NULL,
+  verification_mode = c("survey", "administrative_registry"),
+  location_specificity = NULL
 )
 }
 \arguments{
@@ -43,6 +47,27 @@ sentence.}
 \item{nonresponse}{Optional \code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}}'s full
 output (the list with \code{providers} and \code{response_rates}), filtered to
 \code{year} internally. \code{NULL} omits the verification-response sentence.}
+
+\item{provider_noun}{Singular noun used for audited clinicians in the
+narrative (for example \code{"physician"}, \code{"nurse-midwife"}, or \code{"clinician"}).
+Defaults to \code{"physician"}.}
+
+\item{provider_plural}{Optional plural noun corresponding to \code{provider_noun}
+(for example \code{"physicians"} or \code{"nurse-midwives"}). When \code{NULL}, derived
+automatically from \code{provider_noun} (converting a trailing \code{"midwife"} to
+\code{"midwives"} and otherwise appending \code{"s"}).}
+
+\item{verification_mode}{Either \code{"survey"} (the default, reporting
+respondent survey completion, partial response, refusal, and weighted
+response rates) or \code{"administrative_registry"} (reporting deterministic
+administrative registry record matching and explicitly noting that
+file-based registry linkage is not a respondent survey).}
+
+\item{location_specificity}{Optional output list from
+\code{\link[=attribute_location_specificity]{attribute_location_specificity()}} providing clinician-level direct vs
+billing-group location specificity and plain-English summary prose. When
+supplied, appends \code{location_specificity$plain_english_summary} to the
+narrative. Default \code{NULL}.}
 }
 \value{
 A single character string: the paragraph, ready to paste into a
@@ -111,7 +136,8 @@ attribute_oig_audit_prose(
 }
 \seealso{
 \code{\link[=attribute_record_presence]{attribute_record_presence()}}, \code{\link[=attribute_set_agreement_summary]{attribute_set_agreement_summary()}},
-\code{\link[=attribute_enrollment_locations]{attribute_enrollment_locations()}}, \code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}}.
+\code{\link[=attribute_enrollment_locations]{attribute_enrollment_locations()}}, \code{\link[=attribute_location_specificity]{attribute_location_specificity()}},
+\code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}}.
 
 Other no-gold-standard comparison:
 \code{\link[=attribute_agreement]{attribute_agreement()}},
@@ -120,29 +146,42 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
 \code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
 \code{\link[=attribute_analysis_populations]{attribute_analysis_populations()}},
+\code{\link[=attribute_audit_diff]{attribute_audit_diff()}},
+\code{\link[=attribute_billing_group_topology]{attribute_billing_group_topology()}},
 \code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}},
 \code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}},
 \code{\link[=attribute_churn_rate]{attribute_churn_rate()}},
 \code{\link[=attribute_consensus_tier]{attribute_consensus_tier()}},
 \code{\link[=attribute_consensus_tier_flow]{attribute_consensus_tier_flow()}},
 \code{\link[=attribute_coverage]{attribute_coverage()}},
+\code{\link[=attribute_disagreement_trajectories]{attribute_disagreement_trajectories()}},
+\code{\link[=attribute_enrollment_cardinality_audit]{attribute_enrollment_cardinality_audit()}},
 \code{\link[=attribute_enrollment_locations]{attribute_enrollment_locations()}},
+\code{\link[=attribute_enumeration_lifecycle]{attribute_enumeration_lifecycle()}},
 \code{\link[=attribute_field_dictionary]{attribute_field_dictionary()}},
+\code{\link[=attribute_geographic_concordance]{attribute_geographic_concordance()}},
+\code{\link[=attribute_inconsistency_table]{attribute_inconsistency_table()}},
 \code{\link[=attribute_lead_lag_duration]{attribute_lead_lag_duration()}},
 \code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_location_specificity]{attribute_location_specificity()}},
+\code{\link[=attribute_mover_stayer_transition_matrix]{attribute_mover_stayer_transition_matrix()}},
 \code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}},
 \code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}},
 \code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}},
+\code{\link[=attribute_oig_audit_html]{attribute_oig_audit_html()}},
 \code{\link[=attribute_record_presence]{attribute_record_presence()}},
 \code{\link[=attribute_set_agreement]{attribute_set_agreement()}},
 \code{\link[=attribute_set_agreement_summary]{attribute_set_agreement_summary()}},
 \code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}},
+\code{\link[=attribute_source_vintage_audit]{attribute_source_vintage_audit()}},
+\code{\link[=attribute_spatial_distance]{attribute_spatial_distance()}},
 \code{\link[=attribute_spell_age]{attribute_spell_age()}},
 \code{\link[=attribute_verification_codebook]{attribute_verification_codebook()}},
 \code{\link[=attribute_verification_questionnaire]{attribute_verification_questionnaire()}},
 \code{\link[=classify_record_staleness]{classify_record_staleness()}},
 \code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
 \code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
+\code{\link[=normalize_directory_attribute]{normalize_directory_attribute()}},
 \code{\link[=record_age_band]{record_age_band()}},
 \code{\link[=record_age_years]{record_age_years()}},
 \code{\link[=wilson_ci]{wilson_ci()}}

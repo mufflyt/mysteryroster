@@ -1,0 +1,974 @@
+---
+title: "Practice-Location Specificity, Spatial Concordance, and Longitudinal Directory Audits"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 2
+vignette: >
+  %\VignetteIndexEntry{Practice-Location Specificity, Spatial Concordance, and Longitudinal Directory Audits}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5
+)
+library(mysteryroster)
+```
+
+## The scenario that starts every one of these sections
+
+Your team links NPPES to Medicare PECOS through organizational group
+reassignments and reports that 54% of nurse-midwives have no valid practice
+address on file. Three weeks later a different analyst reruns the same
+join and gets 4%. Nobody touched the underlying data. The number moved
+because of a plumbing decision nobody wrote down: whether a clinician's
+address counts as "missing" when it can only be recovered by following her
+employer's billing group through a 20-site reassignment chain.
+
+That is the failure mode behind every section below. Directory audits
+rarely break because two sources disagree -- sources always disagree a
+little. They break because of invisible pipeline choices: a relational
+join that silently multiplies one clinician into thirteen suites across
+two states, a sub-feed that goes missing for exactly one panel year and
+reads as a mass exodus, two competing definitions of "100%" that both
+sound authoritative in print, or a three-way tie vote that abstains when
+coarser evidence could have resolved it outright. Each mistake is cheap to
+make and expensive to defend to a reviewer, an IRB, or the HHS Office of
+Inspector General.
+
+This vignette fixes eight of them, one function at a time, each with real
+numbers from a toy cohort you can trace end to end:
+
+| # | The trap | The fix |
+|---|----------|---------|
+| 1 | `"7030"` and `"07030"` read as a mismatch when they're the same ZIP code | [`normalize_directory_attribute()`](#sec-normalize) -- canonical format guards for 7 directory field types |
+| 2 | A missing sub-feed for one year looks like 35% of clinicians vanished | [`attribute_source_vintage_audit()`](#sec-vintage) -- decomposes composite sources by sub-feed |
+| 3 | A billing-group join turns one clinician into 13 suites in 2 states | [`attribute_enrollment_cardinality_audit()`](#sec-cardinality), [`attribute_location_specificity()`](#sec-specificity), [`attribute_billing_group_topology()`](#sec-topology) |
+| 4 | Overlapping ZIP5/SCF3/mailing match rates sum to more than 100% | [`attribute_geographic_concordance()`](#sec-geo-conc), [`attribute_spatial_distance()`](#sec-spatial) -- mutually exclusive bands, continuous distance |
+| 5 | A 3-way tie at ZIP5 abstains when the state and 3-digit area agree | [`attribute_inconsistency_table()`](#sec-table4), [`attribute_hierarchical_truth_fusion()`](#sec-hier-fusion) -- coarse-to-fine consensus |
+| 6 | "She moved" could mean relocated for good or commutes across a bridge | [`attribute_disagreement_trajectories()`](#sec-trajectories), [`attribute_mover_stayer_transition_matrix()`](#sec-markov) |
+| 7 | A retired license reads identically to a dead NPI unless you check both | [`attribute_enumeration_lifecycle()`](#sec-lifecycle), [`design_verification_sample()`](#sec-sample-design) |
+| 8 | A manuscript number quietly changes between drafts with no paper trail | [`attribute_oig_audit_prose()`](#sec-prose-html), [`attribute_oig_audit_html()`](#sec-prose-html), [`attribute_audit_diff()`](#sec-reconcile) |
+
+## Attribute Normalization and Format-Validity Guards {#sec-normalize}
+
+**The trap:** two directories can report the exact same ZIP code, phone
+number, or credential and still look like a disagreement, because one of
+them dropped a leading zero, formatted a phone number with dashes instead
+of parentheses, or spelled out "Certified Nurse Midwife" while the other
+wrote "CNM." Every downstream comparison in this package inherits that
+noise unless it's cleaned first.
+
+**The fix:** `attribute_record_presence()` already distinguishes whether
+a field is `"populated"` from whether it's well-formed.
+`normalize_directory_attribute()` goes one step further and runs
+canonical normalizers across all seven standard directory data types --
+restoring stripped leading zeros on 3- and 4-digit Northeast and Puerto
+Rico ZIP codes (`"7030"` $\to$ `"07030"`, `"901"` $\to$ `"00901"`),
+validating 10-digit NANP phone numbers, and verifying the ISO/CMS Luhn
+check digit on 10-digit NPIs:
+
+```{r normalize-demo}
+# 5-digit ZIP normalization with leading-zero restoration and placeholder rejection
+normalize_directory_attribute(
+  c("80204-1234", "7030", "901", "00000", "ZIP IS UNKNOWN", NA),
+  normalizer = "zip5"
+)
+
+# 10-digit NANP telephone normalization
+normalize_directory_attribute(
+  c("(303) 555-0199", "1-303-555-0199", "000-000-0000", "9999999999"),
+  normalizer = "phone10"
+)
+
+# Credential token canonicalization and 10-digit NPI Luhn check
+normalize_directory_attribute(
+  c("C.N.M., M.S.N., APRN", "RN, CNM", "---"),
+  normalizer = "credential_token"
+)
+
+normalize_directory_attribute(
+  c("1234567893", "1234567890", "ABC"),
+  normalizer = "npi10"
+)
+```
+
+**Why it matters:** every section after this one compares values across
+sources. If the comparison runs on un-normalized strings, "disagreement"
+partly just means "different formatting conventions" -- and that inflates
+every inconsistency rate downstream, including the headline numbers
+reconciled at the very end of this vignette.
+
+## Auditing Longitudinal Source Coverage for Sub-Feed Discontinuities {#sec-vintage}
+
+**The trap:** longitudinal source families are often stitched together
+from sub-feeds with their own, independent refresh schedules -- historic
+Medicare `PECOS` enrollment extracts alongside `Doctors and Clinicians`
+(`DAC`) Care Compare snapshots, for instance. If one sub-feed is simply
+*absent* for a single panel year, the combined coverage rate craters for
+that year alone, and a careless read says "35% of clinicians left the
+workforce in 2020" when in fact a vendor just skipped a refresh.
+
+**The fix:** `attribute_source_vintage_audit()` decomposes composite
+families by sub-feed and flags year-over-year percentage-point jumps
+(`abs(yoy_pp_change) >= jump_threshold_pct`) together with exactly which
+sub-feed went missing:
+
+```{r vintage-audit}
+cohort_pop <- expand.grid(
+  npi = sprintf("NPI%02d", 1:20),
+  year = 2018:2021,
+  stringsAsFactors = FALSE
+)
+
+# PECOS is present in 2018, 2019, and 2021, but omitted in 2020
+pecos_subfeed <- data.frame(
+  npi = c(sprintf("NPI%02d", 1:11), sprintf("NPI%02d", 1:12), sprintf("NPI%02d", 1:13)),
+  year = c(rep(2018L, 11), rep(2019L, 12), rep(2021L, 13))
+)
+
+# DAC is present in all four years (covering 5 clinicians per year)
+dac_subfeed <- data.frame(
+  npi = rep(sprintf("NPI%02d", 1:5), 4),
+  year = rep(2018:2021, each = 5)
+)
+
+nppes_feed <- cohort_pop
+
+vintage_res <- attribute_source_vintage_audit(
+  population = cohort_pop,
+  sources = list(pecos = pecos_subfeed, dac = dac_subfeed, nppes = nppes_feed),
+  source_families = list(medicare_combined = c("pecos", "dac")),
+  jump_threshold_pct = 15.0
+)
+
+vintage_res$family_decomposition[, c(
+  "family", "year", "n_combined", "pct_combined",
+  "yoy_pp_change", "active_subfeeds", "missing_subfeeds", "vintage_status"
+)]
+
+vintage_res$flagged_discontinuities[, c(
+  "source", "year", "pct_present", "yoy_pp_change",
+  "discontinuity_flag", "missing_subfeeds"
+)]
+```
+
+### Figure 1: a missing sub-feed looks exactly like a mass exodus
+
+```{r fig-vintage-sawtooth, fig.height = 4, fig.alt = "Line chart of the Medicare-combined family's percent coverage of the cohort from 2018 to 2021. Coverage holds near 55 to 65 percent in 2018, 2019, and 2021, then drops sharply to 25 percent in 2020 -- the one year the PECOS sub-feed was not refreshed -- before recovering the following year."}
+fam <- vintage_res$family_decomposition[vintage_res$family_decomposition$family == "medicare_combined", ]
+fam <- fam[order(fam$year), ]
+
+op <- par(mar = c(4, 4, 2, 1))
+plot(fam$year, fam$pct_combined, type = "b", pch = 19, lwd = 2.5, col = "#1F2A33",
+     ylim = c(0, max(fam$pct_combined) * 1.2), xaxt = "n",
+     xlab = "Panel year", ylab = "% of cohort covered by the combined family",
+     main = "The 2020 'exodus' that never happened", cex.main = 1)
+axis(1, at = fam$year)
+dip <- which.min(fam$pct_combined)
+points(fam$year[dip], fam$pct_combined[dip], pch = 19, cex = 1.8, col = "#C8553D")
+text(fam$year[dip], fam$pct_combined[dip],
+     labels = paste0(abs(round(fam$yoy_pp_change[dip], 1)), " pp apparent drop\n(PECOS sub-feed absent)"),
+     pos = 1, cex = 0.8, col = "#C8553D")
+par(op)
+```
+
+**Why it matters:** without this decomposition, 2020 reads as a genuine
+collapse in workforce participation. With it, the drop is correctly
+attributed to one sub-feed's refresh schedule -- a one-sentence footnote
+instead of a false headline finding. This exact scenario resurfaces later
+as a line item in the audit reconciliation log, near the end of this
+vignette.
+
+## Enrollment Cardinality, Location Specificity, and Billing-Group Topology {#sec-cardinality}
+
+**The trap:** in Medicare `PECOS`, most nurse-midwives and allied clinicians
+don't carry a practice address on their own enrollment record at all --
+instead, they reassign benefits to an organization, and that organization
+carries the addresses. Following the reassignment link recovers locations
+for nearly the whole cohort, but it also means a clinician whose hospital
+system operates a Wyoming clinic she has never set foot in now shows up
+*linked* to Cheyenne, Wyoming. A single relational join can turn one
+clinician into thirteen suites spanning two states, and nothing about the
+raw row count tells you that happened.
+
+Here is the toy cohort the rest of this section works from: six
+clinicians, one (NPI 1) with a direct practice address, four who reassign
+through billing groups of increasing size, and one (NPI 6) with no
+address linked at all. `linked_pecos` and `nppes_ref_state` are reused
+below for the join-cardinality audit, the location-specificity tiers, and
+the billing-group topology in turn, so they're only built once:
+
+```{r cardinality-setup}
+individual_enroll <- data.frame(
+  npi = c("1", "2", "3", "4", "5", "6"),
+  year = 2019L,
+  enrollment_id = c("I1", "I2", "I3", "I4", "I5", "I6")
+)
+
+# NPI 1 has a direct location; NPIs 2-5 reassign to billing groups; NPI 6 is unlinked
+group_reassign <- data.frame(
+  npi = c("2", "3", "3", "4", "5"),
+  year = 2019L,
+  enrollment_id = c("G_SOLO", "G_METRO_A", "G_METRO_B", "G_SYSTEM", "G_MULTISTATE")
+)
+
+pecos_locations <- data.frame(
+  year = 2019L,
+  enrollment_id = c(
+    "I1",
+    "G_SOLO",
+    "G_METRO_A", "G_METRO_A",
+    "G_METRO_B",
+    "G_SYSTEM", "G_SYSTEM", "G_SYSTEM", "G_SYSTEM", "G_SYSTEM", "G_SYSTEM",
+    "G_MULTISTATE", "G_MULTISTATE"
+  ),
+  location_id = paste0("L", 1:13),
+  practice_city = c(
+    "DENVER",
+    "DENVER",
+    "BOULDER", "BOULDER",
+    "AURORA",
+    "DENVER", "AURORA", "LAKEWOOD", "LITTLETON", "ARVADA", "THORNTON",
+    "DENVER", "CHEYENNE"
+  ),
+  practice_state = c(
+    "CO", "CO", "CO", "CO", "CO",
+    "CO", "CO", "CO", "CO", "CO", "CO",
+    "CO", "WY"
+  ),
+  practice_zip5 = c(
+    "80204",
+    "80206",
+    "80301", "80301", # two suites in same ZIP
+    "80012",
+    "80204", "80012", "80226", "80120", "80002", "80229",
+    "80204", "82001"
+  )
+)
+
+linked_pecos <- attribute_enrollment_locations(
+  individual_enroll, group_reassign, pecos_locations
+)$links
+
+nppes_ref_state <- data.frame(
+  id = as.character(1:6),
+  year = 2019L,
+  practice_state = "CO"
+)
+```
+
+### Step-by-Step Join-Cardinality Audit
+
+**The fix:** `attribute_enrollment_cardinality_audit()` decomposes the
+raw relational join into progressively deduplicated geographic grains and
+measures the share of group-linked `(id, zip5)` pairs that fall outside
+the clinician's primary reference state:
+
+```{r cardinality-audit}
+card_audit <- attribute_enrollment_cardinality_audit(
+  linked_pecos,
+  raw_suite_rows = 18L,
+  reference_state = nppes_ref_state
+)
+
+card_audit[, c(
+  "step_order", "aggregation_level", "n_rows_or_pairs",
+  "mean_per_clinician", "median_per_clinician", "pct_removed_vs_step1",
+  "pct_out_of_state_pairs"
+)]
+```
+
+NPI 5 is the clinician who triggers the out-of-state flag: her hospital
+system's `G_MULTISTATE` billing group spans Denver, CO *and* Cheyenne, WY,
+so the raw join attaches a Wyoming address to someone whose reference
+state is Colorado.
+
+### Clinician-Level Location Specificity and the 4-Stage Evidence Funnel {#sec-specificity}
+
+**The fix:** `attribute_location_specificity()` classifies every
+clinician into a **6-tier mutually exclusive specificity hierarchy**,
+builds the **4-stage practice-location evidence funnel**, checks external
+corroboration against `NPPES` and `T-MSIS`, and writes the plain-English
+version for a manuscript:
+
+```{r location-specificity}
+corrob_sources <- list(
+  nppes = data.frame(
+    id = as.character(1:6),
+    year = 2019L,
+    practice_zip5 = c("80204", "80206", "80301", "80204", "99999", "80204")
+  ),
+  tmsis = data.frame(
+    id = c("1", "2", "3", "4"),
+    year = 2019L,
+    practice_zip5 = c("80204", "80206", "80301", "80120")
+  )
+)
+
+spec_audit <- attribute_location_specificity(
+  linked_pecos,
+  corroboration_sources = corrob_sources,
+  provider_plural = "nurse-midwives"
+)
+
+spec_audit$funnel[, c("stage_order", "stage_label", "n_clinicians", "pct_of_cohort")]
+spec_audit$tiers[, c("specificity_tier", "n_clinicians", "pct_of_cohort", "n_any_corroborated")]
+cat(strwrap(spec_audit$plain_english_summary, width = 78), sep = "\n")
+```
+
+### Figure 2: how precisely do we actually know where she practices?
+
+```{r fig-specificity-ladder, fig.height = 4, fig.alt = "Horizontal bar chart showing the percent of the six-clinician cohort in each of six location-specificity tiers, ordered from Tier 1 (a direct individual location) down to Tier 6 (unlinked, no location at all). Most clinicians fall into the large-group and multi-state tiers rather than a pinpoint single-site tier."}
+tiers <- spec_audit$tiers[spec_audit$tiers$specificity_tier != "Total", ]
+tiers <- tiers[order(tiers$pct_of_cohort), ]
+short_tier <- sub(":.*", "", tiers$specificity_tier)
+
+op <- par(mar = c(4, 7, 2, 1))
+mid <- barplot(tiers$pct_of_cohort, names.arg = short_tier, horiz = TRUE, las = 1,
+               col = "#1F2A33", border = NA, xlim = c(0, 100),
+               xlab = "% of cohort", main = "The specificity ladder", cex.main = 1)
+text(tiers$pct_of_cohort, mid,
+     labels = paste0(tiers$n_clinicians, " clinician(s), ", tiers$n_any_corroborated, " corroborated"),
+     pos = 4, cex = 0.72, xpd = TRUE)
+par(op)
+```
+
+**Why it matters:** "linked to a location" and "verified to practice
+there" are not the same claim, and reporting only the first one overstates
+how much the directory actually knows. The funnel and tier table make that
+gap explicit instead of letting a single "% with a practice address"
+number paper over it.
+
+### Billing-Group Network Topology and Shannon Location Entropy {#sec-topology}
+
+**The fix:** `attribute_billing_group_topology()` shifts the unit of
+analysis to the **billing organization** (`enrollment_id`) itself,
+computing Shannon location entropy $H(g) = -\sum_z p_z \ln p_z$, the
+effective number of practice ZIPs $N_{\text{eff}}(g) = \exp(H(g))$, and
+inverse-fanout specificity weights $w_{\text{info}}(g) = 1 / N_{\text{eff}}(g)$:
+
+```{r group-topology}
+topo <- attribute_billing_group_topology(linked_pecos)
+topo$groups[, c(
+  "enrollment_id", "n_clinicians", "n_unique_zip5", "n_unique_states",
+  "shannon_entropy_nats", "effective_n_zip5", "location_specificity_weight",
+  "group_archetype"
+)]
+topo$archetype_summary
+topo$clinician_weights[, c(
+  "id", "n_groups", "max_group_specificity_weight",
+  "best_enrollment_id", "best_group_archetype"
+)]
+```
+
+### Figure 3: where the fan-out risk actually concentrates
+
+```{r fig-archetype-concentration, fig.height = 4, fig.alt = "Horizontal bar chart of the percent of all clinician-group links held by each billing-group archetype, from single-site practices to multi-state systems. The large and multi-state archetypes hold a disproportionate share of clinician links relative to their small share of the groups themselves."}
+arch <- topo$archetype_summary
+short_arch <- sub("^[0-9]+\\.\\s*", "", sub("\\s*\\(.*\\)$", "", arch$group_archetype))
+
+op <- par(mar = c(4, 13, 2, 1))
+mid <- barplot(arch$pct_of_clinician_links, names.arg = short_arch, horiz = TRUE, las = 1,
+               col = "#C8553D", border = NA, xlim = c(0, 100),
+               xlab = "% of all clinician-group links", main = "A few large groups carry most of the fan-out risk", cex.main = 1)
+text(arch$pct_of_clinician_links, mid,
+     labels = paste0(arch$n_groups, " group(s)"), pos = 4, cex = 0.75, xpd = TRUE)
+par(op)
+```
+
+**Why it matters:** entropy and effective-N turn "she's linked to a
+25-site group" into a number you can act on. A clinician whose only
+billing group has `effective_n_zip5` near 1 is, for practical purposes,
+pinpointed; one whose group spans a dozen effective ZIPs across state
+lines is not -- and Figure 3 shows that risk isn't spread evenly, it
+concentrates in a small number of large, multi-state groups.
+
+## Mutually Exclusive Geographic Concordance & Continuous Spatial Distance {#sec-geo-conc}
+
+**The trap:** a clinician's board license often records a mailing or
+residential address, not her practice address, so comparing it to a
+practice-address directory produces real disagreements for reasons that
+have nothing to do with data quality. Worse, if an audit reports separate
+match rates for ZIP5, 3-digit SCF, *and* mailing ZIP5 as three independent
+percentages, they overlap -- and the three numbers printed side by side in
+a manuscript can sum to well over 100%, which is the kind of thing a peer
+reviewer catches immediately and never forgets.
+
+### Hierarchical ZIP5 / SCF3 / Mailing-ZIP Concordance
+
+**The fix:** `attribute_geographic_concordance()` enforces a strictly
+mutually exclusive 5-category hierarchy guaranteed to sum to exactly
+`100.0%`, while still reporting the overlapping marginal indicators
+separately for readers who want them:
+
+```{r geo-concordance}
+dir_addresses <- data.frame(
+  npi = as.character(1:5),
+  year = 2026L,
+  practice_zip5 = c("80204", "80204", "80204", "80204", "80204"),
+  mailing_zip5  = c("80204", "80206", "80301", "80204", "80204")
+)
+board_addresses <- data.frame(
+  npi = as.character(1:5),
+  year = 2026L,
+  reference_zip5 = c("80204", "80206", "80301", "80210", "98101")
+)
+
+geo_conc <- attribute_geographic_concordance(dir_addresses, board_addresses)
+geo_conc$mutually_exclusive[, c("concordance_category", "n", "pct", "ci_low", "ci_high")]
+geo_conc$marginal_indicators[, c("indicator", "n", "pct")]
+```
+
+### Figure 4: one hundred percent, no double-counting
+
+```{r fig-concordance-stack, fig.height = 3.4, fig.alt = "Single stacked horizontal bar showing five mutually exclusive geographic concordance categories for a five-clinician cohort, from exact practice ZIP match through unattributed discordance, summing to exactly 100 percent with no overlap between segments."}
+me <- geo_conc$mutually_exclusive[geo_conc$mutually_exclusive$concordance_category != "Total", ]
+short_cat <- sub("^[0-9]+\\.\\s*", "", me$concordance_category)
+cat_cols <- c("#1F2A33", "#2E4756", "#8AA29E", "#F2C14E", "#C8553D")
+
+tab <- matrix(me$pct, ncol = 1, dimnames = list(short_cat, "all clinicians"))
+op <- par(mar = c(3, 1, 2.5, 1))
+barplot(tab, horiz = TRUE, col = cat_cols, border = "white", lwd = 2,
+        xlim = c(0, 100), yaxt = "n", xlab = "% of compared clinicians (sums to 100%)",
+        main = "Five categories, zero overlap, one hundred percent", cex.main = 1,
+        legend.text = short_cat, args.legend = list(x = "bottom", bty = "n", cex = 0.68, ncol = 2,
+                                                      inset = c(0, -0.55), xpd = TRUE))
+par(op)
+```
+
+**Why it matters:** three overlapping marginal percentages invite a reader
+to add them up and conclude the audit double-counts. One mutually
+exclusive bar that visibly sums to 100% forecloses that reading entirely
+-- and the marginal indicators are still there, just clearly labeled as
+overlapping rather than disguised as independent.
+
+### Continuous Haversine Distance and Commute-Shed Bands {#sec-spatial}
+
+**The fix:** collapsing everything to "same ZIP or not" throws away real
+information -- two suites 300 meters apart on the same hospital campus and
+two addresses 1,500 miles apart both read as "discordant." `attribute_spatial_distance()`
+measures continuous geodesic Haversine distance (`distance_km` and
+`distance_miles`) and classifies pairs into 5 mutually exclusive
+commute-shed bands:
+
+```{r spatial-distance}
+dir_coords <- data.frame(
+  npi = as.character(1:5),
+  year = 2026L,
+  practice_zip5 = c("80204", "80204", "80204", "80204", "80204"),
+  lat = rep(39.7392, 5),
+  lon = rep(-105.0186, 5)
+)
+ref_coords <- data.frame(
+  npi = as.character(1:5),
+  year = 2026L,
+  reference_zip5 = c("80204", "80203", "80012", "80525", "98101"),
+  lat = c(39.7392, 39.7310, 39.7000, 40.5500, 47.6062),
+  lon = c(-105.0186, -104.9800, -104.8300, -105.0700, -122.3321)
+)
+
+sp_dist <- attribute_spatial_distance(
+  dir_coords, ref_coords,
+  dir_lat_col = "lat", dir_lon_col = "lon",
+  ref_lat_col = "lat", ref_lon_col = "lon"
+)
+sp_dist$band_summary[, c("spatial_band", "n", "pct")]
+sp_dist$distance_distribution
+```
+
+### Figure 5: from "mismatch" to "how far, exactly"
+
+```{r fig-spatial-bands, fig.height = 4, fig.alt = "Horizontal bar chart of the percent of compared clinicians in each of five spatial concordance bands, from exact co-location under one kilometer to long-distance discordance over one hundred kilometers, for a five-clinician toy cohort."}
+bands <- sp_dist$band_summary[sp_dist$band_summary$spatial_band != "Total", ]
+short_band <- sub("^[0-9]+\\.\\s*", "", bands$spatial_band)
+
+op <- par(mar = c(4, 14, 2, 1))
+mid <- barplot(bands$pct, names.arg = short_band, horiz = TRUE, las = 1,
+               col = "#8AA29E", border = NA, xlim = c(0, 100),
+               xlab = "% of compared clinicians", main = "A mismatch 300 meters away is not the same story as one 1,500 miles away", cex.main = 0.95)
+text(bands$pct, mid, labels = paste0(bands$n, " clinician(s)"), pos = 4, cex = 0.75, xpd = TRUE)
+par(op)
+```
+
+**Why it matters:** a clinic 1.2 km from her licensed address and a clinic
+across the country both count as "ZIP mismatch" under a flat rule. Figure
+5 shows that one of these cases is a rounding error in practice-location
+precision and the other is a genuine discordance worth investigating --
+and a flat match/no-match rate cannot tell the two apart.
+
+## Multi-Attribute Inconsistency (OIG Table 4) & Hierarchical Truth Fusion {#sec-table4}
+
+### Multi-Attribute OIG Table 4 with Composite Inconsistency Rows
+
+**The fix:** `attribute_inconsistency_table()` evaluates set agreement
+across multiple attributes at once and computes the composite
+`"any_variable_inconsistent_union"` and `"any_variable_inconsistent_complete_case"`
+rows that an OIG-style Table 4 requires:
+
+```{r inconsistency-table}
+src_a <- data.frame(
+  npi = as.character(1:4), year = 2024L,
+  practice_zip5 = c("80204", "80204", "80204", "80204"),
+  state = c("CO", "CO", "CO", "CO"),
+  credential = c("CNM", "CNM", "CNM", "CNM")
+)
+src_b <- data.frame(
+  npi = as.character(1:4), year = 2024L,
+  practice_zip5 = c("80204", "80301", "80204", "98101"),
+  state = c("CO", "CO", "NM", "WA"),
+  credential = c("CNM", "CNM", "CNM", "APRN")
+)
+
+t4_out <- attribute_inconsistency_table(
+  src_a, src_b,
+  attributes = c("practice_zip5", "state", "credential"),
+  attribute_labels = c(
+    practice_zip5 = "Practice 5-Digit ZIP",
+    state = "Practice State",
+    credential = "Professional Credential"
+  ),
+  source_a_label = "nppes",
+  source_b_label = "pecos"
+)
+
+t4_out$table4_summary[, c(
+  "attribute_label", "n_compared",
+  "n_disjoint_inconsistent", "pct_disjoint_inconsistent",
+  "n_set_diff_inconsistent", "pct_set_diff_inconsistent"
+)]
+```
+
+### Coarse-to-Fine Hierarchical Geographic Truth Fusion {#sec-hier-fusion}
+
+**The trap:** three sources report `80204`, `80206`, and `98101` for the
+same entity's 5-digit ZIP. A flat vote sees a `1-1-1` tie and abstains --
+even though two of those three sources agree on `CO` at the state level,
+and that agreement is thrown away along with the tie.
+
+**The fix:** `attribute_hierarchical_truth_fusion()` resolves consensus
+from coarsest to finest grain (`state -> scf3 -> zip5`) while enforcing
+parent-child tree consistency, so it answers with the finest grain the
+evidence actually supports instead of abstaining outright:
+
+```{r hierarchical-fusion}
+hf_s1 <- data.frame(
+  npi = c("1", "2", "3", "4"), year = 2026L,
+  state = c("CO", "CO", "CO", "CO"),
+  zip5 = c("80204", "80204", "80204", "80204")
+)
+hf_s2 <- data.frame(
+  npi = c("1", "2", "3", "4"), year = 2026L,
+  state = c("CO", "CO", "CO", "NY"),
+  zip5 = c("80204", "80206", "80301", "10001")
+)
+hf_s3 <- data.frame(
+  npi = c("1", "2", "3", "4"), year = 2026L,
+  state = c("CO", "WA", "WY", "CA"),
+  zip5 = c("80204", "98101", "82001", "90210")
+)
+
+hf_res <- attribute_hierarchical_truth_fusion(
+  list(nppes = hf_s1, pecos = hf_s2, tmsis = hf_s3)
+)
+hf_res$entities[, c(
+  "id", "fused_state", "fused_scf3", "fused_zip5",
+  "finest_resolved_grain", "finest_resolved_value"
+)]
+hf_res$resolution_summary
+```
+
+**Why it matters:** entity 2 is exactly the `80204`/`80206`/`98101` tie
+case above. A flat vote abstains on it entirely. Hierarchical fusion
+notices that `CO` is unanimous at the state level and reports that much --
+turning a total non-answer into a partial, defensible one.
+
+## Longitudinal Disagreement Trajectories & Mover/Stayer Markov Regimes {#sec-trajectories}
+
+### Six-Way Mutually Exclusive Disagreement Trajectory Decomposition
+
+**The fix:** `attribute_disagreement_trajectories()` partitions every
+base-year disagreement into 6 mutually exclusive longitudinal outcomes --
+including bidirectional cross-adoption, convergence on a brand-new third
+value, uncensored persistent discordance, and right-censored loss to
+follow-up:
+
+```{r disagreement-trajectories}
+panel_a <- data.frame(
+  npi = c("1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6"),
+  year = c(2019L, 2026L, 2019L, 2026L, 2019L, 2026L, 2019L, 2026L, 2019L, 2026L, 2019L),
+  zip5 = c("80204", "80204", "80204", "80301", "80204", "80301",
+           "80204", "98101", "80204", "80204", "80204")
+)
+panel_b <- data.frame(
+  npi = c("1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6"),
+  year = c(2019L, 2026L, 2019L, 2026L, 2019L, 2026L, 2019L, 2026L, 2019L, 2026L, 2019L),
+  zip5 = c("80301", "80204", "80301", "80301", "80301", "80204",
+           "80301", "98101", "80301", "80301", "80301")
+)
+
+traj_out <- attribute_disagreement_trajectories(
+  panel_a, panel_b,
+  attribute = "zip5",
+  base_year = 2019L,
+  max_panel_year = 2026L,
+  source_a_label = "PECOS",
+  source_b_label = "NPPES"
+)
+
+traj_out$summary[, c("trajectory_code", "n", "pct", "median_years_to_resolution")]
+cat(strwrap(traj_out$prose, width = 78), sep = "\n")
+```
+
+**Why it matters:** "the two sources disagreed in 2019" is a snapshot.
+Whether that disagreement resolved by PECOS adopting NPPES's value, the
+reverse, both converging on a third address, or simply persisting for
+seven years unresolved are completely different stories about which
+source is trustworthy going forward -- and a cross-sectional comparison
+alone cannot distinguish any of them.
+
+### Mover/Stayer Mobility Typology and Contiguous-Border Markov Transitions {#sec-markov}
+
+**The trap:** a clinician whose state flips between NY and NJ every year
+is not "moving" in any meaningful sense -- she's commuting across the
+Hudson. A clinician who goes CO $\to$ WY $\to$ UT $\to$ AZ over four years
+is doing something very different again. Lumping both into a single
+"state changed" flag erases exactly the distinction an audit needs.
+
+**The fix:** `attribute_mover_stayer_transition_matrix()` classifies
+multi-year clinician trajectories into 5 mutually exclusive mobility
+regimes and flags whether transitions cross contiguous US state borders:
+
+```{r mover-stayer-markov}
+state_panel <- data.frame(
+  npi = c(rep("1", 4), rep("2", 4), rep("3", 4), rep("4", 4), rep("5", 4)),
+  year = rep(2021:2024, 5),
+  state = c(
+    "CO", "CO", "CO", "CO", # 1. Strict Single-State Stayer
+    "KS", "KS", "KS", "KS", # 2. Concurrent Multi-State Stayer (KS + MO in T-MSIS)
+    "CO", "CO", "WY", "WY", # 3. One-Time Permanent Mover (CO -> WY)
+    "NY", "NJ", "NY", "NJ", # 4. Alternating / Return Border Commuter (NY <-> NJ)
+    "CO", "WY", "UT", "AZ"  # 5. Multi-State Serial Mover / Traveler
+  )
+)
+tmsis_concurrent <- data.frame(
+  npi = c("2", "2"),
+  year = c(2022L, 2022L),
+  state = c("KS", "MO")
+)
+
+markov_out <- attribute_mover_stayer_transition_matrix(
+  state_panel,
+  concurrent_source = tmsis_concurrent
+)
+markov_out$regime_summary[, c("mobility_regime", "n", "pct", "pct_with_contiguous_border_move")]
+markov_out$behavioral_markov
+```
+
+### Figure 6: five very different reasons a "move" shows up in the data
+
+```{r fig-mobility-regimes, fig.height = 4, fig.alt = "Horizontal bar chart of the percent of a five-clinician panel in each of five mobility regimes, from a strict single-state stayer through a multi-state serial mover, each bar annotated with the percent of that regime's transitions that crossed a contiguous US state border."}
+reg <- markov_out$regime_summary[markov_out$regime_summary$mobility_regime != "Total", ]
+short_reg <- sub("^[0-9]+\\.\\s*", "", sub("\\s*\\(.*\\)$", "", reg$mobility_regime))
+
+op <- par(mar = c(4, 15, 2, 1))
+mid <- barplot(reg$pct, names.arg = short_reg, horiz = TRUE, las = 1,
+               col = "#1F2A33", border = NA, xlim = c(0, 100),
+               xlab = "% of 5-clinician panel", main = "Commuting across a bridge is not the same as relocating", cex.main = 0.95)
+border_pct <- ifelse(is.na(reg$pct_with_contiguous_border_move), "--", paste0(reg$pct_with_contiguous_border_move, "%"))
+text(reg$pct, mid, labels = paste0(border_pct, " contiguous-border"), pos = 4, cex = 0.72, xpd = TRUE, col = "#C8553D")
+par(op)
+```
+
+**Why it matters:** the "Alternating / Return Commuter" regime is the NY/NJ
+clinician, correctly separated from the "One-Time Permanent Mover" and the
+"Multi-State Serial Mover." Treating all three as interchangeable "state
+changed" events would make an audit's turnover rate meaningless -- it
+would mix genuine relocations with a clinician who simply crosses a river
+to get to work.
+
+## Certification Lifecycle vs. NPI Enumeration & Verification Sample Design {#sec-lifecycle}
+
+### Separating Certification Lapse from NPI Deactivation and Post-Mortem Persistence
+
+**The trap:** an active NPI in `NPPES` is an *enumeration* identifier, not
+a professional certification. A clinician's board license can lapse,
+retire, or even be revoked while her NPI quietly stays active in NPPES --
+or the reverse: her certification stays current while an administrative
+deactivation sits unprocessed. Worse, a deceased clinician can keep
+showing up in downstream billing and enrollment panels for years after
+death if nobody cross-checks the certifying board's record against
+enumeration status.
+
+**The fix:** `attribute_enumeration_lifecycle()` separates
+certification/licensure status (`active`, `lapsed_or_retired`, `deceased`,
+`revoked_or_suspended`) from NPI enumeration status (`active_nppes` vs.
+`confirmed_deactivated`), audits deceased clinicians by linkage tier, and
+checks downstream panels for post-event "ghost" activity:
+
+```{r enumeration-lifecycle}
+cert_roster <- data.frame(
+  npi = c("1", "2", "3", "4", "5"),
+  cert_status = c("ACTIVE", "EXPIRED", "RETIRED", "DECEASED", "DECEASED"),
+  match_tier = c("Tier 1", "Tier 1", "Tier 1", "Tier 1", "Tier 2"),
+  event_year = c(NA, 2020L, 2021L, 2018L, 2019L)
+)
+active_nppes <- data.frame(npi = c("1", "2", "3", "5"))
+deact_nppes <- data.frame(npi = "4", deactivation_date = "2018-09-01")
+downstream_panels <- list(
+  pecos = data.frame(npi = c("1", "2"), year = c(2024L, 2024L)),
+  tmsis = data.frame(npi = c("1", "3", "5"), year = c(2024L, 2020L, 2022L))
+)
+
+life_out <- attribute_enumeration_lifecycle(
+  cert_roster,
+  active_enumeration = active_nppes,
+  deactivated_enumeration = deact_nppes,
+  activity_panels = downstream_panels,
+  event_year_col = "event_year"
+)
+
+life_out$matrix_summary[, c(
+  "lifecycle_status", "npi_enumeration_status", "n", "pct", "n_post_event_downstream"
+)]
+life_out$deceased_audit
+```
+
+NPI 5 died in 2019 but is a `Tier 2` (weaker) linkage match, and still
+appears in the T-MSIS panel in 2022 -- three years of post-mortem billing
+activity that only surfaces because this function cross-checks the death
+date against downstream panels instead of trusting either source alone.
+
+### Designing a Stratified Independent Verification Sample {#sec-sample-design}
+
+**The trap:** administrative concordance is not the same claim as
+clinically verified accuracy. Moving from one to the other means calling
+people -- and calling everyone at the same rate wastes money on clinicians
+who are already well-corroborated while under-sampling exactly the
+discordant, unlinked cases an audit most needs to resolve.
+
+**The fix:** `design_verification_sample()` computes finite-population-
+corrected Neyman, cost-optimal, proportional, or equal allocations across
+specificity tiers, inflates fielded sample sizes for expected nonresponse,
+and hands the result directly to `stratified_listing_sample()`:
+
+```{r verification-sample-design}
+sampling_frame <- data.frame(
+  npi = sprintf("NPI%04d", 1:1000),
+  stratum = c(
+    rep("tier1_pinpoint_concordant", 600),
+    rep("tier2_multisite_group", 300),
+    rep("tier3_discordant_unlinked", 100)
+  )
+)
+
+sample_plan <- design_verification_sample(
+  sampling_frame,
+  allocation_method = "cost_optimal",
+  target_moe = 0.04,
+  prior_p = c(
+    tier1_pinpoint_concordant = 0.90,
+    tier2_multisite_group = 0.60,
+    tier3_discordant_unlinked = 0.25
+  ),
+  unit_cost = c(
+    tier1_pinpoint_concordant = 1.0,
+    tier2_multisite_group = 2.0,
+    tier3_discordant_unlinked = 3.5
+  ),
+  response_rate = 0.85
+)
+
+sample_plan$strata[, c(
+  "stratum", "pop_N", "prior_p", "unit_cost",
+  "n_complete", "n_fielded", "design_weight", "stratum_moe"
+)]
+sample_plan$design_summary[, c(
+  "allocation_method", "n_complete_total", "n_fielded_total",
+  "expected_overall_p", "expected_moe", "design_effect_deff", "expected_manski_width"
+)]
+
+drawn_sample <- stratified_listing_sample(
+  sampling_frame,
+  allocation = sample_plan$allocation_vector,
+  seed = 20261111L
+)
+nrow(drawn_sample)
+```
+
+### Figure 7: paying for precision where it's actually uncertain
+
+```{r fig-sample-allocation, fig.height = 4, fig.alt = "Grouped horizontal bar chart comparing the number of completed interviews needed versus the number of calls that must be fielded after inflating for nonresponse, for each of three verification strata: pinpoint-concordant, multi-site-group, and discordant-unlinked. The discordant-unlinked stratum gets a disproportionately large allocation relative to its small population share."}
+strata <- sample_plan$strata
+m <- rbind(strata$n_complete, strata$n_fielded)
+colnames(m) <- sub("^tier[0-9]_", "", strata$stratum)
+
+op <- par(mar = c(4, 4, 2, 1))
+mid <- barplot(m, beside = TRUE, col = c("#8AA29E", "#C8553D"), border = NA,
+               ylim = c(0, max(m) * 1.3), las = 1,
+               xlab = "Verification stratum", ylab = "Interviews",
+               main = "Calling the discordant cases harder, not everyone equally", cex.main = 0.95,
+               legend.text = c("needed to complete", "must field (nonresponse-inflated)"),
+               args.legend = list(x = "top", bty = "n", cex = 0.8))
+text(mid[2, ], m[2, ], labels = m[2, ], pos = 3, cex = 0.75)
+par(op)
+```
+
+**Why it matters:** the discordant-unlinked stratum is only 10% of the
+population but, under cost-optimal allocation with its lower prior
+accuracy and higher unit cost, draws a share of the verification budget
+far out of proportion to its size -- exactly where the audit's final
+accuracy number is least certain and most worth the extra calls.
+
+## Integrated OIG Prose/HTML Reporting & Version Reconciliation {#sec-prose-html}
+
+### Generating OIG Prose and HTML with Clinician-Level Location Specificity
+
+**The fix:** `attribute_oig_audit_prose()` and `attribute_oig_audit_html()`
+accept `location_specificity` straight from `attribute_location_specificity()`
+and embed the plain-English clinician-level linkage summary plus Appendix
+A2 (the 4-stage evidence funnel and 6-tier specificity table) automatically
+-- so the manuscript prose and the underlying audit tables can never drift
+apart from each other:
+
+```{r oig-prose-html}
+rp_2019 <- data.frame(
+  id = rep(as.character(1:6), 2),
+  year = 2019L,
+  source = rep(c("nppes", "pecos"), each = 6),
+  attribute = "practice_zip5",
+  record_present = c(rep(TRUE, 6), rep(TRUE, 5), FALSE),
+  field_status = c(rep("populated", 6), rep("populated", 5), "absent_from_declared_extract")
+)
+
+set_ag_2019 <- attribute_set_agreement(
+  list(
+    nppes = data.frame(npi = as.character(1:5), year = 2019L, practice_zip5 = c("80204", "80206", "80301", "80204", "99999")),
+    pecos = data.frame(npi = as.character(1:5), year = 2019L, practice_zip5 = c("80204", "80206", "80301", "80204", "80204"))
+  ),
+  attribute = "practice_zip5"
+)
+set_sum_2019 <- attribute_set_agreement_summary(set_ag_2019)
+
+oig_paragraph <- attribute_oig_audit_prose(
+  record_presence = rp_2019,
+  set_agreement_summary = set_sum_2019,
+  year = 2019L,
+  source_a = "nppes",
+  source_b = "pecos",
+  attribute = "practice_zip5",
+  attribute_label = "practice ZIP codes",
+  linkage = linked_pecos,
+  provider_noun = "nurse-midwife",
+  location_specificity = spec_audit
+)
+cat(strwrap(oig_paragraph, width = 78), sep = "\n")
+
+oig_html <- attribute_oig_audit_html(
+  record_presence = rp_2019,
+  set_agreement_summary = set_sum_2019,
+  year = 2019L,
+  source_a = "nppes",
+  source_b = "pecos",
+  attribute = "practice_zip5",
+  attribute_label = "practice ZIP codes",
+  linkage = linked_pecos,
+  provider_noun = "nurse-midwife",
+  location_specificity = spec_audit
+)
+grepl("Appendix A2: Clinician-Level Location Specificity", oig_html, fixed = TRUE)
+```
+
+### Automated Accounting-Identity Validation & Audit Reconciliation Log {#sec-reconcile}
+
+**The trap:** manuscript numbers change between drafts for good reasons
+all the time -- a definition gets fixed, a data vintage gets corrected --
+but if that change isn't logged anywhere, a reviewer (or your own future
+self) has no way to tell a legitimate correction from an unexplained drift
+in the numbers.
+
+**The fix:** `attribute_audit_diff()` verifies that every mutually
+exclusive table in this vignette (`geo_conc$mutually_exclusive`,
+`spec_audit$tiers`, `traj_out$summary`, `markov_out$regime_summary`) still
+sums to `100.0%`, and generates a structured, reasoned log comparing
+baseline and revised manuscript metrics side by side:
+
+```{r audit-reconcile}
+baseline_draft <- c(
+  pecos_clinician_linkage_pct = 95.69,
+  board_concordance_sum_pct = 103.58,
+  medicare_2018_coverage_pct = 22.71,
+  trajectory_accounted_pct = 100.00
+)
+
+revised_draft <- c(
+  pecos_clinician_linkage_pct = 95.69,
+  board_concordance_sum_pct = 100.00,
+  medicare_2018_coverage_pct = 46.84,
+  trajectory_accounted_pct = 100.00
+)
+
+reconciliation_reasons <- c(
+  board_concordance_sum_pct = "Replaced overlapping marginal ZIP3/mailing counts with 5-way mutually exclusive hierarchy.",
+  medicare_2018_coverage_pct = "Merged 2018 DAC historical release with 2018 PECOS snapshot to match 2019/2021 composite definition."
+)
+
+reconcile_out <- attribute_audit_diff(
+  baseline = baseline_draft,
+  revised = revised_draft,
+  partitions = list(
+    geographic_concordance = geo_conc$mutually_exclusive,
+    location_specificity = spec_audit$tiers,
+    disagreement_trajectories = traj_out$summary,
+    mobility_regimes = markov_out$regime_summary
+  ),
+  reasons = reconciliation_reasons
+)
+
+reconcile_out$partition_checks
+reconcile_out$diff_table[, c("metric_id", "old_value", "new_value", "raw_delta", "status")]
+cat(reconcile_out$markdown_table, sep = "\n")
+```
+
+Notice `board_concordance_sum_pct`: the baseline draft's `103.58%` is
+exactly the kind of overlapping-marginal arithmetic error Figure 4, above,
+exists to prevent, and the revised draft's clean `100.00%` is what
+replacing it with the mutually exclusive hierarchy actually buys.
+`medicare_2018_coverage_pct` is the missing-sub-feed story from earlier in
+this vignette, seen from a different angle -- the jump from `22.71%` to
+`46.84%` is not a data problem, it's a definition fix, and the
+reconciliation log says so in plain words instead of leaving a reviewer to
+wonder.
+
+**Why it matters:** every number in this vignette ultimately has to survive
+contact with a skeptical reader. The reconciliation log is what lets you
+say, with a straight face, exactly why a number changed between two
+drafts of the same manuscript -- and prove, mechanically, that the tables
+behind it still add up.
+
+## What this vignette does and doesn't establish
+
+None of the functions above establish ground truth on their own. A
+clinician's directory listing can pass every check in this vignette --
+correctly formatted, pinned to one ZIP by every corroborating source,
+with a clean reconciliation log -- and still be wrong, if the underlying
+practice address is simply stale in every source at once. The
+hierarchical truth fusion above only resolves ties among the sources it's
+actually given; for genuine N-way consensus questions -- how much of a
+*larger* group agrees, whether that agreement holds up over time, which
+source the group tends to converge toward -- see
+`vignette("consensus-and-corroboration")`. The geographic and spatial
+concordance checks here assume the basic pairwise agreement and freshness
+primitives from `vignette("attribute-agreement")` already ran cleanly;
+this vignette picks up at the point where a flat match/no-match rate
+stops being enough. And the mover/stayer and disagreement-trajectory
+machinery above is a longitudinal complement to, not a replacement for,
+the lead-lag and catch-up-curve approaches in
+`vignette("lead-lag-staleness")` -- use that vignette to ask which source
+is ahead; use this one to ask whether a change in state represents a
+permanent move or a daily commute.
