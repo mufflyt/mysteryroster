@@ -84,6 +84,15 @@ guaranteeing \strong{parent-child tree consistency} (a resolved \code{zip5} can 
 contradict the resolved \code{scf3} or \code{state}). Every \verb{(id, year)} entity is
 resolved to the \strong{finest geographic grain supported by cross-source
 consensus}.
+
+\strong{Not a verified fact.} Like \code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}}, a resolved
+\code{finest_resolved_value} is a claim about what the supplied sources agree
+on, not independently verified ground truth. Agreement is driven by
+however many sources were passed in \code{sources}: three administrative
+registries that all derive from the same upstream feed can resolve all
+the way to \code{zip5} while still sharing one error none of them would catch.
+Resolution depth measures how far cross-source consensus reaches, not
+how accurate the resolved value is.
 }
 \examples{
 s1 <- data.frame(npi = c("1", "2", "3"), year = 2026,

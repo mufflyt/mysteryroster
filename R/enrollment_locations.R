@@ -800,7 +800,7 @@ attribute_location_specificity <- function(links,
     summary_sent <- paste(
       summary_sent,
       sprintf(
-        "External corroboration confirmed a pinpoint single-site ZIP code for %s %s (%.1f%% of cohort; %.1f%% of pinpoint sites) and corroborated a practice ZIP code across all reference sources for %s (%.1f%%).",
+        "External sources corroborated a pinpoint single-site ZIP code for %s %s (%.1f%% of cohort; %.1f%% of pinpoint sites), and corroborated a practice ZIP code across all reference sources for %s (%.1f%%); cross-source agreement among administrative registries is not independent clinical verification.",
         format(n_pin_corr, big.mark = ","), provider_plural,
         100 * n_pin_corr / n_total,
         if (n_pinpoint > 0L) 100 * n_pin_corr / n_pinpoint else 0,

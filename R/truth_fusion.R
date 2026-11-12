@@ -1125,6 +1125,15 @@ attribute_truth_fusion_prose <- function(result, compare_to = NULL,
 #' resolved to the **finest geographic grain supported by cross-source
 #' consensus**.
 #'
+#' **Not a verified fact.** Like [attribute_truth_fusion()], a resolved
+#' `finest_resolved_value` is a claim about what the supplied sources agree
+#' on, not independently verified ground truth. Agreement is driven by
+#' however many sources were passed in `sources`: three administrative
+#' registries that all derive from the same upstream feed can resolve all
+#' the way to `zip5` while still sharing one error none of them would catch.
+#' Resolution depth measures how far cross-source consensus reaches, not
+#' how accurate the resolved value is.
+#'
 #' @param sources Named list of source data frames (at least 2), each containing
 #'   `id`, optional `year`, and either the columns named in `hierarchy` or a
 #'   5-digit ZIP column (`zip_col`) from which `"scf3"` is automatically derived

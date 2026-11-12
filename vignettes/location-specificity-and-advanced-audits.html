@@ -839,10 +839,11 @@ manuscript:</p>
 <span id="cb7-65"><a href="#cb7-65" tabindex="-1"></a><span class="co">#&gt; actual practice sites: only 33.3% (2 of 6) mapped to a single pinpoint</span></span>
 <span id="cb7-66"><a href="#cb7-66" tabindex="-1"></a><span class="co">#&gt; practice ZIP code, while 33.3% (2 of 6) were linked through large multi-site</span></span>
 <span id="cb7-67"><a href="#cb7-67" tabindex="-1"></a><span class="co">#&gt; or multi-state billing organizations (mean 2.8, median 2 unique ZIP codes per</span></span>
-<span id="cb7-68"><a href="#cb7-68" tabindex="-1"></a><span class="co">#&gt; group-linked clinician). External corroboration confirmed a pinpoint</span></span>
-<span id="cb7-69"><a href="#cb7-69" tabindex="-1"></a><span class="co">#&gt; single-site ZIP code for 2 nurse-midwives (33.3% of cohort; 100.0% of</span></span>
-<span id="cb7-70"><a href="#cb7-70" tabindex="-1"></a><span class="co">#&gt; pinpoint sites) and corroborated a practice ZIP code across all reference</span></span>
-<span id="cb7-71"><a href="#cb7-71" tabindex="-1"></a><span class="co">#&gt; sources for 4 (66.7%).</span></span></code></pre></div>
+<span id="cb7-68"><a href="#cb7-68" tabindex="-1"></a><span class="co">#&gt; group-linked clinician). External sources corroborated a pinpoint single-site</span></span>
+<span id="cb7-69"><a href="#cb7-69" tabindex="-1"></a><span class="co">#&gt; ZIP code for 2 nurse-midwives (33.3% of cohort; 100.0% of pinpoint sites),</span></span>
+<span id="cb7-70"><a href="#cb7-70" tabindex="-1"></a><span class="co">#&gt; and corroborated a practice ZIP code across all reference sources for 4</span></span>
+<span id="cb7-71"><a href="#cb7-71" tabindex="-1"></a><span class="co">#&gt; (66.7%); cross-source agreement among administrative registries is not</span></span>
+<span id="cb7-72"><a href="#cb7-72" tabindex="-1"></a><span class="co">#&gt; independent clinical verification.</span></span></code></pre></div>
 </div>
 <div id="figure-2-how-precisely-do-we-actually-know-where-she-practices" class="section level3">
 <h3>Figure 2: how precisely do we actually know where she
@@ -1634,25 +1635,27 @@ apart from each other:</p>
 <span id="cb29-44"><a href="#cb29-44" tabindex="-1"></a><span class="co">#&gt; 33.3% (2 of 6) mapped to a single pinpoint practice ZIP code, while 33.3% (2</span></span>
 <span id="cb29-45"><a href="#cb29-45" tabindex="-1"></a><span class="co">#&gt; of 6) were linked through large multi-site or multi-state billing</span></span>
 <span id="cb29-46"><a href="#cb29-46" tabindex="-1"></a><span class="co">#&gt; organizations (mean 2.8, median 2 unique ZIP codes per group-linked</span></span>
-<span id="cb29-47"><a href="#cb29-47" tabindex="-1"></a><span class="co">#&gt; clinician). External corroboration confirmed a pinpoint single-site ZIP code</span></span>
-<span id="cb29-48"><a href="#cb29-48" tabindex="-1"></a><span class="co">#&gt; for 2 nurse-midwives (33.3% of cohort; 100.0% of pinpoint sites) and</span></span>
-<span id="cb29-49"><a href="#cb29-49" tabindex="-1"></a><span class="co">#&gt; corroborated a practice ZIP code across all reference sources for 4 (66.7%).</span></span>
-<span id="cb29-50"><a href="#cb29-50" tabindex="-1"></a><span class="co">#&gt; Cross-source disagreement was not classified as verified inaccuracy.</span></span>
-<span id="cb29-51"><a href="#cb29-51" tabindex="-1"></a></span>
-<span id="cb29-52"><a href="#cb29-52" tabindex="-1"></a>oig_html <span class="ot">&lt;-</span> <span class="fu">attribute_oig_audit_html</span>(</span>
-<span id="cb29-53"><a href="#cb29-53" tabindex="-1"></a>  <span class="at">record_presence =</span> rp_2019,</span>
-<span id="cb29-54"><a href="#cb29-54" tabindex="-1"></a>  <span class="at">set_agreement_summary =</span> set_sum_2019,</span>
-<span id="cb29-55"><a href="#cb29-55" tabindex="-1"></a>  <span class="at">year =</span> <span class="dv">2019</span><span class="dt">L</span>,</span>
-<span id="cb29-56"><a href="#cb29-56" tabindex="-1"></a>  <span class="at">source_a =</span> <span class="st">&quot;nppes&quot;</span>,</span>
-<span id="cb29-57"><a href="#cb29-57" tabindex="-1"></a>  <span class="at">source_b =</span> <span class="st">&quot;pecos&quot;</span>,</span>
-<span id="cb29-58"><a href="#cb29-58" tabindex="-1"></a>  <span class="at">attribute =</span> <span class="st">&quot;practice_zip5&quot;</span>,</span>
-<span id="cb29-59"><a href="#cb29-59" tabindex="-1"></a>  <span class="at">attribute_label =</span> <span class="st">&quot;practice ZIP codes&quot;</span>,</span>
-<span id="cb29-60"><a href="#cb29-60" tabindex="-1"></a>  <span class="at">linkage =</span> linked_pecos,</span>
-<span id="cb29-61"><a href="#cb29-61" tabindex="-1"></a>  <span class="at">provider_noun =</span> <span class="st">&quot;nurse-midwife&quot;</span>,</span>
-<span id="cb29-62"><a href="#cb29-62" tabindex="-1"></a>  <span class="at">location_specificity =</span> spec_audit</span>
-<span id="cb29-63"><a href="#cb29-63" tabindex="-1"></a>)</span>
-<span id="cb29-64"><a href="#cb29-64" tabindex="-1"></a><span class="fu">grepl</span>(<span class="st">&quot;Appendix A2: Clinician-Level Location Specificity&quot;</span>, oig_html, <span class="at">fixed =</span> <span class="cn">TRUE</span>)</span>
-<span id="cb29-65"><a href="#cb29-65" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
+<span id="cb29-47"><a href="#cb29-47" tabindex="-1"></a><span class="co">#&gt; clinician). External sources corroborated a pinpoint single-site ZIP code for</span></span>
+<span id="cb29-48"><a href="#cb29-48" tabindex="-1"></a><span class="co">#&gt; 2 nurse-midwives (33.3% of cohort; 100.0% of pinpoint sites), and</span></span>
+<span id="cb29-49"><a href="#cb29-49" tabindex="-1"></a><span class="co">#&gt; corroborated a practice ZIP code across all reference sources for 4 (66.7%);</span></span>
+<span id="cb29-50"><a href="#cb29-50" tabindex="-1"></a><span class="co">#&gt; cross-source agreement among administrative registries is not independent</span></span>
+<span id="cb29-51"><a href="#cb29-51" tabindex="-1"></a><span class="co">#&gt; clinical verification. Cross-source disagreement was not classified as</span></span>
+<span id="cb29-52"><a href="#cb29-52" tabindex="-1"></a><span class="co">#&gt; verified inaccuracy.</span></span>
+<span id="cb29-53"><a href="#cb29-53" tabindex="-1"></a></span>
+<span id="cb29-54"><a href="#cb29-54" tabindex="-1"></a>oig_html <span class="ot">&lt;-</span> <span class="fu">attribute_oig_audit_html</span>(</span>
+<span id="cb29-55"><a href="#cb29-55" tabindex="-1"></a>  <span class="at">record_presence =</span> rp_2019,</span>
+<span id="cb29-56"><a href="#cb29-56" tabindex="-1"></a>  <span class="at">set_agreement_summary =</span> set_sum_2019,</span>
+<span id="cb29-57"><a href="#cb29-57" tabindex="-1"></a>  <span class="at">year =</span> <span class="dv">2019</span><span class="dt">L</span>,</span>
+<span id="cb29-58"><a href="#cb29-58" tabindex="-1"></a>  <span class="at">source_a =</span> <span class="st">&quot;nppes&quot;</span>,</span>
+<span id="cb29-59"><a href="#cb29-59" tabindex="-1"></a>  <span class="at">source_b =</span> <span class="st">&quot;pecos&quot;</span>,</span>
+<span id="cb29-60"><a href="#cb29-60" tabindex="-1"></a>  <span class="at">attribute =</span> <span class="st">&quot;practice_zip5&quot;</span>,</span>
+<span id="cb29-61"><a href="#cb29-61" tabindex="-1"></a>  <span class="at">attribute_label =</span> <span class="st">&quot;practice ZIP codes&quot;</span>,</span>
+<span id="cb29-62"><a href="#cb29-62" tabindex="-1"></a>  <span class="at">linkage =</span> linked_pecos,</span>
+<span id="cb29-63"><a href="#cb29-63" tabindex="-1"></a>  <span class="at">provider_noun =</span> <span class="st">&quot;nurse-midwife&quot;</span>,</span>
+<span id="cb29-64"><a href="#cb29-64" tabindex="-1"></a>  <span class="at">location_specificity =</span> spec_audit</span>
+<span id="cb29-65"><a href="#cb29-65" tabindex="-1"></a>)</span>
+<span id="cb29-66"><a href="#cb29-66" tabindex="-1"></a><span class="fu">grepl</span>(<span class="st">&quot;Appendix A2: Clinician-Level Location Specificity&quot;</span>, oig_html, <span class="at">fixed =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb29-67"><a href="#cb29-67" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span></code></pre></div>
 </div>
 <div id="sec-reconcile" class="section level3">
 <h3>Automated Accounting-Identity Validation &amp; Audit Reconciliation
