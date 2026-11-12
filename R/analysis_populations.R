@@ -744,7 +744,11 @@ attribute_source_vintage_audit <- function(population,
     }
   }
 
-  annual_coverage <- dplyr::bind_rows(indiv_list, fam_list)
+  # fam_list is named by family name; dplyr::bind_rows() treats a named
+  # list's names as a nested-column key rather than flattening its rows, so
+  # unname() first -- otherwise every family row lands in a spurious
+  # <family_name>-named packed column instead of being row-bound in.
+  annual_coverage <- dplyr::bind_rows(indiv_list, unname(fam_list))
   family_decomposition <- if (length(fam_decomp_list) > 0L) {
     dplyr::bind_rows(fam_decomp_list)
   } else {

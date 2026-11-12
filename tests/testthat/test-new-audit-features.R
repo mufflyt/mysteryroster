@@ -141,6 +141,20 @@ test_that("Feature 5: attribute_source_vintage_audit detects missing sub-feeds a
   expect_equal(med_2020$vintage_status, "partial_subfeed_omission")
   expect_equal(med_2020$missing_subfeeds, "pecos")
   expect_true(nrow(audit$flagged_discontinuities) >= 2L)
+  # Regression test for a real bug: dplyr::bind_rows() treats a *named* list's
+  # names as a nested-column key rather than flattening its rows, so binding
+  # fam_list (named by family) without unname() silently corrupted every
+  # composite-family row in annual_coverage/flagged_discontinuities into NAs
+  # -- invisible to a row-count-only assertion, only caught by inspecting
+  # real multi-year data.
+  expect_false(anyNA(audit$annual_coverage$source))
+  expect_false(anyNA(audit$annual_coverage$source_type))
+  expect_true("medicare" %in% audit$annual_coverage$source)
+  flagged_family <- audit$flagged_discontinuities[
+    audit$flagged_discontinuities$source == "medicare", , drop = FALSE
+  ]
+  expect_true(nrow(flagged_family) >= 1L)
+  expect_false(anyNA(flagged_family$pct_present))
 })
 
 test_that("Feature 6: attribute_inconsistency_table computes per-attribute and composite OIG Table 4 rows", {
