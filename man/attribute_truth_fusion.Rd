@@ -205,6 +205,7 @@ relative-claim functions that never predict a value.
 Other truth fusion:
 \code{\link[=attribute_claims_collapse_lineage]{attribute_claims_collapse_lineage()}},
 \code{\link[=attribute_claims_validate]{attribute_claims_validate()}},
+\code{\link[=attribute_hierarchical_truth_fusion]{attribute_hierarchical_truth_fusion()}},
 \code{\link[=attribute_truth_backends]{attribute_truth_backends()}},
 \code{\link[=attribute_truth_fusion_prose]{attribute_truth_fusion_prose()}},
 \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}},

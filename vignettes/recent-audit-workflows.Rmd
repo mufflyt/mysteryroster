@@ -211,6 +211,37 @@ paragraph <- mysteryroster::attribute_oig_audit_prose(
 base::cat(paragraph, "\n")
 ```
 
+### Render a self-contained OIG HTML audit report
+
+Pass the same audit tables (along with optional weighted validity estimates,
+sensitivity bounds, or longitudinal update-lag duration output) to
+`attribute_oig_audit_html()` to assemble a standalone HTML5 document containing
+an inline SVG study-frame and denominator flow diagram, visual stacked bar
+charts, OIG Tables 1--4 and Appendix A, and the manuscript-ready audit
+paragraph. Supply `file` to write the report directly to disk.
+
+```{r audit-html}
+html_path <- base::tempfile(fileext = ".html")
+html_report <- mysteryroster::attribute_oig_audit_html(
+  presence, agreement_summary, year = 2024L,
+  source_a = "nppes", source_b = "pecos", attribute = "practice_zip5",
+  attribute_label = "practice ZIP codes",
+  linkage = linkage$links, nonresponse = audit,
+  validity_estimate = mysteryroster::validity_estimates(
+    design, definitive_only = TRUE
+  ),
+  validity_bounds = mysteryroster::validity_sensitivity_bounds(
+    design, denominator = "all_sampled"
+  ),
+  file = html_path
+)
+base::c(
+  file_exists = base::file.exists(html_path),
+  n_chars = base::nchar(html_report),
+  has_svg = base::grepl("<svg", html_report, fixed = TRUE)
+)
+```
+
 ## Add federal evidence to the snapshot
 
 These extracts add different kinds of evidence. Keep their row grain,
