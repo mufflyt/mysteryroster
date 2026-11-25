@@ -98,6 +98,43 @@ are. Only these values are worked out here:
 \item the enrollment lead ratio.
 }
 }
+\examples{
+# lead_lag_df needs exactly these four attribute rows and columns --
+# round numbers here stand in for a real attribute_lead_lag_matrix()/
+# attribute_lead_lag_duration() result; see Details for what each means.
+lead_lag_df <- tibble::tibble(
+  attribute = c("state", "city", "zip5", "street"),
+  n_paired_transitions = 100L, n_concordant_at_t = 80L,
+  a_breaks_concordance_first = 12L, b_breaks_concordance_first = 8L,
+  both_move_together_at_t1 = 5L, n_discordant_at_t = 20L,
+  b_adopts_a_at_t1_n = 10L, b_adopts_a_at_t1_pct = 50,
+  a_reverts_to_b_at_t1_n = 6L, a_reverts_to_b_at_t1_pct = 30,
+  persistent_discordant_at_t1_pct = 20, base_year = 2022L,
+  disc_base_n = 20L, b_adopts_a_multi_n = 12L, b_adopts_a_multi_pct = 60,
+  a_reverts_b_multi_n = 8L, a_reverts_b_multi_pct = 40,
+  cross_section_disc_n = 20L, cross_section_in_prior_b_n = 4L,
+  cross_section_in_prior_b_pct = 20
+)
+# freshness_df needs exactly these three spell-age strata.
+freshness_df <- tibble::tibble(
+  comparison = "DAC (2026) vs NPPES (2026)", stratification = "nppes_street_spell_age",
+  stratum = c("0 yrs (updated in snapshot yr)", "1-2 yrs", "11+ yrs (un-updated >=11 yrs)"),
+  n = c(70L, 150L, 100L), state_agree_pct = c(87.6, 91.8, 89.1),
+  city_agree_pct = c(51.9, 62.7, 47.7), zip5_agree_pct = c(43.4, 57.8, 36.3),
+  street_agree_pct = c(34.0, 43.7, 20.4)
+)
+# enrollment_df is [enrollment_move_lead_lag()]'s own output, unchanged.
+panel <- data.frame(npi = c("1", "1"), year = c(2023, 2024), state = c("CO", "NM"))
+intervals <- data.frame(
+  npi = c("1", "1"), state = c("NM", "CO"),
+  interval_start = as.Date(c("2023-05-01", "2020-01-01")),
+  interval_end = as.Date(c("2099-12-31", "2025-03-31"))
+)
+enrollment_df <- enrollment_move_lead_lag(panel, intervals)
+
+prose <- format_no_gold_standard_prose(lead_lag_df, freshness_df, enrollment_df)
+names(prose)
+}
 \seealso{
 \code{vignette("lead-lag-staleness")} for the full output on example
 inputs.
@@ -109,29 +146,42 @@ Other no-gold-standard comparison:
 \code{\link[=attribute_agreement_by_spell_age]{attribute_agreement_by_spell_age()}},
 \code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}},
 \code{\link[=attribute_analysis_populations]{attribute_analysis_populations()}},
+\code{\link[=attribute_audit_diff]{attribute_audit_diff()}},
+\code{\link[=attribute_billing_group_topology]{attribute_billing_group_topology()}},
 \code{\link[=attribute_catch_up_curve]{attribute_catch_up_curve()}},
 \code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}},
 \code{\link[=attribute_churn_rate]{attribute_churn_rate()}},
 \code{\link[=attribute_consensus_tier]{attribute_consensus_tier()}},
 \code{\link[=attribute_consensus_tier_flow]{attribute_consensus_tier_flow()}},
 \code{\link[=attribute_coverage]{attribute_coverage()}},
+\code{\link[=attribute_disagreement_trajectories]{attribute_disagreement_trajectories()}},
+\code{\link[=attribute_enrollment_cardinality_audit]{attribute_enrollment_cardinality_audit()}},
 \code{\link[=attribute_enrollment_locations]{attribute_enrollment_locations()}},
+\code{\link[=attribute_enumeration_lifecycle]{attribute_enumeration_lifecycle()}},
 \code{\link[=attribute_field_dictionary]{attribute_field_dictionary()}},
+\code{\link[=attribute_geographic_concordance]{attribute_geographic_concordance()}},
+\code{\link[=attribute_inconsistency_table]{attribute_inconsistency_table()}},
 \code{\link[=attribute_lead_lag_duration]{attribute_lead_lag_duration()}},
 \code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}},
+\code{\link[=attribute_location_specificity]{attribute_location_specificity()}},
+\code{\link[=attribute_mover_stayer_transition_matrix]{attribute_mover_stayer_transition_matrix()}},
 \code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}},
 \code{\link[=attribute_odd_one_out]{attribute_odd_one_out()}},
 \code{\link[=attribute_odd_one_out_rate]{attribute_odd_one_out_rate()}},
+\code{\link[=attribute_oig_audit_html]{attribute_oig_audit_html()}},
 \code{\link[=attribute_oig_audit_prose]{attribute_oig_audit_prose()}},
 \code{\link[=attribute_record_presence]{attribute_record_presence()}},
 \code{\link[=attribute_set_agreement]{attribute_set_agreement()}},
 \code{\link[=attribute_set_agreement_summary]{attribute_set_agreement_summary()}},
 \code{\link[=attribute_source_corroboration]{attribute_source_corroboration()}},
+\code{\link[=attribute_source_vintage_audit]{attribute_source_vintage_audit()}},
+\code{\link[=attribute_spatial_distance]{attribute_spatial_distance()}},
 \code{\link[=attribute_spell_age]{attribute_spell_age()}},
 \code{\link[=attribute_verification_codebook]{attribute_verification_codebook()}},
 \code{\link[=attribute_verification_questionnaire]{attribute_verification_questionnaire()}},
 \code{\link[=classify_record_staleness]{classify_record_staleness()}},
 \code{\link[=enrollment_move_lead_lag]{enrollment_move_lead_lag()}},
+\code{\link[=normalize_directory_attribute]{normalize_directory_attribute()}},
 \code{\link[=record_age_band]{record_age_band()}},
 \code{\link[=record_age_years]{record_age_years()}},
 \code{\link[=wilson_ci]{wilson_ci()}}

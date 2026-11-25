@@ -1,5 +1,66 @@
 # mysteryroster (development version)
 
+* Fixed a `DESCRIPTION` WARNING and a top-level-files NOTE that `R CMD check`
+  has been raising on every CI run without failing it -- the workflow's
+  `error-on: '"error"'` only fails on ERROR, so neither was ever surfaced.
+  `Depends: R (>= 4.5.2)` named a non-zero patchlevel with no feature in the
+  codebase that actually requires it (confirmed via `git log -S` on the
+  commit that bumped it from `4.1.0`: it just matched whatever R was
+  installed that day); relaxed to `R (>= 4.5.0)` in `DESCRIPTION` and the
+  README badge. The tracked top-level `docs/` directory (project research
+  notes -- ablation findings, the evidence-ledger design/results, the
+  saboteur test matrix, the validation protocol) was missing from
+  `.Rbuildignore`, unlike `doc`/`Meta`; added `^docs$` alongside them.
+  `R CMD check` is clean (0 errors, 0 warnings, 0 notes) after both fixes.
+* Added `vignette("source-comparison-midwifery")` and
+  `vignette("truth-fusion-evidence-ledger-cross-check")` to the README -- two of the
+  package's 12 vignettes that existed with no pointer to them anywhere in the README,
+  found by cross-checking every `vignettes/*.Rmd` file against every `vignette("...")`
+  mention in `README.md` directly rather than trusting either list by itself.
+* Updated `DESCRIPTION`'s `Description:` field, the CRAN-facing summary shown by
+  `library(help = "mysteryroster")` and package search listings -- stale since before this
+  session: it covered only the original listing-validity workflow and single-cross-section/
+  lead-lag comparisons, with zero mention of N-way consensus/corroboration, truth fusion, or
+  the entire OIG-style directory audit sub-workflow (all of which already existed, or had
+  just landed, by the time this was caught).
+* Added `@examples` to the two exported functions that had none: `attribute_verification_status()`
+  and `format_no_gold_standard_prose()`. The first is a full worked chain from
+  `attribute_verification_questionnaire()` through `attribute_nonresponse_audit()` to
+  `attribute_verification_status()`, showing all three listing-status outcomes (confirmed valid,
+  confirmed invalid, and unresolved because a definitive answer came through a verification method
+  the study protocol doesn't accept as independent evidence). The second reuses
+  `enrollment_move_lead_lag()`'s own minimal example for its `enrollment_df` argument rather than
+  inventing a new one, plus small hand-built `lead_lag_df`/`freshness_df` inputs satisfying the
+  exact attribute rows and freshness strata the function requires; both were verified to actually
+  execute (via `tools::Rd2ex()`), not just parse.
+* Updated `?mysteryroster` (the package-level help page) and the top of `README.md`: the
+  OIG-style directory-audit sub-workflow (`attribute_field_dictionary()` through
+  `attribute_oig_audit_prose()`, 10 functions) and `attribute_verification_status()` (the
+  bridge from a verification questionnaire into `validity_estimates()`/
+  `validity_sensitivity_bounds()`) had landed with no mention in either -- a reader typing
+  `?mysteryroster` or skimming the README's function count got no signal either existed.
+  Also fixed two documentation-generation issues found while regenerating: a broken Rd
+  cross-reference in `validity_estimates()`'s docs (`[0, 1]` read as a markdown link target)
+  and a hand-written `attribute_verification_status.Rd` that roxygen2 had never generated
+  (now regenerated from its source's existing roxygen comments, content unchanged).
+* Corrected OIG-style reporting to count records actually present in each
+  source and use available-field completeness denominators. Unavailable
+  fields are described explicitly; inconsistent flags, duplicate keys,
+  impossible counts, and unsupported comparison populations are rejected.
+* Added weighted sensitivity bounds for data frames and survey designs,
+  with explicit attempted-only or all-sampled denominators. Default survey
+  proportion intervals now use the beta method; boundary, empty, and
+  undefined intervals carry a diagnostic rather than false precision.
+  The legacy clipped normal method remains selectable.
+* Added `attribute_verification_status()` to map frozen claim answers to
+  explicit physician/source/field targets. Independent verification methods
+  must be declared. Sampling metadata, exclusions, unresolved reasons, and
+  contributing answers remain available for audit and downstream analysis.
+* Hardened record-presence and analysis-population validation after key
+  normalization, with logical flag and status reconciliation. Updated the
+  listing-validity vignette to distinguish all-sampled estimates from
+  accuracy conditional on definitive determinations.
+
 * Added `attribute_set_agreement_summary()` and `attribute_oig_audit_prose()`. The first is
   the set-based sibling `attribute_set_agreement()` was always missing relative to
   `attribute_agreement()`/`attribute_agreement_summary()`: per-source-pair-and-year

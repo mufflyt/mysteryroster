@@ -11,7 +11,7 @@ This package supports two largely independent workflows, built around two
 different questions. Neither requires the other.
 }
 \details{
-\strong{Is a physician listing valid?} (roughly 16 functions, no \verb{@family} tag
+\strong{Is a physician listing valid?} (roughly 17 functions, no \verb{@family} tag
 -- see \code{vignette("listing-validity-study")}.) The analytic unit is one
 physician-location listing. The functions follow the order of a
 registry-validity protocol: cross-link registries (\code{\link[=registry_overlap]{registry_overlap()}}),
@@ -21,21 +21,31 @@ a stratified sample that keeps its sampling probabilities
 exhaustive statuses (\code{\link[=classify_listing_status]{classify_listing_status()}}), then estimate
 (\code{\link[=listing_validity_design]{listing_validity_design()}}, \code{\link[=validity_estimates]{validity_estimates()}},
 \code{\link[=validity_sensitivity_bounds]{validity_sensitivity_bounds()}}, \code{\link[=validity_model]{validity_model()}}) and report the flow
-(\code{\link[=listing_flow_counts]{listing_flow_counts()}}).
+(\code{\link[=listing_flow_counts]{listing_flow_counts()}}). \code{\link[=attribute_verification_status]{attribute_verification_status()}} is the bridge
+from a frozen per-claim verification questionnaire (see the next workflow)
+into this one -- it maps answered claims to explicit physician/source/field
+targets so a verification survey's results can feed
+\code{\link[=validity_estimates]{validity_estimates()}}/\code{\link[=validity_sensitivity_bounds]{validity_sensitivity_bounds()}} directly, declaring
+its independent verification methods rather than assuming any survey
+response is independent evidence.
 
 \strong{When two or more sources disagree and neither is a gold standard, which
 one is right, or at least which is leading and which is lagging?}
-(roughly 30 functions, tagged \verb{@family no-gold-standard comparison} or
+(roughly 33 functions, tagged \verb{@family no-gold-standard comparison} or
 \verb{@family truth fusion} -- see \code{vignette("attribute-agreement")},
 \code{vignette("lead-lag-staleness")}, \code{vignette("consensus-and-corroboration")},
-and \code{vignette("truth-fusion")}.) The analytic unit is one identifier's
-value for one attribute in one source-year. Four sub-workflows, in the
-order a comparison typically grows into:
+\code{vignette("truth-fusion")}, and \code{vignette("recent-audit-workflows")}.) The
+analytic unit is one identifier's value for one attribute in one
+source-year. Five sub-workflows, in the order a comparison typically grows
+into:
 \describe{
 \item{Single cross-section}{Do two sources agree right now, and how
 stale is each record (\code{\link[=attribute_agreement]{attribute_agreement()}},
 \code{\link[=attribute_agreement_summary]{attribute_agreement_summary()}}, \code{\link[=record_age_years]{record_age_years()}},
-\code{\link[=record_age_band]{record_age_band()}}, \code{\link[=classify_record_staleness]{classify_record_staleness()}})?}
+\code{\link[=record_age_band]{record_age_band()}}, \code{\link[=classify_record_staleness]{classify_record_staleness()}})? When a source can
+legitimately report more than one value per identifier-year, compare
+the full value sets instead (\code{\link[=attribute_set_agreement]{attribute_set_agreement()}},
+\code{\link[=attribute_set_agreement_summary]{attribute_set_agreement_summary()}}).}
 \item{Longitudinal, pairwise}{Using repeated annual panels, which source
 moves first, how long until the other adopts or reverts
 (\code{\link[=attribute_lead_lag_matrix]{attribute_lead_lag_matrix()}}, \code{\link[=attribute_lead_lag_duration]{attribute_lead_lag_duration()}}), or
@@ -59,11 +69,28 @@ same-lineage group to one vote first (\code{\link[=attribute_claims_collapse_lin
 then predict by majority vote or an optional probabilistic backend,
 with explicit abstention (\code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}},
 \code{\link[=attribute_truth_backends]{attribute_truth_backends()}}).}
+\item{OIG-style directory audit}{An HHS-OIG-style audit protocol
+(completeness, consistency, and independently verified accuracy, kept
+as three separate populations, never one conflated denominator):
+declare the field catalog and source lineage
+(\code{\link[=attribute_field_dictionary]{attribute_field_dictionary()}}), separate coverage from completeness
+from the pairwise-overlap accuracy sampling frame
+(\code{\link[=attribute_analysis_populations]{attribute_analysis_populations()}}), distinguish an absent record
+from an unavailable field from an empty value
+(\code{\link[=attribute_record_presence]{attribute_record_presence()}}), link direct and group-reassignment
+enrollment edges to practice locations without asserting clinical
+presence (\code{\link[=attribute_enrollment_locations]{attribute_enrollment_locations()}}), freeze a per-claim
+verification questionnaire and reconcile its answers and nonresponse
+(\code{\link[=attribute_verification_codebook]{attribute_verification_codebook()}},
+\code{\link[=attribute_verification_questionnaire]{attribute_verification_questionnaire()}},
+\code{\link[=attribute_nonresponse_audit]{attribute_nonresponse_audit()}}), and compose the whole audit as
+manuscript prose (\code{\link[=attribute_oig_audit_prose]{attribute_oig_audit_prose()}}).}
 }
 Manuscript-ready prose for any of the above, rather than hand-written
 \code{sprintf()}, comes from \code{\link[=format_no_gold_standard_prose]{format_no_gold_standard_prose()}},
 \code{\link[=format_proportion_comparison_prose]{format_proportion_comparison_prose()}}, \code{\link[=format_ranking_prose]{format_ranking_prose()}},
-\code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}}, and \code{\link[=attribute_truth_fusion_prose]{attribute_truth_fusion_prose()}}.
+\code{\link[=attribute_catch_up_curve_prose]{attribute_catch_up_curve_prose()}}, \code{\link[=attribute_truth_fusion_prose]{attribute_truth_fusion_prose()}}, and
+\code{\link[=attribute_oig_audit_prose]{attribute_oig_audit_prose()}}.
 None of these functions ever assumes either source is correct --
 agreement is concordance, not accuracy, throughout.
 }

@@ -4,7 +4,7 @@
 [![R-CMD-check](https://github.com/mufflyt/mysteryroster/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/mufflyt/mysteryroster/actions/workflows/R-CMD-check.yaml)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![R ≥ 4.5.2](https://img.shields.io/badge/R-%E2%89%A54.5.2-276DC3?logo=r&logoColor=white)](https://cran.r-project.org/)
+[![R ≥ 4.5.0](https://img.shields.io/badge/R-%E2%89%A54.5.0-276DC3?logo=r&logoColor=white)](https://cran.r-project.org/)
 [![ORCID](https://img.shields.io/badge/ORCID-0000--0002--2044--1693-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0002-2044-1693)
 <!-- badges: end -->
 
@@ -28,10 +28,12 @@ own disposition codebook.
 
 **When two or more sources disagree on an attribute and neither is a gold
 standard, which one is leading and which is lagging, and when is it safe to
-fuse them into one predicted value?** This is the other roughly 30 functions
+fuse them into one predicted value?** This is the other roughly 33 functions
 in the package (about two-thirds of it by function count) -- single
 cross-section agreement, longitudinal lead-lag and catch-up-curve approaches,
-N-way consensus and corroboration, and truth fusion with explicit abstention.
+N-way consensus and corroboration, truth fusion with explicit abstention, and
+an HHS-OIG-style directory audit protocol (completeness, consistency, and
+independently verified accuracy, kept as three separate populations).
 It shares no functions with the listing-validity workflow above and does not
 require it. Skip to [Beyond membership: does a shared attribute
 agree?](#beyond-membership-does-a-shared-attribute-agree) if this is why
@@ -65,10 +67,20 @@ remotes::install_github("mufflyt/mysteryroster")
   to converge toward, whether exactly one source is a lone dissenter,
   agreement stratified by any covariate, and Wilson confidence
   intervals on any of the above.
+- `vignette("source-comparison-midwifery")` -- one simulated, calibrated
+  panel run through every comparison dimension this toolkit offers at
+  once (timing, agreement, staleness, volatility, coverage, convergence,
+  independence, weight), to show what each genuinely adds over the others.
 - `vignette("truth-fusion")` -- the one function in this package that
   *does* predict a value rather than only making a relative claim:
   majority-vote inference with explicit abstention on ties or weak
   majorities, and the evidence schema it expects.
+- `vignette("recent-audit-workflows")` -- an HHS-OIG-style directory audit,
+  end to end: field dictionary and source lineage, coverage/completeness/
+  consistency/accuracy as four separate populations, the four-way
+  field-presence split, enrollment-to-location linkage without asserting
+  clinical presence, a frozen per-claim verification questionnaire
+  reconciled against nonresponse, and the resulting prose.
 
 ## How the pieces fit
 
@@ -125,12 +137,18 @@ table(calls$listing_status)    # confirmed_valid / confirmed_invalid / unresolve
 # 5. Design-weighted estimates, bounds, and a survey-weighted model.
 design <- listing_validity_design(calls)
 validity_estimates(design, by = "stratum")
-validity_sensitivity_bounds(calls)
+validity_sensitivity_bounds(design, denominator = "all_sampled")
 validity_model(design, ~ stratum + rural)
 
 # 6. The flow diagram's numbers, closure-checked.
 listing_flow_counts(calls, by = "stratum")
 ```
+
+The default estimate is the share of all sampled listings confirmed valid.
+Use `definitive_only = TRUE` for accuracy among definitive determinations.
+Proportion intervals use the survey design; boundary or undefined intervals
+are reported as `NA` with a `ci_status` rather than a zero-width interval.
+`ci_method = "mean"` retains the previous clipped normal method explicitly.
 
 ## Beyond membership: does a shared attribute agree?
 
@@ -339,7 +357,13 @@ when two sources share an upstream feed, and a real convergence failure
 at this package's own default settings), and
 `vignette("truth-fusion-case-study-midwifery")` for all three methods
 run together, on both real (no-ground-truth) data and a constructed
-example where weighted inference provably beats majority vote. CI
+example where weighted inference provably beats majority vote --
+and `vignette("truth-fusion-evidence-ledger-cross-check")` for the
+follow-up question that case study's own findings raised: is a
+backend's low agreement with majority vote a property of the method,
+or of how thin the underlying evidence ledger is, independently
+re-checked against a second, separately-built analysis of the same
+real panel. CI
 actually installs and exercises both optional backends on every push
 (`R-CMD-check-crowd-kit`, `R-CMD-check-truthdiscovery`, each in its own
 Python environment -- the two packages' dependencies conflict in one),
@@ -374,7 +398,7 @@ available before it is actually implemented.
 | Design weights for a call log sampled elsewhere (N / n from a population table) | `listing_weights()` |
 | Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `obgyn_disposition_map()`, `listing_status_levels()` |
 | Design-weighted validity, overall and by stratum; complete-case estimate; location-valid or workforce-valid outcome | `listing_validity_design()`, `validity_estimates()` |
-| Extreme-case bounds for unresolved listings | `validity_sensitivity_bounds()` |
+| Weighted bounds with explicit attempted or all-sampled denominators | `validity_sensitivity_bounds()` |
 | Survey-weighted logistic regression | `validity_model()` |
 | Study-flow counts | `listing_flow_counts()` |
 | Cascade stages with both denominators (of attempted, of prior stage), weighted or not | `validation_cascade()` |
@@ -405,14 +429,18 @@ available before it is actually implemented.
 
 ## Design rules
 
-- **One listing is the unit.** Nothing here aggregates to the physician; do
-  that before sampling with your own one-listing-per-NPI rule.
+- **Define the sampling unit first.** The listing-validity workflow analyzes
+  sampled listings. `attribute_verification_status()` maps claim answers to
+  explicit physician/source/field targets while retaining sampling metadata.
+  Analyze each source/field target separately to avoid counting repeated
+  targets as independent sampled physicians.
 - **Presence is never inferred.** A reached office, a non-missing new-patient
   answer, or board certification does not make a listing valid; only the
   disposition categories in the map do.
 - **Unresolved is explicit.** It is reported as its own category, and the
   bounds table shows what the estimate would be if every unresolved listing
-  were valid, or invalid.
+  were valid, or invalid. Bounds use attempted listings by default;
+  `denominator = "all_sampled"` includes not-attempted listings as unknown.
 - **Counts must partition.** Every count-producing function asserts that its
   categories sum to the input, and registry totals must close on their zones.
 - **Codebook drift stops the run.** A disposition string outside the map is an

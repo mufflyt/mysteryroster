@@ -96,6 +96,7 @@ generalizes.
 
 Other truth fusion:
 \code{\link[=attribute_claims_validate]{attribute_claims_validate()}},
+\code{\link[=attribute_hierarchical_truth_fusion]{attribute_hierarchical_truth_fusion()}},
 \code{\link[=attribute_truth_backends]{attribute_truth_backends()}},
 \code{\link[=attribute_truth_fusion]{attribute_truth_fusion()}},
 \code{\link[=attribute_truth_fusion_prose]{attribute_truth_fusion_prose()}},

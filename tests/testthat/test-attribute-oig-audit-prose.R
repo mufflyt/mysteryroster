@@ -147,5 +147,180 @@ test_that("attribute_oig_audit_prose runs end to end through the real package pi
   )
   expect_type(paragraph, "character")
   expect_true(grepl("In 2026", paragraph))
-  expect_true(grepl("3 and 3 physician records", paragraph))
+  expect_true(grepl("3 and 2 physician records", paragraph))
+})
+
+test_that("audit prose counts present records in the declared frame", {
+  fixture <- prose_fixture()
+  paragraph <- attribute_oig_audit_prose(
+    fixture$record_presence, fixture$set_summary, 2024,
+    "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(paragraph, "contained 2 and 1 physician records")
+})
+
+test_that("audit prose excludes unavailable fields from completeness", {
+  fixture <- prose_fixture()
+  fixture$record_presence$field_status[2] <- "field_not_in_extract"
+  paragraph <- attribute_oig_audit_prose(
+    fixture$record_presence, fixture$set_summary, 2024,
+    "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(paragraph, "populated in 100.0% and 100.0%", fixed = TRUE)
+  expect_match(paragraph, "unavailable in the extract for 1 present")
+})
+
+test_that("audit prose reports unavailable completeness as not estimable", {
+  fixture <- prose_fixture()
+  fixture$record_presence$field_status[1:2] <- "field_not_in_extract"
+  fixture$set_summary$n_compared <- 0
+  fixture$set_summary$n_any_shared <- 0
+  fixture$set_summary$n_same_set <- 0
+  fixture$set_summary$pct_any_shared <- NA_real_
+  fixture$set_summary$pct_same_set <- NA_real_
+  paragraph <- attribute_oig_audit_prose(
+    fixture$record_presence, fixture$set_summary, 2024,
+    "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(paragraph, "populated in not estimable and 100.0%", fixed = TRUE)
+  expect_match(paragraph, "unavailable in the extract for 2 present")
+})
+
+test_that("audit prose rejects duplicate records and contradictory flags", {
+  fixture <- prose_fixture()
+  report <- function(presence) attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  )
+  expect_error(report(base::rbind(
+    fixture$record_presence, fixture$record_presence[1, ]
+  )), "duplicate")
+  presence <- fixture$record_presence
+  presence$record_present <- base::as.integer(presence$record_present)
+  expect_error(report(presence), "logical")
+  presence <- fixture$record_presence
+  presence$field_status[4] <- "populated"
+  expect_error(report(presence), "inconsistent")
+  presence <- fixture$record_presence
+  presence$completeness_eligible <- TRUE
+  expect_error(report(presence), "inconsistent")
+  presence <- fixture$record_presence
+  presence$field_status[1] <- "unknown_status"
+  expect_error(report(presence), "field_status")
+})
+
+test_that("audit prose rejects impossible agreement counts", {
+  fixture <- prose_fixture()
+  for (invalid in base::list(-1, 0.5, NA_real_, Inf, 2)) {
+    summary <- fixture$set_summary
+    summary$n_same_set <- invalid
+    expect_error(attribute_oig_audit_prose(
+      fixture$record_presence, summary, 2024,
+      "nppes", "pecos", "practice_zip5"
+    ))
+  }
+})
+
+test_that("audit prose checks supplied eligibility and field counts", {
+  fixture <- prose_fixture()
+  presence <- fixture$record_presence
+  presence$field_available <- TRUE
+  presence$completeness_eligible <- presence$record_present
+  presence$n_field_rows <- base::as.integer(presence$record_present)
+  presence$n_populated <- presence$n_field_rows
+  report <- function(records) attribute_oig_audit_prose(
+    records, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  )
+  expect_match(report(presence), "contained 2 and 1 physician records")
+  presence$field_available[1] <- FALSE
+  expect_error(report(presence), "inconsistent")
+  presence$field_available[1] <- NA
+  expect_error(report(presence))
+  presence$field_available[1] <- TRUE
+  presence$n_populated[1] <- 2
+  expect_error(report(presence), "inconsistent")
+  presence$n_populated[1] <- 0
+  expect_error(report(presence), "inconsistent")
+})
+
+test_that("audit prose restricts comparisons to shared populated records", {
+  fixture <- prose_fixture()
+  presence <- fixture$record_presence
+  presence$id[3:4] <- c("3", "4")
+  expect_error(attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  ), "populated eligible")
+  presence <- fixture$record_presence
+  presence$field_status[3] <- "field_value_missing"
+  expect_error(attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  ), "populated eligible")
+})
+
+test_that("audit prose rejects whitespace keys that conceal duplicates", {
+  fixture <- prose_fixture()
+  presence <- base::rbind(
+    fixture$record_presence, fixture$record_presence[1, ]
+  )
+  presence$id[5] <- " 1 "
+  expect_error(attribute_oig_audit_prose(
+    presence, fixture$set_summary, 2024, "nppes", "pecos", "practice_zip5"
+  ), "noncanonical whitespace")
+})
+
+test_that("attribute_oig_audit_html builds self-contained HTML with SVG, tables, prose, and optional file output", {
+  fixture <- prose_fixture()
+  links <- data.frame(
+    id = "1", year = 2024, enrollment_id = "group_a",
+    location_id = c("site_a", "site_b"),
+    linkage_path = "group_reassignment", location_linked = TRUE
+  )
+  nonresponse <- list(
+    providers = data.frame(
+      id = c("1", "2"), year = 2024,
+      response_status = c("complete_response", "refused")
+    ),
+    response_rates = data.frame(
+      year = 2024, w_denominator = 10, w_complete = 4, n_confirmed_ineligible = 0
+    )
+  )
+  val_est <- data.frame(
+    estimate = 0.85, se = 0.04, n = 20L, ci_low = 0.75, ci_high = 0.93
+  )
+  val_bounds <- data.frame(
+    scenario = c("worst_case", "point", "best_case"),
+    pct_valid = c(68.0, 85.0, 92.0),
+    ci_low = c(55.0, 75.0, 82.0),
+    ci_high = c(79.0, 93.0, 97.0),
+    stringsAsFactors = FALSE
+  )
+  ll <- list(
+    base_year = 2019L,
+    disc_base_n = 12L,
+    combined_text = "Among 12 discordant pairs in 2019, PECOS adopted NPPES in a median of 1.0 years."
+  )
+  out_file <- tempfile(fileext = ".html")
+  html <- attribute_oig_audit_html(
+    fixture$record_presence, fixture$set_summary, year = 2024,
+    source_a = "nppes", source_b = "pecos", attribute = "practice_zip5",
+    attribute_label = "practice ZIP codes <5-digit>",
+    linkage = links, nonresponse = nonresponse,
+    provider_noun = "nurse-midwife",
+    verification_mode = "administrative_registry",
+    validity_estimate = val_est, validity_bounds = val_bounds,
+    lead_lag = ll, title = "Midwifery OIG Audit & Report",
+    file = out_file
+  )
+  expect_true(file.exists(out_file))
+  expect_match(html, "^<!DOCTYPE html>")
+  expect_match(html, "<svg class=\"oig-flow-svg\"", fixed = TRUE)
+  expect_match(html, "Midwifery OIG Audit &amp; Report", fixed = TRUE)
+  expect_match(html, "practice ZIP codes &lt;5-digit&gt;", fixed = TRUE)
+  expect_match(html, "nurse-midwife records", fixed = TRUE)
+  expect_match(html, "comparable nurse-midwives", fixed = TRUE)
+  expect_match(html, "file-based registry matching does not constitute a respondent survey", fixed = TRUE)
+  expect_match(html, "OIG Table 3: Record Presence &amp; Field Completeness", fixed = TRUE)
+  expect_match(html, "OIG Table 4: Cross-Source Consistency &amp; Set Agreement", fixed = TRUE)
+  expect_match(html, "Appendix A: Enrollment-to-Location Linkage", fixed = TRUE)
+  expect_match(html, "OIG Tables 1 &amp; 2: Independent Verification &amp; Listing Accuracy", fixed = TRUE)
+  expect_match(html, "Among 12 discordant pairs in 2019", fixed = TRUE)
 })

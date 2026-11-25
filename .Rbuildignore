@@ -4,5 +4,6 @@
 ^README\.md$
 ^doc$
 ^Meta$
+^docs$
 \.DS_Store$
 ^data-raw$
