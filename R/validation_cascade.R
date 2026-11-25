@@ -12,7 +12,9 @@
 #' @param stages Character vector of logical column names, in cascade order.
 #'   `NA` counts as `FALSE`.
 #' @param by Optional grouping column (for example `"stratum"`).
-#' @param weights Optional weight column (for example `"weight"`).
+#' @param weights Optional weight column (for example `"weight"`). When given,
+#'   every weight must be positive and finite; `NA` or non-positive weights
+#'   stop the call rather than silently corrupting every denominator.
 #' @return A tibble with `group`, `stage`, `n`, `count` (weighted if
 #'   `weights` given, otherwise equal to `n`), `pct_of_first` and
 #'   `pct_of_prior` (percent; `NA` where the denominator is zero).
@@ -29,6 +31,7 @@ validation_cascade <- function(df, stages, by = NULL, weights = NULL) {
   for (col in c(stages, by, weights)) {
     if (!col %in% names(df)) stop(sprintf("validation_cascade: no column '%s'", col), call. = FALSE)
   }
+  if (!is.null(weights)) .validity_check_weights(df[[weights]])
   flag <- function(d, s) {
     v <- d[[s]]
     if (!is.logical(v)) stop(sprintf("validation_cascade: '%s' is not logical", s), call. = FALSE)
