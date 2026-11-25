@@ -456,11 +456,15 @@ src <- list(
 src_cols <- c(open_payments = "#C8553D", pecos = "#F2C14E", nppes = "#1F2A33", board = "#8AA29E")
 
 # Each source as one row per move: the NPI, the year the new site first
-# appears, and the new site.
+# appears, the new site, and which arrival at that site it is (1 for the
+# first, 2 for a return), so a return move is not mistaken for the first.
 moves <- function(m) {
   ch <- which(m[, -1] != m[, -ncol(m)], arr.ind = TRUE)
-  data.frame(npi = ch[, 1], year = years[ch[, 2] + 1L],
-             value = m[cbind(ch[, 1], ch[, 2] + 1L)])
+  e <- data.frame(npi = ch[, 1], year = years[ch[, 2] + 1L],
+                  value = m[cbind(ch[, 1], ch[, 2] + 1L)])
+  e <- e[order(e$npi, e$year), ]
+  e$visit <- ave(e$year, e$npi, e$value, FUN = seq_along)
+  e
 }
 ev <- lapply(src, moves)
 sapply(ev, nrow)
@@ -516,10 +520,8 @@ mean difference ranks the sources without naming any of them as truth.
 
 ```{r fig-lead-heatmap, fig.alt = "Four-by-four heatmap of the mean number of years each row source shows a clinician's move before each column source. Open Payments is ahead of every other source and the board source is behind every other source, by up to about three years."}
 lead_years <- function(x, y) {
-  m <- merge(x, y, by = c("npi", "value"), suffixes = c("_x", "_y"))
-  m$gap <- m$year_y - m$year_x
-  m <- m[order(abs(m$gap)), ]
-  m[!duplicated(m[, c("npi", "value", "year_x")]), "gap"]
+  m <- merge(x, y, by = c("npi", "value", "visit"), suffixes = c("_x", "_y"))
+  m$year_y - m$year_x
 }
 nm <- names(src)
 lead <- outer(nm, nm, Vectorize(function(a, b) {
@@ -570,15 +572,12 @@ out of the denominator at *d*, as in a Kaplan-Meier estimate.
 
 ```{r fig-catch-up, fig.alt = "Step-like line chart of the percent of moves each source has not yet shown, by years since the first source showed them. Open Payments drops to near zero within a year, PECOS within three years, the board source within six, while NPPES is still above ten percent after eight years."}
 all_ev <- do.call(rbind, lapply(names(ev), function(s) ev[[s]]))
-first <- aggregate(year ~ npi + value, all_ev, min)
-names(first)[3] <- "start"
+first <- aggregate(year ~ npi + value + visit, all_ev, min)
+names(first)[4] <- "start"
 first <- first[first$start <= 2024, ]
 catch_up <- function(e, days = 0:8) {
-  m <- merge(first, e, by = c("npi", "value"), all.x = TRUE)
+  m <- merge(first, e, by = c("npi", "value", "visit"), all.x = TRUE)
   m$d <- m$year - m$start
-  m <- m[is.na(m$d) | m$d >= 0, ]
-  m <- m[order(m$d), ]
-  m <- m[!duplicated(m[, c("npi", "value", "start")]), ]
   follow_up <- max(years) - m$start
   s <- 1
   vapply(days, function(d) {
