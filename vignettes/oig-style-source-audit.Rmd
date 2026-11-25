@@ -132,7 +132,7 @@ malformed-value check is added on top.
 coverage <- expand.grid(id = ids, source = names(raw), stringsAsFactors = FALSE)
 coverage$year <- 2026
 coverage$record_present <- mapply(function(i, s) i %in% raw[[s]]$npi, coverage$id, coverage$source)
-coverage$record_status <- ifelse(coverage$record_present, "present", "not_in_source")
+coverage$record_status <- ifelse(coverage$record_present, "present", "absent_from_declared_extract")
 
 claims <- do.call(rbind, lapply(names(raw), function(s) {
   d <- raw[[s]]
@@ -355,14 +355,10 @@ tables.
 cat(strwrap(attribute_oig_audit_prose(
   presence, attribute_set_agreement_summary(attribute_set_agreement(set_input("practice_zip5"), "practice_zip5")),
   year = 2026, source_a = "nppes", source_b = "pecos",
-  attribute = "practice_zip5", attribute_label = "practice ZIP codes"
+  attribute = "practice_zip5", attribute_label = "practice ZIP codes",
+  provider_noun = "nurse-midwife"
 )), sep = "\n")
 ```
-
-The paragraph says "physician records" whatever the profession, and its
-first sentence gives the size of the frame (here `r n`) for each source, not
-the number of records present. Report the present counts from `completeness`
-alongside it.
 
 ## What this does not show
 
