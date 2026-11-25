@@ -54,7 +54,11 @@ a factor with levels \code{confirmed_valid}, \code{confirmed_invalid}, \code{unr
 Physician presence is never inferred from a non-missing new-patient answer
 or from a reached office; it comes only from the disposition categories in
 \code{map}. A non-missing disposition absent from every category is a codebook
-drift and stops the call unless \code{unmapped = "unresolved"}.
+drift and stops the call unless \code{unmapped = "unresolved"}. Leading and
+trailing whitespace is never meaningful in a disposition codebook, so both
+the data and the map are trimmed before matching: formatting noise is
+ignored, while any remaining mismatch still fails closed. Empty strings
+count as missing export cells, not as dispositions.
 }
 \examples{
 calls <- data.frame(

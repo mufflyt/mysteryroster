@@ -104,7 +104,11 @@ coerce_logical_flag <- function(x, unrecognised = c("error", "na")) {
 #' Physician presence is never inferred from a non-missing new-patient answer
 #' or from a reached office; it comes only from the disposition categories in
 #' `map`. A non-missing disposition absent from every category is a codebook
-#' drift and stops the call unless `unmapped = "unresolved"`.
+#' drift and stops the call unless `unmapped = "unresolved"`. Leading and
+#' trailing whitespace is never meaningful in a disposition codebook, so both
+#' the data and the map are trimmed before matching: formatting noise is
+#' ignored, while any remaining mismatch still fails closed. Empty strings
+#' count as missing export cells, not as dispositions.
 #'
 #' @param calls Data frame, one row per listing (or per call if you aggregate
 #'   first).
@@ -154,12 +158,23 @@ classify_listing_status <- function(calls, disposition = "disposition", reached 
     stop("classify_listing_status: map must have exactly the categories ",
          paste(need, collapse = ", "), call. = FALSE)
   }
+  # Whitespace is never meaningful in a disposition codebook: REDCap exports
+  # routinely carry trailing spaces from manual edits, and erroring on them
+  # would force every study to re-discover the same trivial cleaning step.
+  # Both the map and the data are trimmed before matching, so drift beyond
+  # whitespace still fails closed while formatting noise does not. The overlap
+  # check runs on the trimmed codes, so two categories that differ only by
+  # whitespace are caught as the overlap they are.
+  map <- lapply(map, trimws)
   all_codes <- unlist(map, use.names = FALSE)
   if (anyDuplicated(all_codes)) {
     stop("classify_listing_status: disposition map categories overlap: ",
          paste(unique(all_codes[duplicated(all_codes)]), collapse = ", "), call. = FALSE)
   }
-  d <- as.character(calls[[disposition]])
+  d <- trimws(as.character(calls[[disposition]]))
+  # An empty string is a missing export cell, not a disposition: treat it as
+  # NA rather than as codebook drift, matching coerce_logical_flag().
+  d[!is.na(d) & !nzchar(d)] <- NA_character_
   r <- calls[[reached]]
   checkmate::assert_logical(r)
   pv <- if (is.null(phone_valid)) rep(TRUE, nrow(calls)) else calls[[phone_valid]]
