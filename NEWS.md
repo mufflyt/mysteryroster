@@ -1,3 +1,16 @@
+# mysteryroster 0.4.1
+
+* `classify_listing_status()` now trims leading and trailing whitespace from
+  both the data and the disposition map before matching, and treats empty
+  strings as missing export cells rather than as dispositions. Whitespace is
+  never meaningful in a disposition codebook, but REDCap exports routinely
+  carry trailing spaces from manual edits; previously every study had to
+  re-discover this cleaning step itself or watch trivial formatting noise
+  stop the pipeline as apparent codebook drift. Drift beyond whitespace still
+  fails closed, and map categories differing only by whitespace are now
+  caught as the overlap they are. The empty-string rule matches
+  `coerce_logical_flag()`'s treatment of empty cells.
+
 # mysteryroster 0.4.0
 
 * `classify_listing_status()` no longer coerces `NA` phone-validity values to

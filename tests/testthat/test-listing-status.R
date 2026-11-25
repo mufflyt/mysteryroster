@@ -92,3 +92,47 @@ test_that("coerce_logical_flag fails closed on unrecognised values unless excuse
   expect_equal(coerce_logical_flag(c("yes", "maybe"), unrecognised = "na"), c(TRUE, NA))
   expect_error(coerce_logical_flag(list(TRUE)), "logical, numeric, character or factor")
 })
+
+test_that("whitespace-drifted dispositions classify exactly like the clean codebook values", {
+  # REDCap exports routinely carry trailing spaces from manual edits; whitespace
+  # is never meaningful in a disposition codebook, so it must normalise away
+  # rather than error or misclassify.
+  drifted <- calls
+  drifted$disposition <- c("Yes ", " No-practice is full but physician does still see established patients",
+                           "No-changed practices  ", "\tNo-retired or no longer practicing medicine",
+                           "No-not specified why", NA, NA, "Yes", NA)
+  out <- classify_listing_status(drifted, phone_valid = "phone_valid")
+  expect_equal(as.character(out$listing_status),
+               c("confirmed_valid", "confirmed_valid", "confirmed_invalid", "confirmed_invalid",
+                 "unresolved", "unresolved", "not_attempted", "confirmed_valid", "confirmed_invalid"))
+})
+
+test_that("whitespace inside the map itself normalises rather than breaking matching", {
+  padded <- ent_disposition_map()
+  padded$relocated <- "  No-changed practices "
+  d <- data.frame(disposition = "No-changed practices", reached = TRUE)
+  out <- classify_listing_status(d, map = padded)
+  expect_equal(as.character(out$listing_status), "confirmed_invalid")
+  expect_equal(out$invalid_reason, "relocated")
+})
+
+test_that("drift beyond whitespace still fails closed", {
+  bad <- calls
+  bad$disposition[1] <- "Yes!"          # not a whitespace difference
+  expect_error(classify_listing_status(bad, phone_valid = "phone_valid"), "not in the map")
+})
+
+test_that("categories differing only by whitespace are caught as overlaps", {
+  padded <- ent_disposition_map()
+  padded$not_specified <- c(padded$not_specified, "Yes ")   # trims to the at_location value
+  expect_error(classify_listing_status(calls, map = padded), "overlap")
+})
+
+test_that("whitespace-only and empty dispositions are missing data, not drift", {
+  # An empty export cell means no disposition was recorded; it must follow the
+  # missing-disposition logic (not_attempted / unresolved), never error as
+  # codebook drift and never match a codebook category.
+  d <- data.frame(disposition = c("", "   ", "Yes"), reached = c(TRUE, NA, TRUE))
+  out <- classify_listing_status(d)
+  expect_equal(as.character(out$listing_status), c("unresolved", "not_attempted", "confirmed_valid"))
+})
