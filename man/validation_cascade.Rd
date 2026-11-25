@@ -14,7 +14,9 @@ validation_cascade(df, stages, by = NULL, weights = NULL)
 
 \item{by}{Optional grouping column (for example \code{"stratum"}).}
 
-\item{weights}{Optional weight column (for example \code{"weight"}).}
+\item{weights}{Optional weight column (for example \code{"weight"}). When given,
+every weight must be positive and finite; \code{NA} or non-positive weights
+stop the call rather than silently corrupting every denominator.}
 }
 \value{
 A tibble with \code{group}, \code{stage}, \code{n}, \code{count} (weighted if

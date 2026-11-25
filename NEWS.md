@@ -1,3 +1,13 @@
+# mysteryroster 0.4.3
+
+* `validation_cascade()` now validates sampling weights with the same
+  `.validity_check_weights()` the validity estimators use. Unvalidated
+  weights used to propagate silently: a single `NA` weight turned every
+  weighted count `NA` -- including `pct_of_first` for stages the bad weight
+  never touched, because the first stage's count is the shared denominator --
+  and negative or zero weights produced nonsense counts without a murmur.
+  Weights must now be positive and finite, or the call stops.
+
 # mysteryroster 0.4.2
 
 * `listing_weights()` now stops when any row's stratum is missing. `table()`

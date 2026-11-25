@@ -56,3 +56,21 @@ test_that("the survey-weighted model recovers a built-in stratum effect as an od
   expect_equal(or_b, 1 / 3, tolerance = 1e-6)
   expect_true(all(c("conf.low", "conf.high") %in% names(m)))
 })
+
+test_that("validation_cascade fails closed on NA or non-positive weights", {
+  # Unvalidated weights used to propagate silently: one NA weight turned every
+  # count NA (including pct_of_first for stages the bad weight never touched,
+  # because count[1] is the shared denominator), and negative weights produced
+  # nonsense counts without a murmur.
+  df <- data.frame(
+    attempted = c(TRUE, TRUE, TRUE, FALSE),
+    reached   = c(TRUE, TRUE, FALSE, FALSE),
+    confirmed = c(TRUE, FALSE, FALSE, FALSE),
+    w = c(2, 2, NA, 1))
+  expect_error(validation_cascade(df, c("attempted", "reached", "confirmed"), weights = "w"))
+  df$w <- c(2, 2, -5, 1)
+  expect_error(validation_cascade(df, c("attempted", "reached", "confirmed"), weights = "w"), "positive")
+  df$w <- c(2, 2, 3, 1)
+  out <- validation_cascade(df, c("attempted", "reached", "confirmed"), weights = "w")
+  expect_equal(out$count[out$stage == "attempted" & out$group == "all"], 7)
+})
