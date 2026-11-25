@@ -15,10 +15,13 @@ normalize_directory_attribute(
 
 \item{normalizer}{Single string selecting the normalizer rule:
 \itemize{
-\item \code{"zip5"} -- Extracts digits, pads 3- or 4-digit numeric strings
-with leading zeros to 5 digits (\code{00501}--\code{99950}), truncates 9-digit
-\code{ZIP+4} strings to their 5-digit prefix, and rejects all-zero
-(\code{"00000"}) or non-numeric strings.
+\item \code{"zip5"} -- Takes the first digit run, pads 3- or 4-digit runs
+with leading zeros to 5 digits (\code{00501}--\code{99950}), truncates \code{ZIP+4}
+to its 5-digit prefix (including an unseparated \code{ZIP+4} whose leading
+zero was dropped, \code{"21011234"} -> \code{"02101"}), drops an all-zero float
+fraction (\code{"2101.0"}), and rejects all-zero (\code{"00000"}), non-numeric,
+scientific-notation, and non-ZIP-shaped digit runs (6 or 10+ digits)
+rather than truncating them into a different valid-looking ZIP.
 \item \code{"scf3"} -- Normalizes via \code{"zip5"} and takes the 3-digit
 Sectional Center Facility prefix.
 \item \code{"phone10"} -- Strips non-digits, removes a leading US country code
@@ -33,9 +36,12 @@ digits such as \code{"9999999999"}).
 \code{","}), and extracts canonical midwifery/advanced-practice/physician
 tokens (\code{CNM}, \code{CM}, \code{APRN}, \code{NP}, \code{WHNP}, \code{FNP}, \code{MSN}, \code{DNP}, \code{RN},
 \code{MD}, \code{DO}, \code{PA}) in sorted semicolon-delimited canonical order.
-\item \code{"person_name"} -- Upper-cases, removes honorifics/suffixes (\code{DR},
-\code{MD}, \code{CNM}, \code{JR}, \code{SR}, \code{II}, \code{III}), collapses whitespace, and
-validates that at least two alphabetic characters remain.
+\item \code{"person_name"} -- Removes parentheticals, honorifics,
+credentials and generational suffixes via \code{\link[mysterynpi:strip_name_noise]{mysterynpi::strip_name_noise()}}
+(which keeps real surnames that collide with a credential, e.g.
+\code{"Anh Do"}), folds diacritics and upper-cases via
+\code{\link[mysterynpi:name_key]{mysterynpi::name_key()}}, collapses whitespace, and validates that at
+least two alphabetic characters remain.
 \item \code{"npi10"} -- Validates 10-digit numeric NPI format (\code{1} or \code{2}
 leading digit) and verifies the ISO/CMS Luhn check digit (with \code{80840}
 health-industry prefix).

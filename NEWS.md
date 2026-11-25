@@ -1,3 +1,22 @@
+# mysteryroster 0.4.4
+
+* `normalize_directory_attribute()` no longer fabricates a different,
+  valid-looking value from corrupted input.
+  - `"zip5"`/`"scf3"` took the first five of ALL digits in the cell, so a
+    ZIP+4 that lost its leading zero (`"2101-1234"`) became `21011` instead of
+    `02101`, a float artifact (`"2101.0"`) became `21010`, scientific notation
+    (`"1.2e5"`) became `00125`, and a phone number in the ZIP column became a
+    ZIP. The first digit run is now the ZIP part, and digit runs that are not
+    ZIP-shaped are `invalid_zip5` rather than truncated.
+  - `"person_name"` deleted real surnames that collide with a credential
+    (`"Anh Do"` -> `"ANH"`), split names at accented letters
+    (`"JOS GARC A"`), and kept credentials outside a short hard-coded list.
+    It now delegates to `mysterynpi::strip_parenthetical()`,
+    `strip_name_noise()` and `name_key()`.
+  - `"npi10"` now calls `mysterynpi::npi_luhn_ok()` instead of an inline
+    copy of the check-digit rule (identical verdicts).
+* New dependency: `mysterynpi` (GitHub-only, declared in `Remotes:`).
+
 # mysteryroster 0.4.3
 
 * `validation_cascade()` now validates sampling weights with the same

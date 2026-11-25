@@ -975,6 +975,47 @@ attribute_inconsistency_table <- function(source_a,
   )
 }
 
+#' Extract a 5-digit ZIP candidate from raw directory text
+#'
+#' The previous inline logic concatenated every digit in the cell and took the
+#' first five, which silently fabricated a different, valid-looking ZIP in
+#' exactly the cases a spreadsheet round-trip produces: a ZIP+4 whose leading
+#' zero was dropped (`"2101-1234"` -> `"21011"`, not `"02101"`), a 4-digit ZIP
+#' read as a float (`"2101.0"` -> `"21010"`), scientific notation
+#' (`"1.2e5"` -> `"00125"`), and a phone number typed into the ZIP column
+#' (`"3035550199"` -> `"30355"`). The first digit RUN is the ZIP part; only run
+#' lengths that are a real ZIP shape are accepted, everything else is invalid
+#' rather than truncated.
+#'
+#' @param trimmed Trimmed character vector.
+#' @param populated Logical vector flagging non-missing, non-blank elements.
+#' @return Character vector of 5-digit candidates (`NA` when not ZIP-shaped).
+#'   Range validation is the caller's job.
+#' @noRd
+.zip5_candidate <- function(trimmed, populated) {
+  out <- rep(NA_character_, length(trimmed))
+  s <- trimmed
+  # scientific notation is a corrupted number, not a ZIP: there is no way to
+  # know which digits were lost, so it is invalid rather than reassembled
+  sci <- grepl("[0-9][eE][+-]?[0-9]", s)
+  # an all-zero fraction is a float artifact of a numeric-typed column
+  s <- sub("^([0-9]+)\\.0+$", "\\1", s)
+  run <- rep(NA_character_, length(s))
+  has_run <- populated & !sci & grepl("[0-9]", s)
+  run[has_run] <- regmatches(s[has_run], regexpr("[0-9]+", s[has_run]))
+  len <- nchar(run)
+  # 3-4 digits: a 5-digit ZIP that lost its leading zero(s)
+  # 5 digits  : a ZIP
+  # 9 digits  : ZIP+4 written without a separator
+  # 7-8 digits: ZIP+4 without a separator that ALSO lost its leading zero(s)
+  shape_ok <- has_run & len %in% c(3L, 4L, 5L, 7L, 8L, 9L)
+  target <- ifelse(len <= 5L, 5L, 9L)
+  padded <- paste0(strrep("0", pmax(target - len, 0L)), run)
+  out[shape_ok] <- substr(padded[shape_ok], 1L, 5L)
+  out
+}
+
+
 #' Execute canonical normalizers and format-validity guards for provider directory attributes
 #'
 #' [attribute_field_dictionary()] records a `normalizer` name for each tracked
@@ -994,10 +1035,13 @@ attribute_inconsistency_table <- function(source_a,
 #' @param x Vector of raw attribute values to normalize and validate.
 #' @param normalizer Single string selecting the normalizer rule:
 #'   \itemize{
-#'     \item `"zip5"` -- Extracts digits, pads 3- or 4-digit numeric strings
-#'       with leading zeros to 5 digits (`00501`--`99950`), truncates 9-digit
-#'       `ZIP+4` strings to their 5-digit prefix, and rejects all-zero
-#'       (`"00000"`) or non-numeric strings.
+#'     \item `"zip5"` -- Takes the first digit run, pads 3- or 4-digit runs
+#'       with leading zeros to 5 digits (`00501`--`99950`), truncates `ZIP+4`
+#'       to its 5-digit prefix (including an unseparated `ZIP+4` whose leading
+#'       zero was dropped, `"21011234"` -> `"02101"`), drops an all-zero float
+#'       fraction (`"2101.0"`), and rejects all-zero (`"00000"`), non-numeric,
+#'       scientific-notation, and non-ZIP-shaped digit runs (6 or 10+ digits)
+#'       rather than truncating them into a different valid-looking ZIP.
 #'     \item `"scf3"` -- Normalizes via `"zip5"` and takes the 3-digit
 #'       Sectional Center Facility prefix.
 #'     \item `"phone10"` -- Strips non-digits, removes a leading US country code
@@ -1012,9 +1056,12 @@ attribute_inconsistency_table <- function(source_a,
 #'       `","`), and extracts canonical midwifery/advanced-practice/physician
 #'       tokens (`CNM`, `CM`, `APRN`, `NP`, `WHNP`, `FNP`, `MSN`, `DNP`, `RN`,
 #'       `MD`, `DO`, `PA`) in sorted semicolon-delimited canonical order.
-#'     \item `"person_name"` -- Upper-cases, removes honorifics/suffixes (`DR`,
-#'       `MD`, `CNM`, `JR`, `SR`, `II`, `III`), collapses whitespace, and
-#'       validates that at least two alphabetic characters remain.
+#'     \item `"person_name"` -- Removes parentheticals, honorifics,
+#'       credentials and generational suffixes via [mysterynpi::strip_name_noise()]
+#'       (which keeps real surnames that collide with a credential, e.g.
+#'       `"Anh Do"`), folds diacritics and upper-cases via
+#'       [mysterynpi::name_key()], collapses whitespace, and validates that at
+#'       least two alphabetic characters remain.
 #'     \item `"npi10"` -- Validates 10-digit numeric NPI format (`1` or `2`
 #'       leading digit) and verifies the ISO/CMS Luhn check digit (with `80840`
 #'       health-industry prefix).
@@ -1059,10 +1106,7 @@ normalize_directory_attribute <- function(x,
   status <- ifelse(populated, "invalid", "missing_or_blank")
 
   if (normalizer %in% c("zip5", "scf3")) {
-    digits <- gsub("[^0-9]", "", trimmed)
-    short <- populated & nchar(digits) >= 3L & nchar(digits) <= 4L
-    digits[short] <- sprintf("%05d", suppressWarnings(as.integer(digits[short])))
-    z5 <- ifelse(populated & nchar(digits) >= 5L, substr(digits, 1L, 5L), NA_character_)
+    z5 <- .zip5_candidate(trimmed, populated)
     z_int <- suppressWarnings(as.integer(z5))
     ok <- populated & !is.na(z_int) & z_int >= 501L & z_int <= 99950L
     valid <- ok
@@ -1112,8 +1156,18 @@ normalize_directory_attribute <- function(x,
       }
     }
   } else if (normalizer == "person_name") {
-    up <- toupper(gsub("[^A-Za-z '\\-]", " ", trimmed))
-    up <- gsub("\\b(DR|MD|DO|CNM|APRN|RN|NP|MSN|DNP|JR|SR|II|III|IV)\\b", " ", up)
+    # Delegated to mysterynpi's canonical name machinery. The hand-rolled
+    # version that lived here deleted real surnames that collide with a
+    # credential ("Anh Do" -> "ANH"), replaced accented letters with spaces
+    # ("Jos\u00e9 Garc\u00eda" -> "JOS GARC A", so the same person spelled
+    # with and without diacritics disagreed), kept every credential outside
+    # its own short list, and folded a parenthetical maiden name or nickname
+    # into the name itself.
+    up <- rep(NA_character_, n)
+    up[populated] <- mysterynpi::name_key(
+      mysterynpi::strip_name_noise(mysterynpi::strip_parenthetical(trimmed[populated]))
+    )
+    up <- gsub("[^A-Z '\\-]", " ", up)
     up <- trimws(gsub("\\s+", " ", up))
     ok <- populated & nchar(gsub("[^A-Z]", "", up)) >= 2L
     valid <- ok
@@ -1121,28 +1175,16 @@ normalize_directory_attribute <- function(x,
     status[populated & ok] <- "valid"
     status[populated & !ok] <- "invalid_person_name"
   } else if (normalizer == "npi10") {
-    luhn_ok <- function(s) {
-      if (is.na(s) || !grepl("^[12][0-9]{9}$", s)) return(FALSE)
-      d9 <- as.integer(strsplit(substr(s, 1L, 9L), "")[[1]])
-      check_digit <- as.integer(substr(s, 10L, 10L))
-      # 80840 prefix check sum = 24
-      weights <- c(2L, 1L, 2L, 1L, 2L, 1L, 2L, 1L, 2L)
-      prod <- d9 * weights
-      prod[prod > 9L] <- prod[prod > 9L] - 9L
-      total <- 24L + sum(prod)
-      expected <- (10L - (total %% 10L)) %% 10L
-      expected == check_digit
-    }
+    # mysterynpi::npi_luhn_ok is the ecosystem's single NPI validator
+    # (leading 1/2 format gate + Luhn over the 80840 prefix); the inline
+    # scalar copy that lived here agreed with it but was one more place for
+    # the rule to drift.
     digits <- gsub("[^0-9]", "", trimmed)
-    for (i in which(populated)) {
-      if (luhn_ok(digits[i])) {
-        valid[i] <- TRUE
-        norm_val[i] <- digits[i]
-        status[i] <- "valid"
-      } else {
-        status[i] <- "invalid_npi_luhn"
-      }
-    }
+    ok <- populated & mysterynpi::npi_luhn_ok(digits)
+    valid <- ok
+    norm_val[ok] <- digits[ok]
+    status[populated & ok] <- "valid"
+    status[populated & !ok] <- "invalid_npi_luhn"
   }
 
   tibble::tibble(
