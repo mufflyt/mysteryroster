@@ -1,3 +1,13 @@
+# mysteryroster 0.4.2
+
+* `listing_weights()` now stops when any row's stratum is missing. `table()`
+  drops `NA`, so unstratified rows used to escape both the per-stratum sample
+  counts and the weight column itself: they passed through with an `NA`
+  weight and vanished from every weighted analysis without a trace. A missing
+  stratum means the stratum mapping failed upstream, and the error says so.
+  Population strata that nobody sampled remain valid -- a superset population
+  table (four zones in the frame, two sampled) is legitimate and unchanged.
+
 # mysteryroster 0.4.1
 
 * `classify_listing_status()` now trims leading and trailing whitespace from

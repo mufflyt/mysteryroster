@@ -26,3 +26,18 @@ test_that("an impossible allocation stops before any draw", {
   expect_error(stratified_listing_sample(frame, c(Z = 1), seed = 1), "absent from the frame")
   expect_error(stratified_listing_sample(frame, c(A = 5)), "seed")
 })
+
+test_that("listing_weights fails closed on missing strata instead of dropping rows silently", {
+  # table() drops NA, so an unmapped row used to escape both n_sampled and the
+  # weight column, vanishing from weighted analyses without a trace.
+  df <- data.frame(id = 1:3, stratum = c("a", NA, "b"))
+  expect_error(listing_weights(df, pop_N = c(a = 10, b = 20)), "missing stratum")
+})
+
+test_that("listing_weights tolerates population strata nobody sampled", {
+  # A superset population table is legitimate: the study may sample two zones
+  # of four. Weights for the sampled strata must be unaffected.
+  df <- data.frame(id = 1:2, stratum = c("a", "a"))
+  out <- listing_weights(df, pop_N = c(a = 10, b = 20, unused = 99))
+  expect_equal(out$weight, c(5, 5))
+})
