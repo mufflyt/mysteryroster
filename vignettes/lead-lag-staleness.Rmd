@@ -582,6 +582,7 @@ catch_up <- function(e, days = 0:8) {
   s <- 1
   vapply(days, function(d) {
     at_risk <- sum((is.na(m$d) | m$d >= d) & follow_up >= d)
+    if (s == 0) return(0)
     if (at_risk == 0) return(NA_real_)
     s <<- s * (1 - sum(!is.na(m$d) & m$d == d) / at_risk)
     100 * s
