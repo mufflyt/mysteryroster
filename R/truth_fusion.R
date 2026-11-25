@@ -285,7 +285,15 @@ attribute_truth_backends <- function() {
 #' by less than `convergence_tolerance`; `n_disconnected_components > 1`
 #' (also a `warning()`) means the worker-task graph split into pieces
 #' that share no evidence, so per-source reliabilities are not jointly
-#' identifiable from this call alone.
+#' identifiable from this call alone -- and for `backend = "crowd_kit"`
+#' this can be severe, not just imprecise: with too little shared
+#' structure, Dawid-Skene can fall back to a flat prior across every
+#' candidate value for *every* task in an affected component, abstaining
+#' with `abstention_reason = "tied_vote"` even on a task where every
+#' included source agreed (`n_candidate_values == 1`). Whenever
+#' `n_disconnected_components > 1`, check an abstained prediction against
+#' `candidate_scores$n_votes` for that task before trusting the
+#' abstention at face value.
 #'
 #' **Arguments a given method doesn't use.** `implication_function` is
 #' reserved for methods not yet implemented (see
@@ -610,4 +618,764 @@ print.mysteryroster_truth <- function(x, ...) {
     100 * n_abstained / nrow(x$predictions)
   ))
   invisible(x)
+}
+
+# IEEE 754 negative zero (e.g. from -100 * 0) is mathematically 0 but prints
+# as "-0.0" -- confusing in a sentence that never intends a signed zero.
+.no_neg_zero <- function(x) ifelse(!is.na(x) & x == 0, 0, x)
+
+#' Manuscript-ready prose for one proportion, or two compared, with statistics
+#'
+#' Every result reported in this package's own case-study docs (Wilson
+#' interval on a rate; two-proportion test comparing a rate before and after
+#' some change) was written by hand, the same few lines of `sprintf()` and
+#' `prop.test()` every time. This is that pattern as a reusable function: give
+#' it a count and a total (optionally a second count and total to compare
+#' against), get back the numbers *and* a drop-in, grammatically complete
+#' sentence built from them, so copying a reported percentage out of a
+#' manuscript can't drift from the number a reviewer would recompute from the
+#' same inputs.
+#'
+#' @details
+#' **Why two label arguments per group.** A single free-text label (as an
+#' earlier version of this function used) reads fine as "204 of 1,806
+#' entity-years abstained" but produces a sentence fragment, not a sentence,
+#' for anything phrased as a noun rather than a predicate ("204 of 1,806
+#' NPI-years with any external corroboration" has no verb). Splitting the
+#' thing being counted (`unit_label`, a plural noun: `"entity-years"`,
+#' `"NPI-years"`) from what is true of it (`condition_label`, a verb phrase:
+#' `"were abstained"`, `"had any external corroboration"`) makes every
+#' generated sentence grammatically complete regardless of wording.
+#'
+#' **This does not replace statistical judgment.** It runs exactly one test
+#' (`stats::prop.test()`, two-sided, continuity-corrected) and one interval
+#' (Wilson, via [wilson_ci()]) -- the two defaults used throughout this
+#' package's own docs. A different design (one-sided, a different interval,
+#' a paired or stratified test) is not what this computes, and the sentence
+#' it returns spells out the exact test (`"two-proportion chi-squared test
+#' with continuity correction"`) so that is never misread as more than it is.
+#' The comparison sentence also reports the difference in percentage points
+#' with its own 95% CI (from the same `prop.test()` call, re-signed so a
+#' positive difference always means `b` is higher than `a`) and the test
+#' statistic with degrees of freedom and total N, in the
+#' "chi-squared(df, N = ...) = ..., p = ..." form a manuscript expects --
+#' not just a bare p-value.
+#'
+#' **p-values are never silently dropped.** If `prop.test()` cannot run (for
+#' example a `0`-total group), `p_value` is `NA` and `comparison_sentence`
+#' says so explicitly ("not computable") rather than omitting the test
+#' result or printing a misleading placeholder.
+#'
+#' @param n_a,n_total_a Count and total for the first (or only) proportion.
+#'   `n_a` cannot exceed `n_total_a`.
+#' @param n_b,n_total_b Optional count and total for a second proportion to
+#'   compare `n_a`/`n_total_a` against. Supply both or neither.
+#' @param label_a,label_b Short labels for the two groups/conditions,
+#'   substituted where the sentence names which group a number belongs to --
+#'   for example `"the 3-source baseline"` and `"+ T-MSIS (4 sources)"`.
+#'   Include an article (`"the"`) if the sentence should read with one; none
+#'   is added automatically. `label_b` is unused if `n_b`/`n_total_b` are not
+#'   supplied.
+#' @param unit_label The plural noun being counted -- for example
+#'   `"entity-years"` or `"NPI-years"`. Default `"cases"`.
+#' @param condition_label A verb phrase describing what is true of the
+#'   counted `n_a`/`n_b` (not `n_total_a`/`n_total_b`) -- for example
+#'   `"were abstained"` or `"had any external corroboration"`. Default
+#'   `"met this criterion"`.
+#' @param conf_level Confidence level for the Wilson interval(s). Default
+#'   `0.95`.
+#' @return A list: `a` (`n`, `n_total`, `pct`, `ci_low`, `ci_high`, `label`),
+#'   `sentence_a` (one sentence reporting `a` with its Wilson interval), and
+#'   `combined_text` (all sentences joined with spaces). When `n_b` is
+#'   supplied, also `b` (same shape as `a`), `sentence_b`, `p_value`,
+#'   `statistic` and `df` (the chi-squared statistic and its degrees of
+#'   freedom from `prop.test()`, both `NA` if not computable),
+#'   `diff_pct` (`b$pct - a$pct`), `diff_ci_low`/`diff_ci_high` (95% CI for
+#'   that difference, in percentage points, signed the same way), and
+#'   `comparison_sentence`.
+#' @examples
+#' format_proportion_comparison_prose(
+#'   n_a = 204, n_total_a = 1806, label_a = "this cohort",
+#'   unit_label = "NPI-years", condition_label = "had any external corroboration"
+#' )$sentence_a
+#'
+#' cmp <- format_proportion_comparison_prose(
+#'   n_a = 691, n_total_a = 3556, n_b = 759, n_total_b = 3556,
+#'   label_a = "the 3-source baseline", label_b = "+ T-MSIS (4 sources)",
+#'   unit_label = "entity-years", condition_label = "were abstained"
+#' )
+#' cmp$comparison_sentence
+#' cmp$p_value
+#' @seealso [wilson_ci()]; [attribute_truth_fusion_prose()] for the
+#'   `mysteryroster_truth`-specific wrapper around this function.
+#' @family truth fusion
+#' @export
+format_proportion_comparison_prose <- function(n_a, n_total_a, n_b = NULL, n_total_b = NULL,
+                                                label_a = "group A", label_b = "group B",
+                                                unit_label = "cases", condition_label = "met this criterion",
+                                                conf_level = 0.95) {
+  checkmate::assert_count(n_a)
+  checkmate::assert_count(n_total_a, positive = TRUE)
+  if (n_a > n_total_a) {
+    stop("format_proportion_comparison_prose: n_a cannot exceed n_total_a", call. = FALSE)
+  }
+  .assert_nonblank_string(label_a, "format_proportion_comparison_prose: label_a")
+  .assert_nonblank_string(unit_label, "format_proportion_comparison_prose: unit_label")
+  .assert_nonblank_string(condition_label, "format_proportion_comparison_prose: condition_label")
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("format_proportion_comparison_prose: conf_level must be strictly between 0 and 1",
+         call. = FALSE)
+  }
+  has_b <- !is.null(n_b) || !is.null(n_total_b)
+  if (has_b) {
+    checkmate::assert_count(n_b)
+    checkmate::assert_count(n_total_b, positive = TRUE)
+    if (n_b > n_total_b) {
+      stop("format_proportion_comparison_prose: n_b cannot exceed n_total_b", call. = FALSE)
+    }
+    .assert_nonblank_string(label_b, "format_proportion_comparison_prose: label_b")
+  }
+
+  fmt_n <- function(x) format(x, big.mark = ",")
+  conf_pct <- round(100 * conf_level)
+  one_sided_pct <- function(n, n_total) round(100 * n / n_total, 1)
+
+  ci_a <- wilson_ci(n_a, n_total_a, conf_level = conf_level, as_percent = TRUE)
+  pct_a <- one_sided_pct(n_a, n_total_a)
+  sentence_a <- sprintf(
+    "In %s, %s of %s %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
+    label_a, fmt_n(n_a), fmt_n(n_total_a), unit_label, condition_label, pct_a, conf_pct, ci_a$ci_low, ci_a$ci_high
+  )
+
+  out <- list(
+    a = list(n = n_a, n_total = n_total_a, pct = pct_a, ci_low = ci_a$ci_low, ci_high = ci_a$ci_high, label = label_a),
+    sentence_a = sentence_a,
+    combined_text = sentence_a
+  )
+
+  if (has_b) {
+    ci_b <- wilson_ci(n_b, n_total_b, conf_level = conf_level, as_percent = TRUE)
+    pct_b <- one_sided_pct(n_b, n_total_b)
+    sentence_b <- sprintf(
+      "In %s, %s of %s %s %s (%.1f%%, %s%% CI %.1f-%.1f%%).",
+      label_b, fmt_n(n_b), fmt_n(n_total_b), unit_label, condition_label, pct_b, conf_pct, ci_b$ci_low, ci_b$ci_high
+    )
+    pt <- tryCatch(
+      suppressWarnings(stats::prop.test(c(n_a, n_b), c(n_total_a, n_total_b))),
+      error = function(e) NULL
+    )
+    # prop.test() can return without erroring yet still be degenerate (e.g. 0/1
+    # vs 0/1): p.value/statistic come back NaN, not NA, and conf.int can still
+    # hold numeric-looking but untrustworthy bounds. Treat NaN as NA (is.na()
+    # catches both) and, when the test itself is not computable, don't report
+    # its CI either -- a CI from the same degenerate fit is not more trustworthy
+    # than its own p-value just because it rendered as numbers.
+    p_value <- if (is.null(pt) || is.na(pt$p.value)) NA_real_ else pt$p.value
+    statistic <- if (is.null(pt) || is.na(p_value)) NA_real_ else unname(pt$statistic)
+    df <- if (is.null(pt) || is.na(p_value)) NA_real_ else unname(pt$parameter)
+    diff_pct <- .no_neg_zero(round(pct_b - pct_a, 1))
+    # prop.test()'s conf.int is for prop[1] - prop[2] (i.e. a - b); re-signed
+    # to b - a, in percentage points, so a positive difference always means
+    # "b is higher", matching diff_pct's own sign. 0 * -100 is IEEE negative
+    # zero, which would otherwise display as a confusing "-0.0" -- cleaned here.
+    diff_ci_low <- if (is.null(pt) || is.na(p_value)) {
+      NA_real_
+    } else {
+      .no_neg_zero(round(-100 * pt$conf.int[2], 1))
+    }
+    diff_ci_high <- if (is.null(pt) || is.na(p_value)) {
+      NA_real_
+    } else {
+      .no_neg_zero(round(-100 * pt$conf.int[1], 1))
+    }
+    p_fmt <- if (is.na(p_value)) {
+      "not computable"
+    } else if (p_value < 0.001) {
+      "< 0.001"
+    } else {
+      sprintf("= %.3f", p_value)
+    }
+    stat_fmt <- if (is.na(statistic)) {
+      "statistic not computable"
+    } else {
+      sprintf("chi-squared(%d, N = %s) = %.2f", as.integer(df), fmt_n(n_total_a + n_total_b), statistic)
+    }
+    ci_fmt <- if (is.na(diff_ci_low)) {
+      "CI not computable"
+    } else {
+      sprintf("%d%% CI %.1f to %.1f", conf_pct, diff_ci_low, diff_ci_high)
+    }
+    comparison_sentence <- sprintf(
+      paste0(
+        "%.1f%% of %s %s in %s (%s/%s), compared with %.1f%% in %s (%s/%s) -- ",
+        "a difference of %.1f percentage points (%s; two-proportion %s, p %s)."
+      ),
+      pct_a, unit_label, condition_label, label_a, fmt_n(n_a), fmt_n(n_total_a),
+      pct_b, label_b, fmt_n(n_b), fmt_n(n_total_b),
+      diff_pct, ci_fmt, stat_fmt, p_fmt
+    )
+    out$b <- list(n = n_b, n_total = n_total_b, pct = pct_b, ci_low = ci_b$ci_low, ci_high = ci_b$ci_high, label = label_b)
+    out$sentence_b <- sentence_b
+    out$p_value <- p_value
+    out$statistic <- statistic
+    out$df <- df
+    out$diff_pct <- diff_pct
+    out$diff_ci_low <- diff_ci_low
+    out$diff_ci_high <- diff_ci_high
+    out$comparison_sentence <- comparison_sentence
+    out$combined_text <- paste(sentence_a, sentence_b, comparison_sentence)
+  }
+
+  out
+}
+
+#' Manuscript-ready prose for ranking 2+ groups by a numeric value
+#'
+#' [format_proportion_comparison_prose()] handles one proportion, or two compared. Several of
+#' this package's own outputs are neither -- [attribute_coverage()]'s per-source coverage,
+#' [attribute_source_corroboration()]'s per-source `lead_rate`, [attribute_odd_one_out_rate()]'s
+#' per-source `odd_rate`, [attribute_truth_fusion()]'s per-source `reliability_score` -- an
+#' N-way ranking, not a single comparison. This is that general case: given a value per named
+#' group, return a ranked table and a sentence, instead of every caller re-deriving
+#' `order()`/`sprintf()`/`paste(collapse = ", ")` by hand.
+#'
+#' @details
+#' **Ties are never silently hidden behind a strict order.** Two groups whose *rounded* display
+#' values are equal are flagged in the sentence as tied, even if their underlying unrounded
+#' values differ (which would otherwise rank them in an order the reader has no way to see is
+#' not arbitrary -- "A ranked above B" when both display as `"84.5%"` reads as a claim the
+#' sentence cannot back up). Ties are detected on the *rounded* (displayed) value, per `fmt`.
+#'
+#' **Sample size, shown whenever given.** Ranking a rate computed from `n = 5` beside one from
+#' `n = 5,000` as if they carry equal weight is a real way to mislead; passing `n` includes each
+#' group's count in both the table and the sentence so that is never hidden.
+#'
+#' **Every group must have a real value.** `NA` values, duplicate group names, and fewer than 2
+#' groups all stop the call rather than silently producing a sentence that reads like a real
+#' ranking but isn't one -- a "ranking" of one thing, or with a missing entry, is not a ranking.
+#'
+#' **`register` changes only `sentence`, never `table`/`highest`/`lowest`/`ties`.**
+#' `register = "technical"` (default) produces the terse, data-table-like sentence this
+#' function has always produced ("Ranked by X, highest to lowest: A (v), B (v)."). `register =
+#' "clinical"` instead produces a plain-language narrative sentence with no abbreviations and no
+#' em dashes, suitable for a clinical-journal Methods/Results section read by a non-technical
+#' audience -- the caller is still responsible for passing fully spelled-out, audience-
+#' appropriate `group` names (e.g. `"the national provider directory"`, not `"nppes"`); this
+#' function only controls sentence structure, not domain vocabulary it has no way to know.
+#'
+#' @param group Character vector of group names, length 2+, no duplicates.
+#' @param value Numeric vector, same length as `group`, the quantity being ranked. No `NA`s.
+#' @param n Optional integer vector, same length as `group`: the sample size behind each
+#'   `value`, shown in the table and sentence when supplied.
+#' @param value_label What `value` measures, used in the sentence (e.g. `"coverage"`,
+#'   `"learned reliability"`, `"lead rate"`). Default `"value"`.
+#' @param fmt `sprintf()` format for displaying `value`. Default `"%.1f"`.
+#' @param suffix Appended to each displayed value with no space (e.g. `"%"`). Default `""`.
+#' @param decreasing Rank highest value first (`TRUE`, default) or lowest first (`FALSE`) --
+#'   this only changes display order, never which group "wins" anything; `value_label`/context
+#'   is what tells the reader whether higher is better.
+#' @param register `"technical"` (default) or `"clinical"` -- see Details. Affects `sentence`
+#'   only.
+#' @return A list: `table` (tibble, `group`, `value`, and `n` if supplied, in rank order),
+#'   `highest`, `lowest` (each a list: `group`, `value`, `n`), `ties` (character vector of
+#'   group names involved in a display-value tie, empty if none), and `sentence`.
+#' @examples
+#' format_ranking_prose(
+#'   group = c("nppes", "dac_pecos_combined", "open_payments", "tmsis"),
+#'   value = c(100, 77.2, 25.4, 63.4), n = c(2000, 2000, 2000, 2000),
+#'   value_label = "coverage", fmt = "%.1f", suffix = "%"
+#' )$sentence
+#'
+#' format_ranking_prose(
+#'   group = c("the national provider directory", "the Medicare enrollment address source"),
+#'   value = c(1, 16), value_label = "median years to confirmation", fmt = "%.0f",
+#'   decreasing = FALSE, register = "clinical"
+#' )$sentence
+#' @seealso [format_proportion_comparison_prose()] for one or two groups;
+#'   [attribute_truth_fusion_prose()], which uses this internally for its reliability ranking.
+#' @family truth fusion
+#' @export
+format_ranking_prose <- function(group, value, n = NULL, value_label = "value",
+                                  fmt = "%.1f", suffix = "", decreasing = TRUE,
+                                  register = c("technical", "clinical")) {
+  register <- match.arg(register)
+  checkmate::assert_character(group, min.len = 2, any.missing = FALSE)
+  if (any(!nzchar(trimws(group)))) {
+    stop("format_ranking_prose: group contains an empty or whitespace-only name", call. = FALSE)
+  }
+  if (anyDuplicated(group) > 0L) {
+    stop(sprintf("format_ranking_prose: duplicate group name(s): %s",
+                 paste(unique(group[duplicated(group)]), collapse = ", ")), call. = FALSE)
+  }
+  checkmate::assert_numeric(value, len = length(group), any.missing = FALSE, finite = TRUE)
+  if (!is.null(n)) {
+    checkmate::assert_integerish(n, len = length(group), lower = 0)
+  }
+  .assert_nonblank_string(value_label, "format_ranking_prose: value_label")
+  checkmate::assert_string(fmt, min.chars = 1)
+  if (!grepl("^%[-+ 0#]*[0-9]*(\\.[0-9]+)?[eEfgGaA]$", fmt)) {
+    # Deliberately excludes %d/%i/%o/%u/%x/%X: R's sprintf() requires those
+    # to receive a true integer, so a fractional `value` (the normal case for
+    # a rate or score) errors with a cryptic base-R message rather than this
+    # function's own clear one. %s is excluded because it bypasses decimal-
+    # place control entirely, leaking a value's full floating-point precision.
+    stop(sprintf(
+      paste0(
+        "format_ranking_prose: fmt ('%s') must be a floating-point sprintf() conversion ",
+        "(e.g. '%%.1f', '%%.3g', '%%e') -- '%%d'-family specifiers error on non-integer ",
+        "values, and '%%s' bypasses the decimal-place control this parameter exists for"
+      ),
+      fmt
+    ), call. = FALSE)
+  }
+  checkmate::assert_flag(decreasing)
+
+  ord <- order(value, decreasing = decreasing)
+  group_o <- group[ord]; value_o <- value[ord]; n_o <- if (is.null(n)) NULL else as.integer(n)[ord]
+
+  disp <- sprintf(fmt, value_o)
+  tie_groups <- unique(unlist(lapply(split(group_o, disp), function(g) if (length(g) > 1L) g else NULL)))
+
+  entry_text <- if (is.null(n_o)) {
+    sprintf("%s (%s%s)", group_o, disp, suffix)
+  } else {
+    sprintf("%s (%s%s, n = %s)", group_o, disp, suffix, format(n_o, big.mark = ",", trim = TRUE))
+  }
+  tie_note <- if (length(tie_groups) > 0L) {
+    sprintf(" (tied: %s)", paste(tie_groups, collapse = ", "))
+  } else {
+    ""
+  }
+
+  if (identical(register, "clinical")) {
+    direction_word <- if (decreasing) "highest" else "lowest"
+    sentence <- sprintf(
+      "Among the %d groups compared, the %s %s was observed for %s.",
+      length(group_o), direction_word, value_label, entry_text[1]
+    )
+    if (length(entry_text) > 1L) {
+      sentence <- paste(sentence, sprintf(
+        "This was followed, in order, by %s.", paste(entry_text[-1], collapse = ", ")
+      ))
+    }
+    if (length(tie_groups) > 0L) {
+      sentence <- paste(sentence, sprintf(
+        "The following groups had identical values and are considered tied: %s.",
+        paste(tie_groups, collapse = ", ")
+      ))
+    }
+  } else {
+    sentence <- sprintf(
+      "Ranked by %s, %s to %s: %s.%s",
+      value_label, if (decreasing) "highest" else "lowest", if (decreasing) "lowest" else "highest",
+      paste(entry_text, collapse = ", "), tie_note
+    )
+  }
+
+  mk_extreme <- function(i) {
+    out <- list(group = group_o[i], value = value_o[i])
+    if (!is.null(n_o)) out$n <- n_o[i]
+    out
+  }
+
+  tbl <- tibble::tibble(group = group_o, value = value_o)
+  if (!is.null(n_o)) tbl$n <- n_o
+
+  list(
+    table = tbl,
+    highest = mk_extreme(1L),
+    lowest = mk_extreme(length(group_o)),
+    ties = tie_groups,
+    sentence = sentence
+  )
+}
+
+#' Manuscript-ready prose for an attribute_truth_fusion() result
+#'
+#' A thin wrapper around [format_proportion_comparison_prose()] specific to
+#' [attribute_truth_fusion()]'s own output: pulls the abstention count and
+#' total directly from a `mysteryroster_truth` object (and, if
+#' `source_diagnostics` has 2+ sources with a learned `reliability_score`,
+#' adds a sentence naming the highest- and lowest-ranked source) instead of
+#' asking the caller to extract those numbers by hand.
+#'
+#' @param result A `mysteryroster_truth` object (output of
+#'   [attribute_truth_fusion()]).
+#' @param compare_to Optional second `mysteryroster_truth` object -- for
+#'   example the same claims refit after adding a source, or a different
+#'   method on the same claims -- to compare `result`'s abstention rate
+#'   against via a two-proportion test. Its own `source_diagnostics` is not
+#'   used; only `result`'s is (see Details).
+#' @param result_label,compare_to_label Short labels naming the two
+#'   conditions, same as [format_proportion_comparison_prose()]'s `label_a`/
+#'   `label_b` -- include an article if the sentence should read with one
+#'   (for example `"the baseline fit"`). Defaults `"this fit"` / `"the
+#'   comparison fit"`.
+#' @param conf_level Confidence level for the Wilson interval(s). Default
+#'   `0.95`.
+#' @return Same shape as [format_proportion_comparison_prose()]'s return
+#'   (`unit_label`/`condition_label` fixed to `"entity-years"`/`"were
+#'   abstained"`), plus `method` (`result`'s method) and, when
+#'   `source_diagnostics` has a learned `reliability_score` for 2+ sources,
+#'   `reliability_table` (one row per source, highest reliability first) and
+#'   `reliability_sentence` (the full ranking, not just the extremes),
+#'   folded into `combined_text`.
+#' @examples
+#' claims <- data.frame(
+#'   entity_id = c("1", "1", "2", "2"), attribute = "state",
+#'   source_id = c("nppes", "dac", "nppes", "dac"),
+#'   claimed_value = c("CO", "CO", "NY", "NJ"), reference_year = 2024
+#' )
+#' fit <- attribute_truth_fusion(claims, method = "majority")
+#' attribute_truth_fusion_prose(fit, result_label = "this example")$combined_text
+#' @seealso [format_proportion_comparison_prose()]; [attribute_truth_fusion()].
+#' @family truth fusion
+#' @export
+attribute_truth_fusion_prose <- function(result, compare_to = NULL,
+                                          result_label = "this fit",
+                                          compare_to_label = "the comparison fit",
+                                          conf_level = 0.95) {
+  checkmate::assert_class(result, "mysteryroster_truth")
+  n_total_a <- nrow(result$predictions)
+  n_a <- sum(result$predictions$abstained)
+
+  if (!is.null(compare_to)) {
+    checkmate::assert_class(compare_to, "mysteryroster_truth")
+    n_total_b <- nrow(compare_to$predictions)
+    n_b <- sum(compare_to$predictions$abstained)
+    out <- format_proportion_comparison_prose(
+      n_a = n_a, n_total_a = n_total_a, n_b = n_b, n_total_b = n_total_b,
+      label_a = result_label, label_b = compare_to_label,
+      unit_label = "entity-years", condition_label = "were abstained", conf_level = conf_level
+    )
+    # Two different fusion methods can both report "abstained" for reasons
+    # that are not the same quantity -- majority abstains on an exact vote
+    # tie, a weighted method abstains on a posterior below some threshold.
+    # Comparing their abstention rates as if interchangeable, with no
+    # disclosure the methods differ, is exactly the kind of apples-to-oranges
+    # read a reader has no way to catch from the sentence alone.
+    method_b <- compare_to$model_diagnostics$method[1]
+    method_a <- result$model_diagnostics$method[1]
+    if (!identical(method_a, method_b)) {
+      out$comparison_sentence <- paste0(
+        out$comparison_sentence,
+        sprintf(
+          " Note: %s used `%s` and %s used `%s` -- abstention is not necessarily comparable across different methods.",
+          result_label, method_a, compare_to_label, method_b
+        )
+      )
+      out$combined_text <- paste(out$sentence_a, out$sentence_b, out$comparison_sentence)
+    }
+  } else {
+    out <- format_proportion_comparison_prose(
+      n_a = n_a, n_total_a = n_total_a, label_a = result_label,
+      unit_label = "entity-years", condition_label = "were abstained", conf_level = conf_level
+    )
+  }
+
+  out$method <- result$model_diagnostics$method[1]
+
+  rel_all <- unique(result$source_diagnostics[, c("source_id", "reliability_score")])
+  rel <- rel_all[!is.na(rel_all$reliability_score), , drop = FALSE]
+  rel_na <- rel_all[is.na(rel_all$reliability_score), , drop = FALSE]
+  if (nrow(rel) >= 2L) {
+    rk <- format_ranking_prose(
+      group = rel$source_id, value = rel$reliability_score,
+      value_label = sprintf("learned source reliability under `%s`", out$method), fmt = "%.3f"
+    )
+    out$reliability_table <- rk$table
+    out$reliability_sentence <- paste0(toupper(substring(rk$sentence, 1, 1)), substring(rk$sentence, 2))
+    # A source present in source_diagnostics with NA reliability (for example
+    # isolated in a disconnected graph component, per attribute_truth_fusion()'s
+    # own n_disconnected_components caveat) must never just vanish from this
+    # ranking with no trace -- that reads as "only these sources contributed"
+    # when a real one did, with an indeterminate reliability.
+    if (nrow(rel_na) > 0L) {
+      out$reliability_sentence <- paste0(
+        out$reliability_sentence,
+        sprintf(" %d source%s with no estimable reliability (%s) excluded from this ranking.",
+                nrow(rel_na), if (nrow(rel_na) == 1L) "" else "s",
+                paste(rel_na$source_id, collapse = ", "))
+      )
+    }
+    out$combined_text <- paste(out$combined_text, out$reliability_sentence)
+  }
+
+  out
+}
+
+#' Coarse-to-fine hierarchical geographic truth fusion across multiple directory sources
+#'
+#' Flat truth-fusion algorithms ([attribute_truth_fusion()]) treat every
+#' attribute value as an unstructured categorical label. When three sources
+#' report `80204` (Denver), `80206` (Denver), and `98101` (Seattle) for a
+#' clinician's 5-digit practice ZIP code, flat majority or Dawid-Skene voting
+#' sees a three-way `1-1-1` tie at the `zip5` grain and abstains (`NA`),
+#' discarding the fact that two of the three sources agree on both the practice
+#' state (`CO`) and the 3-digit Sectional Center Facility (`802`).
+#'
+#' This function performs **coarse-to-fine hierarchical truth fusion** along an
+#' ordered geographic tree (by default `c("state", "scf3", "zip5")`, or any
+#' user-supplied hierarchy such as `c("state", "scf3", "zip5", "street")`). At
+#' each level $k$, a source is eligible to vote on child grain $k$ only if its
+#' coarser value at level $k-1$ matches the resolved parent consensus value,
+#' guaranteeing **parent-child tree consistency** (a resolved `zip5` can never
+#' contradict the resolved `scf3` or `state`). Every `(id, year)` entity is
+#' resolved to the **finest geographic grain supported by cross-source
+#' consensus**.
+#'
+#' **Not a verified fact.** Like [attribute_truth_fusion()], a resolved
+#' `finest_resolved_value` is a claim about what the supplied sources agree
+#' on, not independently verified ground truth. Agreement is driven by
+#' however many sources were passed in `sources`: three administrative
+#' registries that all derive from the same upstream feed can resolve all
+#' the way to `zip5` while still sharing one error none of them would catch.
+#' Resolution depth measures how far cross-source consensus reaches, not
+#' how accurate the resolved value is.
+#'
+#' @param sources Named list of source data frames (at least 2), each containing
+#'   `id`, optional `year`, and either the columns named in `hierarchy` or a
+#'   5-digit ZIP column (`zip_col`) from which `"scf3"` is automatically derived
+#'   when `"scf3"` is included in `hierarchy`.
+#' @param hierarchy Character vector of column names ordered from coarsest to
+#'   finest geographic grain. Default `c("state", "scf3", "zip5")`.
+#' @param id,year Names of identifier and year columns. Defaults `"npi"`,
+#'   `"year"`.
+#' @param zip_col Name of the 5-digit ZIP column used to derive `"scf3"` if
+#'   `"scf3"` is in `hierarchy` but not explicitly present as a column. Default
+#'   `"zip5"`.
+#' @param rule Consensus rule at each level:
+#'   \itemize{
+#'     \item `"strict_majority"` (default) -- requires support $> 0.50$ of
+#'       active sources (or $> 0.50$ of total source weight) at that grain.
+#'     \item `"plurality_unique"` -- accepts the modal value at level $k$
+#'       whenever there is a unique winner with support $\ge 2$ sources (or
+#'       unanimous when only 1 parent-consistent source remains and
+#'       `allow_single_child = TRUE`).
+#'   }
+#' @param source_weights Optional named numeric vector of positive reliability
+#'   weights per source (names matching `names(sources)`). Default `NULL` (equal
+#'   weights).
+#' @param allow_single_child Logical: when a coarser grain (e.g. `scf3 = "802"`)
+#'   is resolved by $\ge 2$ sources, and only one of those parent-consistent
+#'   sources provides a non-missing finer value, or when a higher-weight source
+#'   breaks a tie among parent-consistent children, should the child grain
+#'   resolve? Default `FALSE` (requires strict consensus at the child grain too).
+#' @return A list with two tibbles:
+#'   \describe{
+#'     \item{`entities`}{One row per `(id, year)` with `n_sources_present`,
+#'       per-grain fused values (`fused_<grain>`) and support proportions
+#'       (`support_<grain>`), `finest_resolved_grain`,
+#'       `finest_resolved_value`, and `resolution_depth` (`0` = unresolved,
+#'       `1..length(hierarchy)`).}
+#'     \item{`resolution_summary`}{Summary table across hierarchy levels
+#'       reporting `grain`, `depth`, `n_resolved_exact_at_grain`,
+#'       `pct_resolved_exact`, `n_resolved_at_or_finer`, and
+#'       `pct_resolved_at_or_finer`.}
+#'   }
+#' @examples
+#' s1 <- data.frame(npi = c("1", "2", "3"), year = 2026,
+#'                  state = c("CO", "CO", "CO"), zip5 = c("80204", "80204", "80204"))
+#' s2 <- data.frame(npi = c("1", "2", "3"), year = 2026,
+#'                  state = c("CO", "CO", "CO"), zip5 = c("80204", "80206", "80301"))
+#' s3 <- data.frame(npi = c("1", "2", "3"), year = 2026,
+#'                  state = c("CO", "WA", "WY"), zip5 = c("80204", "98101", "82001"))
+#' hf <- attribute_hierarchical_truth_fusion(list(nppes = s1, pecos = s2, tmsis = s3))
+#' hf$entities[, c("id", "fused_state", "fused_scf3", "fused_zip5", "finest_resolved_grain")]
+#' hf$resolution_summary
+#' @seealso [attribute_truth_fusion()], [attribute_consensus_tier()].
+#' @family truth fusion
+#' @export
+attribute_hierarchical_truth_fusion <- function(sources,
+                                                hierarchy = c("state", "scf3", "zip5"),
+                                                id = "npi",
+                                                year = "year",
+                                                zip_col = "zip5",
+                                                rule = c("strict_majority", "plurality_unique"),
+                                                source_weights = NULL,
+                                                allow_single_child = FALSE) {
+  checkmate::assert_list(sources, min.len = 2, names = "unique")
+  checkmate::assert_character(hierarchy, min.len = 2, any.missing = FALSE, unique = TRUE)
+  checkmate::assert_string(id, min.chars = 1)
+  rule <- match.arg(rule)
+  checkmate::assert_flag(allow_single_child)
+
+  src_names <- names(sources)
+  if (is.null(source_weights)) {
+    w_map <- stats::setNames(rep(1.0, length(src_names)), src_names)
+  } else {
+    checkmate::assert_numeric(source_weights, lower = 1e-6, any.missing = FALSE)
+    miss_w <- setdiff(src_names, names(source_weights))
+    if (length(miss_w) > 0L) {
+      stop(sprintf("attribute_hierarchical_truth_fusion: source_weights is missing: %s.",
+                   paste(miss_w, collapse = ", ")), call. = FALSE)
+    }
+    w_map <- as.numeric(source_weights[src_names])
+    names(w_map) <- src_names
+  }
+
+  has_yr <- !is.null(year) && all(vapply(sources, function(df) year %in% names(df), logical(1)))
+
+  norm_zip <- function(x) {
+    d <- gsub("[^0-9]", "", trimws(as.character(x)))
+    short <- !is.na(d) & nchar(d) >= 3L & nchar(d) <= 4L
+    d[short] <- sprintf("%05d", suppressWarnings(as.integer(d[short])))
+    z <- ifelse(!is.na(d) & nchar(d) >= 5L, substr(d, 1L, 5L), NA_character_)
+    z[z == "00000"] <- NA_character_
+    z
+  }
+
+  # Stack all sources into long entity-year-source rows with all hierarchy columns
+  stacked_list <- lapply(src_names, function(sn) {
+    df <- sources[[sn]]
+    checkmate::assert_data_frame(df, min.rows = 1)
+    if (!id %in% names(df)) {
+      stop(sprintf("attribute_hierarchical_truth_fusion: sources$%s is missing '%s'.", sn, id), call. = FALSE)
+    }
+    # Auto-derive scf3 if requested and zip_col is present
+    if ("scf3" %in% hierarchy && !"scf3" %in% names(df)) {
+      z_use <- if (zip_col %in% names(df)) zip_col else if ("zip5" %in% names(df)) "zip5" else NULL
+      if (is.null(z_use)) {
+        stop(sprintf("attribute_hierarchical_truth_fusion: sources$%s lacks 'scf3' and '%s'.", sn, zip_col), call. = FALSE)
+      }
+      z_clean <- norm_zip(df[[z_use]])
+      df$scf3 <- ifelse(!is.na(z_clean), substr(z_clean, 1L, 3L), NA_character_)
+    }
+    miss_h <- setdiff(hierarchy, names(df))
+    if (length(miss_h) > 0L) {
+      stop(sprintf("attribute_hierarchical_truth_fusion: sources$%s is missing hierarchy column(s): %s.",
+                   sn, paste(miss_h, collapse = ", ")), call. = FALSE)
+    }
+    out_s <- tibble::tibble(
+      id = trimws(as.character(df[[id]])),
+      year = if (has_yr) df[[year]] else NA,
+      source_id = sn,
+      weight = unname(w_map[sn])
+    )
+    for (h_col in hierarchy) {
+      val <- if (h_col %in% c("zip5", zip_col)) {
+        norm_zip(df[[h_col]])
+      } else {
+        v <- toupper(trimws(as.character(df[[h_col]])))
+        ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+      }
+      out_s[[h_col]] <- val
+    }
+    out_s <- out_s[!is.na(out_s$id) & nzchar(out_s$id), , drop = FALSE]
+    # Deduplicate exact rows per source
+    unique(out_s)
+  })
+
+  all_claims <- dplyr::bind_rows(stacked_list)
+  by_key <- split(all_claims, paste(all_claims$id, all_claims$year, sep = "\r"), drop = TRUE)
+
+  K <- length(hierarchy)
+
+  ent_rows <- lapply(by_key, function(g) {
+    u_sources <- unique(g$source_id)
+    n_src <- length(u_sources)
+    total_src_wt <- sum(w_map[u_sources])
+
+    fused_vals <- stats::setNames(rep(NA_character_, K), hierarchy)
+    support_vals <- stats::setNames(rep(NA_real_, K), hierarchy)
+
+    # Track rows consistent with resolved parent levels
+    eligible_g <- g
+    finest_grain <- "unresolved"
+    finest_val <- NA_character_
+    res_depth <- 0L
+
+    for (k in seq_len(K)) {
+      h_col <- hierarchy[k]
+      sub_k <- eligible_g[!is.na(eligible_g[[h_col]]), , drop = FALSE]
+      if (nrow(sub_k) == 0L) break
+
+      # Deduplicate to one vote per (source_id, value) at level k
+      votes_k <- unique(sub_k[, c("source_id", "weight", h_col), drop = FALSE])
+      val_wt <- tapply(votes_k$weight, votes_k[[h_col]], sum)
+      val_cnt <- tapply(votes_k$source_id, votes_k[[h_col]], function(s) length(unique(s)))
+
+      max_w <- max(val_wt)
+      winners <- names(val_wt)[abs(val_wt - max_w) < 1e-9]
+
+      if (length(winners) != 1L) {
+        # Tie at grain k -> cannot resolve grain k or finer grains
+        break
+      }
+
+      win_val <- winners[1]
+      win_cnt <- as.integer(val_cnt[win_val])
+      # Support relative to all sources present for this entity-year
+      supp_prop <- as.numeric(max_w / total_src_wt)
+
+      passes <- if (rule == "strict_majority") {
+        (supp_prop > 0.50) || (k > 1L && allow_single_child && length(unique(sub_k$source_id)) == 1L)
+      } else {
+        (win_cnt >= 2L) || (n_src == 1L) || (k > 1L && allow_single_child)
+      }
+
+      if (!passes) break
+
+      fused_vals[h_col] <- win_val
+      support_vals[h_col] <- round(supp_prop, 4)
+      finest_grain <- h_col
+      finest_val <- win_val
+      res_depth <- k
+
+      # Restrict eligible rows for level k+1 to those matching win_val at level k
+      eligible_g <- eligible_g[!is.na(eligible_g[[h_col]]) & (eligible_g[[h_col]] == win_val), , drop = FALSE]
+    }
+
+    row_out <- tibble::tibble(
+      id = g$id[1],
+      year = g$year[1],
+      n_sources_present = as.integer(n_src)
+    )
+    for (h_col in hierarchy) {
+      row_out[[paste0("fused_", h_col)]] <- unname(fused_vals[h_col])
+      row_out[[paste0("support_", h_col)]] <- unname(support_vals[h_col])
+    }
+    row_out$finest_resolved_grain <- finest_grain
+    row_out$finest_resolved_value <- finest_val
+    row_out$resolution_depth <- as.integer(res_depth)
+    row_out
+  })
+
+  entities_df <- dplyr::bind_rows(ent_rows)
+  entities_df <- entities_df[order(entities_df$id, entities_df$year), , drop = FALSE]
+  n_tot <- nrow(entities_df)
+
+  sum_rows <- lapply(seq_len(K), function(k) {
+    h_col <- hierarchy[k]
+    n_exact <- sum(entities_df$resolution_depth == k)
+    n_at_or_finer <- sum(entities_df$resolution_depth >= k)
+    tibble::tibble(
+      grain = h_col,
+      depth = as.integer(k),
+      n_entities = as.integer(n_tot),
+      n_resolved_exact_at_grain = as.integer(n_exact),
+      pct_resolved_exact = round(100 * n_exact / n_tot, 2),
+      n_resolved_at_or_finer = as.integer(n_at_or_finer),
+      pct_resolved_at_or_finer = round(100 * n_at_or_finer / n_tot, 2)
+    )
+  })
+  n_unres <- sum(entities_df$resolution_depth == 0L)
+  sum_tbl <- dplyr::bind_rows(
+    sum_rows,
+    tibble::tibble(
+      grain = "unresolved",
+      depth = 0L,
+      n_entities = as.integer(n_tot),
+      n_resolved_exact_at_grain = as.integer(n_unres),
+      pct_resolved_exact = round(100 * n_unres / n_tot, 2),
+      n_resolved_at_or_finer = as.integer(n_unres),
+      pct_resolved_at_or_finer = round(100 * n_unres / n_tot, 2)
+    )
+  )
+
+  list(
+    entities = tibble::as_tibble(entities_df),
+    resolution_summary = tibble::as_tibble(sum_tbl)
+  )
 }

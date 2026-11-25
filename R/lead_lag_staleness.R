@@ -19,6 +19,17 @@
   as.integer(num)
 }
 
+# checkmate::assert_string(x, min.chars = 1) accepts "   " (3 characters, all
+# whitespace) -- real enough to pass that check, but a sentence built around
+# it reads as broken ("In   , 10 of 20..."). Catches what min.chars alone
+# cannot.
+.assert_nonblank_string <- function(x, label) {
+  checkmate::assert_string(x, min.chars = 1)
+  if (!nzchar(trimws(x))) {
+    stop(sprintf("%s must not be empty or whitespace-only", label), call. = FALSE)
+  }
+}
+
 #' Empirical spell age of an attribute across a longitudinal panel
 #'
 #' When a registry does not carry a reliable per-field `last_updated` timestamp
@@ -111,6 +122,308 @@ attribute_spell_age <- function(panel, attribute, id = "npi", year = "year") {
     g
   })
   tibble::as_tibble(dplyr::bind_rows(res))
+}
+
+#' How often does one source's own value change, independent of whether it's right?
+#'
+#' A source that flips its reported value every year is less trustworthy than
+#' one that holds steady, even setting aside which one is *correct* -- a
+#' question [attribute_spell_age()] already answers for a single current
+#' value ("how old is this specific record") but does not aggregate into a
+#' rate that one source's overall volatility can be compared to another's.
+#' This does that: among a single source's own consecutive-year transitions,
+#' what fraction show a changed value at all (no second source, no
+#' "is this the right change" judgment -- pure churn).
+#'
+#' @details
+#' A transition counts only when the identifier is present in *both*
+#' consecutive years with a non-missing value -- a calendar-year gap (e.g.
+#' observed in 2020 and 2022 but absent in 2021) is not counted as a
+#' transition at all, the same convention [attribute_spell_age()] uses for
+#' breaking a spell. Values are trimmed and upper-cased before comparison.
+#'
+#' **Compare two sources' churn with [format_proportion_comparison_prose()],
+#' not a separate function here** -- `overall$n_changed`/`overall$n_transitions`
+#' from two calls are exactly the `n_a`/`n_total_a`/`n_b`/`n_total_b` that
+#' function already expects (see Examples), so no redundant wrapper is
+#' needed just to get a two-proportion test and a sentence out of it.
+#'
+#' **Churn is not staleness, and neither implies accuracy.** A source that
+#' never changes might be current and correct, or might simply never be
+#' re-observed. A source that changes constantly might be tracking a
+#' genuinely mobile population, or might be unreliable data entry. This
+#' function reports the rate; what it means for a specific source is a
+#' judgment call outside its scope.
+#'
+#' @param panel Data frame with at least `id`, `year`, and `attribute`.
+#' @param attribute Name of the attribute column to track.
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param conf_level Confidence level for the overall and by-year Wilson
+#'   intervals. Default `0.95`.
+#' @return A list:
+#'   \describe{
+#'     \item{`overall`}{List: `n_transitions`, `n_changed`, `pct`, `ci_low`,
+#'       `ci_high` (Wilson, via [wilson_ci()]).}
+#'     \item{`by_year`}{Tibble, one row per transition `year_from`/`year_to`:
+#'       `n_transitions`, `n_changed`, `pct`, `ci_low`, `ci_high`.}
+#'     \item{`by_identifier`}{Tibble, one row per identifier that has at
+#'       least one transition: `n_transitions`, `n_changed`.}
+#'     \item{`change_count_distribution`}{Tibble: how many identifiers had
+#'       `0`, `1`, `2`, or `3+` changes, with `n` and `pct` (of identifiers
+#'       with at least one transition) -- separates a source whose churn is
+#'       spread evenly from one where a handful of identifiers account for
+#'       most of it.}
+#'   }
+#' @examples
+#' panel <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"),
+#'   year = c(2022, 2023, 2024, 2022, 2023, 2024),
+#'   state = c("CO", "CO", "CO", "NM", "TX", "NM")
+#' )
+#' churn <- attribute_churn_rate(panel, attribute = "state")
+#' churn$overall
+#'
+#' # Comparing two sources' churn reuses format_proportion_comparison_prose():
+#' panel_b <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"),
+#'   year = c(2022, 2023, 2024, 2022, 2023, 2024),
+#'   state = c("CO", "CO", "CO", "NM", "NM", "NM")
+#' )
+#' churn_a <- attribute_churn_rate(panel, attribute = "state")
+#' churn_b <- attribute_churn_rate(panel_b, attribute = "state")
+#' format_proportion_comparison_prose(
+#'   n_a = churn_a$overall$n_changed, n_total_a = churn_a$overall$n_transitions,
+#'   n_b = churn_b$overall$n_changed, n_total_b = churn_b$overall$n_transitions,
+#'   label_a = "Source A", label_b = "Source B",
+#'   unit_label = "consecutive-year transitions", condition_label = "showed a changed value"
+#' )$comparison_sentence
+#' @seealso [attribute_spell_age()]; [format_proportion_comparison_prose()];
+#'   [attribute_coverage()] for the completeness side of comparing sources.
+#' @family no-gold-standard comparison
+#' @export
+attribute_churn_rate <- function(panel, attribute, id = "npi", year = "year", conf_level = 0.95) {
+  checkmate::assert_data_frame(panel, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  for (col in c(id, year, attribute)) {
+    if (!col %in% names(panel)) {
+      stop(sprintf("attribute_churn_rate: panel has no column '%s'", col), call. = FALSE)
+    }
+  }
+
+  out <- tibble::tibble(id = trimws(as.character(panel[[id]])))
+  if (any(is.na(out$id) | !nzchar(out$id))) {
+    stop("attribute_churn_rate: panel contains missing or empty id values", call. = FALSE)
+  }
+  out$year <- .parse_whole_integer(panel[[year]], "attribute_churn_rate: year", allow_na = FALSE)
+  .assert_unique_keys(out, c("id", "year"), "attribute_churn_rate: panel")
+  v <- toupper(trimws(as.character(panel[[attribute]])))
+  out$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+  out <- out[order(out$id, out$year), , drop = FALSE]
+
+  groups <- split(out, out$id, drop = TRUE)
+  trans_list <- lapply(groups, function(g) {
+    n <- nrow(g)
+    if (n < 2L) return(NULL)
+    year_from <- g$year[1:(n - 1L)]
+    year_to <- g$year[2:n]
+    val_from <- g$value[1:(n - 1L)]
+    val_to <- g$value[2:n]
+    consec <- (year_to == year_from + 1L) & !is.na(val_from) & !is.na(val_to)
+    if (!any(consec)) return(NULL)
+    tibble::tibble(
+      id = g$id[1], year_from = year_from[consec], year_to = year_to[consec],
+      changed = val_from[consec] != val_to[consec]
+    )
+  })
+  transitions <- dplyr::bind_rows(trans_list)
+  if (nrow(transitions) == 0L) {
+    stop("attribute_churn_rate: no consecutive-year transitions with a non-missing value on both sides", call. = FALSE)
+  }
+
+  wci <- function(n_changed, n_total) {
+    ci <- wilson_ci(n_changed, n_total, conf_level = conf_level, as_percent = TRUE)
+    list(n_transitions = n_total, n_changed = n_changed,
+         pct = round(100 * n_changed / n_total, 1), ci_low = ci$ci_low, ci_high = ci$ci_high)
+  }
+
+  overall <- wci(sum(transitions$changed), nrow(transitions))
+
+  year_key <- paste(transitions$year_from, transitions$year_to, sep = "->")
+  by_year <- tibble::tibble(
+    year_from = as.integer(tapply(transitions$year_from, year_key, `[`, 1)),
+    year_to = as.integer(tapply(transitions$year_to, year_key, `[`, 1)),
+    n_transitions = as.integer(tapply(transitions$changed, year_key, length)),
+    n_changed = as.integer(tapply(transitions$changed, year_key, sum))
+  )
+  by_year <- by_year[order(by_year$year_from), , drop = FALSE]
+  by_year_ci <- wilson_ci(by_year$n_changed, by_year$n_transitions, conf_level = conf_level, as_percent = TRUE)
+  by_year$pct <- round(100 * by_year$n_changed / by_year$n_transitions, 1)
+  by_year$ci_low <- by_year_ci$ci_low
+  by_year$ci_high <- by_year_ci$ci_high
+
+  by_identifier <- tibble::tibble(
+    id = names(tapply(transitions$changed, transitions$id, length)),
+    n_transitions = as.integer(tapply(transitions$changed, transitions$id, length)),
+    n_changed = as.integer(tapply(transitions$changed, transitions$id, sum))
+  )
+
+  bucket <- cut(by_identifier$n_changed, breaks = c(-Inf, 0, 1, 2, Inf),
+                labels = c("0", "1", "2", "3+"), right = TRUE)
+  tab <- table(bucket)
+  change_count_distribution <- tibble::tibble(
+    n_changes = names(tab), n = as.integer(tab),
+    pct = round(100 * as.integer(tab) / nrow(by_identifier), 1)
+  )
+
+  list(
+    overall = overall,
+    by_year = tibble::as_tibble(by_year),
+    by_identifier = tibble::as_tibble(by_identifier),
+    change_count_distribution = change_count_distribution
+  )
+}
+
+#' Which source actually has data for more entity-years?
+#'
+#' A currency/completeness question, distinct from timing (does a source
+#' move first) or agreement (do sources say the same thing when both are
+#' present): among a defined set of entity-years that *should* be covered,
+#' how many does each source actually carry a non-missing value for? A
+#' source that leads every race but is only present for a fifth of the
+#' entity-years in question is a different kind of limitation than one that
+#' lags but is nearly always there.
+#'
+#' @details
+#' **The universe is supplied, not inferred, by default -- except when it
+#' isn't.** Coverage is only meaningful relative to a stated target (a
+#' cohort's NPI-years, a study's intended panel). If `universe` is `NULL`,
+#' this falls back to the union of every `(id, year)` pair present in *any*
+#' of `sources` -- convenient, but it silently inflates every source's
+#' apparent coverage toward the sources that already define the union (a
+#' source present nowhere outside its own rows trivially "covers" 100% of a
+#' universe built from itself). Passing an explicit `universe` -- the actual
+#' cohort being studied -- is recommended whenever one exists.
+#'
+#' **Presence means a non-missing `attribute` value**, not merely a row --
+#' consistent with every other function in this package ("presence is never
+#' inferred," see `README.md`'s Design rules). A row with an empty or `NA`
+#' value does not count as coverage.
+#'
+#' @param sources Named list of data frames, each with `id`, `year`, and
+#'   `attribute` columns -- same convention as
+#'   [attribute_consensus_tier()]/[attribute_source_corroboration()].
+#' @param attribute Name of the attribute column to check for a non-missing
+#'   value.
+#' @param universe Optional data frame of `(id, year)` pairs defining the
+#'   entity-years coverage is measured against. If `NULL` (default), uses
+#'   the union of `(id, year)` pairs across all of `sources` (see Details).
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param conf_level Confidence level for the Wilson intervals. Default
+#'   `0.95`.
+#' @return A list:
+#'   \describe{
+#'     \item{`overall`}{Tibble, one row per source, ordered by descending
+#'       `pct`: `source`, `n_covered`, `n_total` (size of `universe`),
+#'       `pct`, `ci_low`, `ci_high` (Wilson, via [wilson_ci()]). `n_covered`/
+#'       `n_total` from any two rows are exactly what
+#'       [format_proportion_comparison_prose()] expects for a direct,
+#'       statistically compared pairwise claim.}
+#'     \item{`by_year`}{Tibble, one row per `(source, year)` present in
+#'       `universe`: `source`, `year`, `n_covered`, `n_total`, `pct`,
+#'       `ci_low`, `ci_high`.}
+#'   }
+#' @examples
+#' nppes <- data.frame(npi = c("1", "1", "2"), year = c(2022, 2023, 2022), state = c("CO", "CO", "NM"))
+#' dac <- data.frame(npi = c("1"), year = c(2022), state = c("CO"))
+#' universe <- data.frame(npi = c("1", "1", "2"), year = c(2022, 2023, 2022))
+#' cov <- attribute_coverage(list(nppes = nppes, dac = dac), attribute = "state", universe = universe)
+#' cov$overall
+#' @seealso [attribute_churn_rate()] for the volatility side of comparing
+#'   sources; [format_proportion_comparison_prose()]; [wilson_ci()].
+#' @family no-gold-standard comparison
+#' @export
+attribute_coverage <- function(sources, attribute, universe = NULL,
+                                id = "npi", year = "year", conf_level = 0.95) {
+  checkmate::assert_list(sources, min.len = 1, names = "unique")
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+
+  clean_source <- function(x, label) {
+    checkmate::assert_data_frame(x)
+    for (col in c(id, year, attribute)) {
+      if (!col %in% names(x)) {
+        stop(sprintf("attribute_coverage: source '%s' has no column '%s'", label, col), call. = FALSE)
+      }
+    }
+    res <- tibble::tibble(
+      id = trimws(as.character(x[[id]])),
+      year = .parse_whole_integer(x[[year]], sprintf("attribute_coverage: source '%s' year", label), allow_na = FALSE)
+    )
+    v <- toupper(trimws(as.character(x[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res[!is.na(res$id) & nzchar(res$id), , drop = FALSE]
+  }
+
+  nm <- names(sources)
+  cleaned <- lapply(nm, function(s) clean_source(sources[[s]], s))
+  names(cleaned) <- nm
+
+  if (is.null(universe)) {
+    universe <- unique(dplyr::bind_rows(lapply(cleaned, function(x) x[, c("id", "year")])))
+  } else {
+    checkmate::assert_data_frame(universe, min.rows = 1)
+    for (col in c(id, year)) {
+      if (!col %in% names(universe)) {
+        stop(sprintf("attribute_coverage: universe has no column '%s'", col), call. = FALSE)
+      }
+    }
+    universe <- tibble::tibble(
+      id = trimws(as.character(universe[[id]])),
+      year = .parse_whole_integer(universe[[year]], "attribute_coverage: universe year", allow_na = FALSE)
+    )
+    universe <- unique(universe[!is.na(universe$id) & nzchar(universe$id), , drop = FALSE])
+  }
+  n_total <- nrow(universe)
+  if (n_total == 0L) {
+    stop("attribute_coverage: universe has zero distinct (id, year) pairs", call. = FALSE)
+  }
+
+  overall_rows <- lapply(nm, function(s) {
+    cov <- cleaned[[s]]
+    cov <- cov[!is.na(cov$value), c("id", "year"), drop = FALSE]
+    m <- merge(universe, cov, by = c("id", "year"))
+    n_covered <- nrow(m)
+    ci <- wilson_ci(n_covered, n_total, conf_level = conf_level, as_percent = TRUE)
+    tibble::tibble(source = s, n_covered = n_covered, n_total = n_total,
+                   pct = round(100 * n_covered / n_total, 1), ci_low = ci$ci_low, ci_high = ci$ci_high)
+  })
+  overall <- dplyr::bind_rows(overall_rows)
+  overall <- overall[order(-overall$pct), , drop = FALSE]
+
+  by_year_rows <- lapply(nm, function(s) {
+    cov <- cleaned[[s]]
+    cov <- cov[!is.na(cov$value), c("id", "year"), drop = FALSE]
+    years <- sort(unique(universe$year))
+    sub_rows <- lapply(years, function(yr) {
+      u_yr <- universe[universe$year == yr, , drop = FALSE]
+      n_tot_yr <- nrow(u_yr)
+      n_cov_yr <- nrow(merge(u_yr, cov[cov$year == yr, , drop = FALSE], by = c("id", "year")))
+      tibble::tibble(source = s, year = yr, n_covered = n_cov_yr, n_total = n_tot_yr)
+    })
+    dplyr::bind_rows(sub_rows)
+  })
+  by_year <- dplyr::bind_rows(by_year_rows)
+  by_year_ci <- wilson_ci(by_year$n_covered, by_year$n_total, conf_level = conf_level, as_percent = TRUE)
+  by_year$pct <- round(100 * by_year$n_covered / by_year$n_total, 1)
+  by_year$ci_low <- by_year_ci$ci_low
+  by_year$ci_high <- by_year_ci$ci_high
+
+  list(overall = tibble::as_tibble(overall), by_year = tibble::as_tibble(by_year))
 }
 
 #' Approach 1: Longitudinal lead-lag panel matrix between two registries
@@ -411,6 +724,958 @@ attribute_lead_lag_matrix <- function(source_a, source_b, attributes,
   })
 
   tibble::as_tibble(dplyr::bind_rows(rows))
+}
+
+#' How many years until one source adopts the other's disputed value?
+#'
+#' [attribute_lead_lag_matrix()]'s multi-year convergence columns
+#' (`b_adopts_a_multi_n`/`pct`, `a_reverts_b_multi_n`/`pct`) answer whether a
+#' source eventually adopts the other's `base_year` value -- never how long
+#' that takes. This answers the duration question: for every identifier
+#' discordant at `base_year`, the number of years until each direction's
+#' *first* adoption (not just whether one ever occurs), summarized as
+#' n/median/IQR/mean/SD/CI for each direction, plus a manuscript sentence for
+#' each -- the basis for saying one source is, say, "typically about a year
+#' and a half ahead of" another, instead of only "adopts more often."
+#'
+#' @details
+#' **Years, not months.** This package's longitudinal sources are annual
+#' snapshots -- a value is only known "as of year `Y`," never to a specific
+#' date -- so years is the finest unit these panels can honestly support.
+#' Reporting a month-level lag from year-only data would overclaim the
+#' panels' actual precision; a source with real calendar dates (not just an
+#' annual snapshot) is a different, separate kind of comparison.
+#'
+#' **First adoption, not any adoption.** `attribute_lead_lag_matrix()`'s
+#' `..._multi_pct` counts an identifier if the adopted value appears in *any*
+#' later year. This function instead finds the *earliest* later year it
+#' appears, because a duration has to measure from a specific point -- "ever,
+#' eventually" has no length.
+#'
+#' **The mean's CI assumes the duration distribution is reasonably
+#' well-behaved for a t-interval** (not literally normal -- year-counts are
+#' discrete and often right-skewed with a handful of identifiers). The
+#' median and IQR are reported alongside specifically so a heavily skewed
+#' distribution is visible rather than hidden behind a mean and CI alone.
+#' `ci_low`/`ci_high` are `NA` when fewer than 2 identifiers adopt (no spread
+#' to estimate from).
+#'
+#' @param source_a,source_b Longitudinal data frames with `id`, `year`, and
+#'   `attribute`, same shape as [attribute_lead_lag_matrix()]'s `source_a`/
+#'   `source_b` (one row per `(id, year)` each).
+#' @param attribute Single attribute column name to evaluate (not a vector --
+#'   call once per attribute for more than one).
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param base_year Baseline year for discordance. If `NULL` (default), the
+#'   earliest year shared by both sources that has a follow-up year -- same
+#'   resolution rule as [attribute_lead_lag_matrix()].
+#' @param source_a_label,source_b_label Short names substituted into the
+#'   sentences, e.g. `"CMS Open Payments"` / `"NPPES"`.
+#' @param conf_level Confidence level for the mean's t-interval. Default
+#'   `0.95`.
+#' @return A list:
+#'   \describe{
+#'     \item{`base_year`}{The base year used.}
+#'     \item{`disc_base_n`}{Identifiers with both sources present and
+#'       disagreeing at `base_year`.}
+#'     \item{`b_adopts`}{List: `years` (integer vector, one entry per
+#'       identifier that ever adopts `source_a`'s base-year value, the
+#'       number of years until its *first* occurrence), and `n`, `pct` (of
+#'       `disc_base_n`), `median`, `p25`, `p75`, `mean`, `sd`, `ci_low`,
+#'       `ci_high`.}
+#'     \item{`a_reverts`}{Same shape as `b_adopts`, for `source_a` reverting
+#'       to `source_b`'s base-year value.}
+#'     \item{`b_adopts_sentence`,`a_reverts_sentence`}{One manuscript
+#'       sentence each.}
+#'     \item{`combined_text`}{Both sentences joined with a space.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "1", "1", "2", "2", "2"),
+#'   year = c(2020, 2021, 2022, 2023, 2020, 2021, 2022),
+#'   state = c("CO", "CO", "CO", "CO", "NM", "NM", "TX")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "1", "1", "2", "2", "2"),
+#'   year = c(2020, 2021, 2022, 2023, 2020, 2021, 2022),
+#'   state = c("NM", "NM", "CO", "CO", "NM", "TX", "TX")
+#' )
+#' dur <- attribute_lead_lag_duration(a, b, attribute = "state", base_year = 2020,
+#'                                     source_a_label = "Source A", source_b_label = "Source B")
+#' dur$combined_text
+#' @seealso [attribute_lead_lag_matrix()] for the whether/how-often version
+#'   this extends; `vignette("lead-lag-staleness")`.
+#' @family no-gold-standard comparison
+#' @export
+attribute_lead_lag_duration <- function(source_a, source_b, attribute,
+                                         id = "npi", year = "year", base_year = NULL,
+                                         source_a_label = "Source A", source_b_label = "Source B",
+                                         conf_level = 0.95) {
+  checkmate::assert_data_frame(source_a, min.rows = 1)
+  checkmate::assert_data_frame(source_b, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  .assert_nonblank_string(source_a_label, "attribute_lead_lag_duration: source_a_label")
+  .assert_nonblank_string(source_b_label, "attribute_lead_lag_duration: source_b_label")
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("attribute_lead_lag_duration: conf_level must be strictly between 0 and 1", call. = FALSE)
+  }
+
+  for (col in c(id, year, attribute)) {
+    if (!col %in% names(source_a)) {
+      stop(sprintf("attribute_lead_lag_duration: source_a has no column '%s'", col), call. = FALSE)
+    }
+    if (!col %in% names(source_b)) {
+      stop(sprintf("attribute_lead_lag_duration: source_b has no column '%s'", col), call. = FALSE)
+    }
+  }
+
+  clean_df <- function(df, label) {
+    res <- tibble::tibble(id = trimws(as.character(df[[id]])))
+    if (any(is.na(res$id) | !nzchar(res$id))) {
+      stop(sprintf("attribute_lead_lag_duration: %s has missing or empty id values", label), call. = FALSE)
+    }
+    res$year <- .parse_whole_integer(df[[year]], sprintf("attribute_lead_lag_duration: %s year", label), allow_na = FALSE)
+    .assert_unique_keys(res, c("id", "year"), sprintf("attribute_lead_lag_duration: %s", label))
+    v <- toupper(trimws(as.character(df[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res
+  }
+
+  da <- clean_df(source_a, "source_a")
+  db <- clean_df(source_b, "source_b")
+
+  shared_years <- sort(intersect(unique(da$year), unique(db$year)))
+  if (is.null(base_year)) {
+    cand <- shared_years[shared_years < max(shared_years)]
+    base_year <- if (length(cand)) min(cand) else min(shared_years)
+  }
+  base_year <- as.integer(base_year)
+
+  a_base <- da[da$year == base_year & !is.na(da$value), c("id", "value"), drop = FALSE]
+  names(a_base)[2] <- "a_value"
+  b_base <- db[db$year == base_year & !is.na(db$value), c("id", "value"), drop = FALSE]
+  names(b_base)[2] <- "b_value"
+  base_joined <- merge(a_base, b_base, by = "id")
+  d_base <- base_joined[base_joined$a_value != base_joined$b_value, , drop = FALSE]
+  disc_base_n <- nrow(d_base)
+
+  first_adoption_years <- function(future_source, target_ids_values, target_col) {
+    # target_ids_values: data frame with id + the value each id must eventually match
+    fut <- future_source[future_source$year > base_year & future_source$id %in% target_ids_values$id,
+                          c("id", "year", "value"), drop = FALSE]
+    if (nrow(fut) == 0L) return(integer(0))
+    m <- merge(fut, target_ids_values, by = "id")
+    hit <- m[!is.na(m$value) & m$value == m[[target_col]], c("id", "year"), drop = FALSE]
+    if (nrow(hit) == 0L) return(integer(0))
+    first_year <- tapply(hit$year, hit$id, min)
+    as.integer(first_year) - base_year
+  }
+
+  summarize_duration <- function(years_vec, denom) {
+    n <- length(years_vec)
+    pct <- if (denom > 0L) round(100 * n / denom, 1) else NA_real_
+    if (n == 0L) {
+      return(list(years = years_vec, n = 0L, pct = pct, median = NA_real_, p25 = NA_real_, p75 = NA_real_,
+                  mean = NA_real_, sd = NA_real_, ci_low = NA_real_, ci_high = NA_real_))
+    }
+    med <- stats::median(years_vec)
+    qs <- stats::quantile(years_vec, c(0.25, 0.75), type = 7, names = FALSE)
+    m <- mean(years_vec)
+    s <- if (n >= 2L) stats::sd(years_vec) else NA_real_
+    if (n >= 2L && !is.na(s) && s > 0) {
+      tcrit <- stats::qt(1 - (1 - conf_level) / 2, df = n - 1L)
+      se <- s / sqrt(n)
+      ci_low <- m - tcrit * se
+      ci_high <- m + tcrit * se
+    } else {
+      ci_low <- NA_real_
+      ci_high <- NA_real_
+    }
+    list(years = years_vec, n = n, pct = pct, median = med, p25 = unname(qs[1]), p75 = unname(qs[2]),
+         mean = round(m, 2), sd = if (is.na(s)) NA_real_ else round(s, 2),
+         ci_low = if (is.na(ci_low)) NA_real_ else round(ci_low, 2),
+         ci_high = if (is.na(ci_high)) NA_real_ else round(ci_high, 2))
+  }
+
+  fmt1 <- function(x) if (is.na(x)) "NA" else sprintf("%.1f", x)
+  conf_pct <- round(100 * conf_level)
+
+  noun_id <- function(n) if (n == 1L) "identifier" else "identifiers"
+
+  sentence_for <- function(d, leader_label, follower_label, verb) {
+    if (disc_base_n == 0L) {
+      return(sprintf(
+        "No identifiers had both %s and %s present and disagreeing in %d, so no adoption timing could be measured.",
+        source_a_label, source_b_label, base_year
+      ))
+    }
+    if (d$n == 0L) {
+      return(sprintf(
+        "Of %d %s where %s and %s disagreed in %d, %s never %s %s's %d value in any later year.",
+        disc_base_n, noun_id(disc_base_n), source_a_label, source_b_label, base_year, follower_label, verb, leader_label, base_year
+      ))
+    }
+    ci_part <- if (is.na(d$ci_low)) "" else sprintf(", %d%% CI %s-%s years", conf_pct, fmt1(d$ci_low), fmt1(d$ci_high))
+    sprintf(
+      paste0(
+        "Of %d %s where %s and %s disagreed in %d, %d (%.1f%%) %s %s %s's %d value, ",
+        "after a median of %s years (IQR %s-%s; mean %s years%s)."
+      ),
+      disc_base_n, noun_id(disc_base_n), source_a_label, source_b_label, base_year, d$n, d$pct, follower_label, verb, leader_label, base_year,
+      fmt1(d$median), fmt1(d$p25), fmt1(d$p75), fmt1(d$mean), ci_part
+    )
+  }
+
+  if (disc_base_n == 0L) {
+    b_adopts <- summarize_duration(integer(0), 0L)
+    a_reverts <- summarize_duration(integer(0), 0L)
+  } else {
+    b_adopts_years <- first_adoption_years(db, d_base[, c("id", "a_value")], "a_value")
+    a_reverts_years <- first_adoption_years(da, d_base[, c("id", "b_value")], "b_value")
+    b_adopts <- summarize_duration(b_adopts_years, disc_base_n)
+    a_reverts <- summarize_duration(a_reverts_years, disc_base_n)
+  }
+
+  b_adopts_sentence <- sentence_for(b_adopts, source_a_label, source_b_label, "adopted")
+  a_reverts_sentence <- sentence_for(a_reverts, source_b_label, source_a_label, "reverted to")
+
+  structure(
+    list(
+      base_year = base_year,
+      disc_base_n = disc_base_n,
+      b_adopts = b_adopts,
+      a_reverts = a_reverts,
+      b_adopts_sentence = b_adopts_sentence,
+      a_reverts_sentence = a_reverts_sentence,
+      combined_text = paste(b_adopts_sentence, a_reverts_sentence)
+    ),
+    class = "mysteryroster_lead_lag_duration"
+  )
+}
+
+#' @export
+print.mysteryroster_lead_lag_duration <- function(x, ...) {
+  cat(sprintf(
+    "<mysteryroster_lead_lag_duration>\n  base year: %d | %d identifier%s discordant\n\n",
+    x$base_year, x$disc_base_n, if (x$disc_base_n == 1L) "" else "s"
+  ))
+  cat(strwrap(x$b_adopts_sentence, width = 76, indent = 2, exdent = 2), sep = "\n")
+  cat("\n")
+  cat(strwrap(x$a_reverts_sentence, width = 76, indent = 2, exdent = 2), sep = "\n")
+  cat("\n")
+  invisible(x)
+}
+
+#' Kaplan-Meier-style catch-up curve: how long until a source shows a value another already has?
+#'
+#' [attribute_lead_lag_duration()] answers a related question with a real limitation:
+#' its median/IQR is computed only over identifiers that *eventually* resolve within the
+#' observed panel -- one discordant at `base_year` who never catches up simply disappears
+#' from that summary, understating how long a slow source actually takes. This answers the
+#' same family of question the way time-to-event analysis is built to: as a proper
+#' right-censored Kaplan-Meier survival curve, where a value never (yet) shown by a source
+#' stays correctly "at risk" of eventually being shown for as long as that identifier's own
+#' follow-up window lasts, then drops out once follow-up runs out -- never silently excluded,
+#' never miscounted as "never".
+#'
+#' Ported and generalized from a `tyler.muffly`/Devin-AI co-authored exploratory analysis
+#' (`vignette("lead-lag-staleness")`'s "How many years ahead or behind?" section, commit
+#' `5892254` on branch `devin/1793847201-lead-lag-years-ahead`) -- the censoring-aware
+#' survival-curve mechanics are that work's own real methodological contribution, ported here
+#' as a tested, documented, reusable function instead of inline, panel-specific vignette code.
+#'
+#' @details
+#' **What counts as "a value arriving".** For each source independently, an identifier's
+#' *arrival* at a value is a consecutive-year transition (year `t` to `t + 1`, no calendar-year
+#' gap -- the same convention [attribute_churn_rate()]/[attribute_spell_age()] use) where the
+#' value changes. An identifier's first observed year in a source is never itself an arrival
+#' (there is no prior value to differ from).
+#'
+#' **What counts as a source "showing" the value, for catch-up purposes.** This is
+#' deliberately looser than the arrival rule above: once an `(id, value)` event's `start`
+#' year is known (pooled across all sources, see below), a source is credited with showing
+#' that value as soon as *any* of its own records -- at or after `start` -- carries that
+#' exact value, whether or not its own immediately preceding record was the year before.
+#' Requiring consecutive years here too would silently undercount catch-up for any source
+#' sampled less frequently than annually (e.g. enrollment- or claims-derived data with
+#' multi-year gaps between records): such a source can display the correct value while its
+#' own prior record for that identifier is several years earlier, which the strict
+#' consecutive-year rule would never recognize as a match. A record of that exact value from
+#' *before* `start` -- a coincidental earlier occurrence unrelated to the tracked arrival --
+#' does not count.
+#'
+#' **What defines one "event" to track catch-up for.** Every source's arrivals are pooled, and
+#' each distinct `(id, value)` pair's event `start` is the *earliest* year *any* source shows
+#' that identifier arriving at that value. This means a value an identifier returns to a second
+#' time, years after an earlier departure and return, is **not** treated as a second, distinct
+#' event -- it collapses into the same `(id, value)` event as the first occurrence anywhere
+#' that value was ever seen for that identifier. For this package's ordinary use (tracking
+#' arrival at a value, not every individual spell), this is the right simplification; it is not
+#' silent -- a value visited more than once by the same identifier is a known, accepted
+#' limitation of this function, not an oversight.
+#'
+#' **Censoring uses each source's OWN observation window, not the panel's.** At each
+#' `horizon` (years since an event's `start`), a source's risk set excludes any event the
+#' source could not possibly have observed yet -- entry into the risk set is delayed
+#' (left-truncated) until that source's own earliest observed year, and the source is
+#' censored (right-censored, not counted as "never shown") once its own latest observed
+#' year has passed, regardless of whether some *other* source's data extends further. Using
+#' the panel-wide latest year for every source conflates two different things: a source that
+#' was watched and simply had not shown the value yet (real loss to follow-up) versus a
+#' source whose own data collection had already ended, or had not yet started, when the
+#' comparison window extends past it (structural non-coverage). The latter is not evidence
+#' the source is slow -- it is evidence the source cannot be assessed over years it was
+#' never observed in at all. A source whose own data entirely predates or postdates an
+#' event's observable window (no overlap at all) is never at risk for that event and simply
+#' does not contribute to its curve.
+#'
+#' **Person-level non-coverage is a third category, distinct from both of the above.** A
+#' source's own observation window tells you when the *source* was operating; it says
+#' nothing about whether a *given identifier* ever appears in it at all. An identifier this
+#' source has zero records for, in any year, cannot show any value for it, let alone the
+#' tracked one -- this is not "watched and still pending", it is structural absence, and on
+#' real data it is often the dominant effect: in a real application, 46% of tracked
+#' identifiers never appeared in a sparse source at all, for any year, which was a far
+#' larger driver of that source's slow-looking curve than its temporal window ever was.
+#' Such identifiers are excluded from a source's risk set entirely (not merely left
+#' unresolved) and counted in the returned `n_no_coverage`, the same way `n_unanchored`
+#' counts events dropped for lacking independent confirmation -- both are reasons an event
+#' cannot inform a source's curve at all, as opposed to informing it with a slow or fast
+#' result.
+#'
+#' **Circularity in which source "defines" an event, and the `reference` parameter.** By
+#' default (`reference = "pooled"`), an event's `start` is pooled across every source's own
+#' detected arrivals -- which means the source that happens to detect an event earliest gets
+#' credited with "catching up" to it immediately (`horizon = 0`), simply because it supplied
+#' the reference time, not because it is actually fast. In practice this is severe: in a
+#' real five-source comparison, 66-85% of the events a source resolved at `horizon = 0` were
+#' ones that source itself had (partly) defined. `reference = "exclude_self"` removes this:
+#' for each source, the event set it is scored against is built from *every other* source's
+#' detected arrivals, excluding its own. An event detected only by the source being scored
+#' (no other source independently confirms it) cannot be scored at all under this mode and
+#' is dropped, counted in the returned `n_unanchored`. This does not create ground truth --
+#' an event two sources both happen to miss is still invisible to both -- but it removes the
+#' most direct form of circularity, and comparing `reference = "pooled"` against
+#' `reference = "exclude_self"` on the same data is itself a sensitivity check worth running
+#' before treating any single source's apparent speed as real.
+#'
+#' **A reported `median_horizon` can still be a thin, easily-shifted estimate even though
+#' it was computed correctly.** The Kaplan-Meier risk set shrinks at later horizons (fewer
+#' events have that much follow-up left at all), so a source whose curve approaches 50% only
+#' gradually can sit within a point or two of the threshold for several consecutive horizons
+#' on a small and shrinking sample, where a single additional event tips the point estimate
+#' by multiple years. This is not a bug -- re-running the same data gives the same number --
+#' but treating that number as precise would be a mistake a reader has no way to catch
+#' without more information. `median_ci_low`/`median_ci_high` and `median_n_at_risk` exist
+#' specifically to surface this: a wide interval or a small `median_n_at_risk` at the
+#' crossing horizon both say the same thing -- the point estimate is real but imprecise --
+#' and should be reported alongside it, not silently dropped in favor of the single number.
+#'
+#' @param sources Named list of longitudinal data frames (2+), each with `id`, `year`, and
+#'   `attribute` columns -- same convention as [attribute_coverage()]/
+#'   [attribute_source_corroboration()].
+#' @param attribute Name of the attribute column to track (e.g. `"state"`).
+#' @param id,year Column names. Defaults `"npi"`, `"year"`.
+#' @param max_horizon Maximum years since an event's `start` to evaluate. If `NULL` (default),
+#'   the full span of years present across all sources (`max(year) - min(year)`).
+#' @param reference `"pooled"` (default) pools every source's own detected arrivals to find
+#'   each event's `start`, so a source can get credit for "catching up" to an event it itself
+#'   defined. `"exclude_self"` scores each source only against events *other* sources
+#'   detected, removing that circularity at the cost of dropping events no other source
+#'   independently confirms (see `n_unanchored`).
+#' @param lineage_groups Only used when `reference = "exclude_self"`. Optional named list,
+#'   same convention as [attribute_claims_collapse_lineage()]'s own `lineage_groups`: each
+#'   element a character vector of `sources` names that share underlying provenance (e.g.
+#'   a facility-affiliation extract derived from the same upstream file as an enrollment
+#'   source). A source not named by any group is its own singleton group. Excluding "self"
+#'   then means excluding every member of the scored source's *whole group*, not just that
+#'   one source -- two sources that are really the same evidence re-exported under
+#'   different names cannot independently confirm each other's events, and treating them
+#'   as independent just because their files have different names reintroduces the
+#'   circularity `reference = "exclude_self"` exists to remove. Each source name may belong
+#'   to at most one group.
+#' @param ci_level Confidence level for the pointwise survival-curve interval (`curve$ci_low`/
+#'   `ci_high`) and the Brookmeyer-Crowley interval around `median_horizon`. Default `0.95`.
+#'   Computed via the log-log (Kalbfleisch-Prentice) transform of Greenwood's formula, the
+#'   same method `survival::survfit()` uses by default.
+#' @return A list:
+#'   \describe{
+#'     \item{`curve`}{Tibble, one row per `(source, horizon)`: `n_at_risk`, `n_events` (first
+#'       shown at exactly this horizon), `pct_not_yet_shown` (the Kaplan-Meier survival
+#'       estimate, non-increasing within a source; may start below `100` if that source's own
+#'       observation window begins after some events' `start`, since those events have not
+#'       yet entered its risk set), `ci_low`/`ci_high` (the pointwise confidence interval on
+#'       `pct_not_yet_shown` at `ci_level`, `NA` only when there is no data at all to estimate
+#'       from).}
+#'     \item{`median_horizon`}{Tibble, one row per source: `median_horizon`, the smallest
+#'       `horizon` at which `pct_not_yet_shown <= 50`, or `NA` if the curve never crosses 50%
+#'       within `max_horizon` -- a source that never reaches its median catch-up time within
+#'       the observed panel, reported as `NA`, not a misleadingly small number. `median_ci_low`/
+#'       `median_ci_high`, the Brookmeyer-Crowley confidence interval around that horizon
+#'       (`median_ci_high` is `NA` when the upper confidence bound on the curve never crosses
+#'       50% within the observed horizons -- an unbounded slow end, not a fabricated one).
+#'       `median_n_at_risk`, the number of events still at risk at the horizon where the
+#'       point estimate crosses 50% -- a small value (relative to `n_tracked`) is a direct
+#'       warning sign that the point estimate itself is sitting on a thin, easily-shifted
+#'       sample, which the width of `median_ci_low`/`median_ci_high` will also reflect.}
+#'     \item{`n_tracked`}{Total distinct `(id, value)` arrival events pooled across all
+#'       sources -- a single constant, independent of any source's own observation window.}
+#'     \item{`reference`}{The `reference` argument used, echoed back.}
+#'     \item{`n_no_coverage`}{Tibble, one row per source: the count of pooled events dropped
+#'       for that source because the identifier has no record in that source at all, in any
+#'       year -- structural non-coverage, excluded from the risk set entirely rather than
+#'       left unresolved.}
+#'     \item{`n_unanchored`}{Only present when `reference = "exclude_self"`: tibble, one row
+#'       per source, the count of pooled events dropped for that source because no source
+#'       outside its `lineage_groups` group (itself alone, if ungrouped) independently
+#'       detected them.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "CO", "NM", "TX", "TX", "TX")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "NM", "NM", "TX", "TX", "NM")
+#' )
+#' cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+#' cu$curve
+#' cu$median_horizon
+#' # Rank sources by how fast they typically catch up (lower is faster):
+#' format_ranking_prose(
+#'   group = cu$median_horizon$source, value = cu$median_horizon$median_horizon,
+#'   value_label = "median years to catch up", fmt = "%.0f", decreasing = FALSE
+#' )$sentence
+#' @seealso [attribute_lead_lag_duration()] for the simpler, non-censoring-aware version this
+#'   complements; [format_ranking_prose()] to rank `median_horizon` across sources.
+#' @family no-gold-standard comparison
+#' @export
+attribute_catch_up_curve <- function(sources, attribute, id = "npi", year = "year", max_horizon = NULL,
+                                      reference = c("pooled", "exclude_self"), lineage_groups = NULL,
+                                      ci_level = 0.95) {
+  reference <- match.arg(reference)
+  checkmate::assert_list(sources, min.len = 2, names = "unique")
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  if (!is.null(max_horizon)) checkmate::assert_count(max_horizon, positive = TRUE)
+  checkmate::assert_number(ci_level, lower = 0, upper = 1)
+
+  nm <- names(sources)
+
+  if (!is.null(lineage_groups)) {
+    checkmate::assert_list(lineage_groups, names = "unique")
+    group_members <- unlist(lineage_groups, use.names = FALSE)
+    if (anyDuplicated(group_members) > 0L) {
+      stop(sprintf("attribute_catch_up_curve: source(s) appear in more than one lineage group: %s",
+                   paste(unique(group_members[duplicated(group_members)]), collapse = ", ")), call. = FALSE)
+    }
+    unknown <- setdiff(group_members, nm)
+    if (length(unknown) > 0L) {
+      stop(sprintf("attribute_catch_up_curve: lineage_groups references unknown source(s): %s",
+                   paste(unknown, collapse = ", ")), call. = FALSE)
+    }
+  }
+  group_of <- function(s) {
+    if (is.null(lineage_groups)) return(s)
+    hit <- Filter(function(g) s %in% g, lineage_groups)
+    if (length(hit) == 0L) s else hit[[1]]
+  }
+  clean_source <- function(x, label) {
+    checkmate::assert_data_frame(x)
+    for (col in c(id, year, attribute)) {
+      if (!col %in% names(x)) {
+        stop(sprintf("attribute_catch_up_curve: source '%s' has no column '%s'", label, col), call. = FALSE)
+      }
+    }
+    res <- tibble::tibble(
+      id = trimws(as.character(x[[id]])),
+      year = .parse_whole_integer(x[[year]], sprintf("attribute_catch_up_curve: source '%s' year", label), allow_na = FALSE)
+    )
+    v <- toupper(trimws(as.character(x[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res <- res[!is.na(res$id) & nzchar(res$id) & !is.na(res$value), , drop = FALSE]
+    .assert_unique_keys(res, c("id", "year"), sprintf("attribute_catch_up_curve: source '%s'", label))
+    res[order(res$id, res$year), , drop = FALSE]
+  }
+  cleaned <- lapply(nm, function(s) clean_source(sources[[s]], s))
+  names(cleaned) <- nm
+
+  # Each source's own arrivals: consecutive-year transitions where the value changed.
+  extract_events <- function(df) {
+    groups <- split(df, df$id, drop = TRUE)
+    rows <- lapply(groups, function(g) {
+      n <- nrow(g)
+      if (n < 2L) return(NULL)
+      prev_year <- g$year[1:(n - 1L)]; prev_val <- g$value[1:(n - 1L)]
+      this_year <- g$year[2:n]; this_val <- g$value[2:n]
+      consec <- this_year == prev_year + 1L
+      changed <- consec & (this_val != prev_val)
+      if (!any(changed)) return(NULL)
+      tibble::tibble(id = g$id[1], year = this_year[changed], value = this_val[changed])
+    })
+    dplyr::bind_rows(rows)
+  }
+  events <- lapply(cleaned, extract_events) # events[[s]] is NULL if source s detects nothing
+  events_present <- events[!vapply(events, is.null, logical(1))]
+  all_events <- dplyr::bind_rows(events_present)
+  if (nrow(all_events) == 0L) {
+    stop("attribute_catch_up_curve: no consecutive-year arrivals detected in any source", call. = FALSE)
+  }
+
+  first_seen_pooled <- stats::aggregate(year ~ id + value, all_events, min)
+  names(first_seen_pooled)[3] <- "start"
+  n_tracked <- nrow(first_seen_pooled)
+
+  source_min_year <- vapply(cleaned, function(x) min(x$year), integer(1))
+  source_max_year <- vapply(cleaned, function(x) max(x$year), integer(1))
+  panel_min_year <- min(source_min_year)
+  panel_max_year <- max(source_max_year)
+  if (is.null(max_horizon)) max_horizon <- panel_max_year - panel_min_year
+  horizons <- 0:max_horizon
+
+  # A source is credited with "showing" a tracked value as soon as ANY of its own
+  # records carries that exact value in a year at or after the value's pooled first
+  # appearance -- not only if that source's own immediately preceding record was
+  # exactly one year earlier. The latter (stricter) rule is used above, in
+  # extract_events(), to discover genuine arrivals robustly; it is deliberately NOT
+  # reused here, because it silently undercounts catch-up for any source that is
+  # sampled intermittently (e.g. claims- or enrollment-derived data with multi-year
+  # gaps between records) relative to a densely/annually sampled source -- such a
+  # source can show the correct value while its own prior record is several years
+  # earlier, which extract_events() would never flag as an "arrival".
+  km_for_source <- function(s) {
+    src <- cleaned[[s]]
+    n_unanchored <- 0L
+    if (identical(reference, "exclude_self")) {
+      other_events <- events[setdiff(nm, group_of(s))]
+      other_events <- other_events[!vapply(other_events, is.null, logical(1))]
+      all_other <- dplyr::bind_rows(other_events)
+      if (nrow(all_other) == 0L) {
+        first_seen_s <- first_seen_pooled[0L, ]
+      } else {
+        first_seen_s <- stats::aggregate(year ~ id + value, all_other, min)
+        names(first_seen_s)[3] <- "start"
+      }
+      n_unanchored <- n_tracked - nrow(first_seen_s)
+    } else {
+      first_seen_s <- first_seen_pooled
+    }
+
+    # Person-level non-coverage: an identifier this source has NO records for at all, in
+    # any year, cannot show ANY value for it, let alone the tracked one -- structurally
+    # absent from this source, not "watched but not yet updated". Keeping such an
+    # identifier in the risk set anyway (as the source-level observation window alone
+    # would) drags the curve down for a reason that has nothing to do with update speed:
+    # on real data, this was the dominant driver of an implausibly slow-looking source,
+    # far more than the source-level window ever was. Excluded here and reported
+    # separately, the same way n_unanchored is, rather than silently counted as still
+    # pending.
+    ids_observed <- unique(src$id)
+    n_no_coverage <- sum(!(first_seen_s$id %in% ids_observed))
+    first_seen_s <- first_seen_s[first_seen_s$id %in% ids_observed, , drop = FALSE]
+
+    if (nrow(first_seen_s) == 0L) {
+      return(list(
+        curve = tibble::tibble(horizon = horizons, n_at_risk = 0L, n_events = 0L, pct_not_yet_shown = NA_real_,
+                               ci_low = NA_real_, ci_high = NA_real_),
+        n_unanchored = n_unanchored, n_no_coverage = n_no_coverage
+      ))
+    }
+
+    m <- merge(first_seen_s, src, by = c("id", "value"), all.x = TRUE)
+    m$d <- m$year - m$start
+    # A match that occurred only *before* this value's first appearance anywhere
+    # (a coincidental earlier occurrence of the same value, unrelated to the
+    # tracked arrival) does not count as catching up; treat it as no match so the
+    # (id, value, start) triple is retained in the risk set rather than vanishing.
+    m$d[!is.na(m$d) & m$d < 0] <- NA
+    m <- m[order(is.na(m$d), m$d), ]
+    m <- m[!duplicated(m[, c("id", "value", "start")]), , drop = FALSE]
+
+    # This source's OWN observation window, not the panel's: it cannot be at risk of
+    # showing a value before its own data begins (entry is delayed/left-truncated, not
+    # retroactive), and it is censored at its own last observed year, regardless of how
+    # much further some other source's data happens to extend.
+    entry_h <- pmax(0, source_min_year[[s]] - m$start)
+    exit_h <- source_max_year[[s]] - m$start
+
+    n_at_risk_vec <- integer(length(horizons))
+    n_events_vec <- integer(length(horizons))
+    surv_vec <- numeric(length(horizons))
+    greenwood_vec <- numeric(length(horizons))
+    surv <- 1
+    cum_greenwood <- 0
+    for (i in seq_along(horizons)) {
+      h <- horizons[i]
+      at_risk <- (is.na(m$d) | m$d >= h) & entry_h <= h & exit_h >= h
+      n_at_risk <- sum(at_risk)
+      n_events <- sum(!is.na(m$d) & m$d == h & at_risk)
+      n_at_risk_vec[i] <- n_at_risk
+      n_events_vec[i] <- n_events
+      if (n_at_risk > 0L) surv <- surv * (1 - n_events / n_at_risk)
+      surv_vec[i] <- 100 * surv
+      # Greenwood's formula, accumulated: Var(S(h)) = S(h)^2 * cum_greenwood. Kept on this
+      # variance-ratio scale (rather than multiplying through by S(h)^2 immediately) because
+      # the log-log-transformed confidence interval below needs exactly this ratio, not the
+      # raw variance.
+      if (n_at_risk > 0L && n_at_risk > n_events) {
+        cum_greenwood <- cum_greenwood + n_events / (n_at_risk * (n_at_risk - n_events))
+      }
+      greenwood_vec[i] <- cum_greenwood
+    }
+
+    # Pointwise confidence interval for the survival curve itself, via the log-log
+    # (Kalbfleisch-Prentice) transform of Greenwood's variance -- the same method
+    # survival::survfit() uses by default, chosen because it stays within [0, 100] rather
+    # than needing to be clipped, unlike a plain S(h) +/- z*SE(S(h)) interval. A horizon
+    # with no uncertainty yet (0% or 100%, no events have had the chance to occur or all of
+    # them already have) gets a degenerate, exact interval rather than an undefined one.
+    z <- stats::qnorm(1 - (1 - ci_level) / 2)
+    s_frac <- surv_vec / 100
+    valid <- s_frac > 0 & s_frac < 1 & greenwood_vec > 0
+    theta <- ifelse(valid, log(-log(s_frac)), NA_real_)
+    se_theta <- ifelse(valid, sqrt(greenwood_vec) / abs(log(s_frac)), NA_real_)
+    ci_low_vec <- rep(NA_real_, length(horizons))
+    ci_high_vec <- rep(NA_real_, length(horizons))
+    ci_low_vec[valid] <- 100 * exp(-exp(theta[valid] + z * se_theta[valid]))
+    ci_high_vec[valid] <- 100 * exp(-exp(theta[valid] - z * se_theta[valid]))
+    ci_low_vec[s_frac == 1] <- 100; ci_high_vec[s_frac == 1] <- 100
+    ci_low_vec[s_frac == 0] <- 0; ci_high_vec[s_frac == 0] <- 0
+
+    list(
+      curve = tibble::tibble(horizon = horizons, n_at_risk = n_at_risk_vec, n_events = n_events_vec,
+                             pct_not_yet_shown = round(surv_vec, 1),
+                             ci_low = round(ci_low_vec, 1), ci_high = round(ci_high_vec, 1)),
+      n_unanchored = n_unanchored, n_no_coverage = n_no_coverage
+    )
+  }
+
+  per_source <- lapply(nm, km_for_source)
+  names(per_source) <- nm
+
+  curve_rows <- lapply(nm, function(s) {
+    out <- per_source[[s]]$curve
+    out$source <- s
+    out[, c("source", "horizon", "n_at_risk", "n_events", "pct_not_yet_shown", "ci_low", "ci_high")]
+  })
+  curve <- tibble::as_tibble(dplyr::bind_rows(curve_rows))
+
+  # Brookmeyer-Crowley confidence interval for the median: the horizons at which the
+  # pointwise lower and upper confidence bounds on the survival curve itself (computed
+  # above) first cross 50%. The lower survival bound represents the most-already-resolved
+  # plausible curve, so it crosses first (the fast end of the interval); the upper bound is
+  # the least-resolved plausible curve, crossing last or never (the slow end) -- `NA` when
+  # it never crosses within the observed horizons, not a fabricated upper limit.
+  median_rows <- lapply(nm, function(s) {
+    cv <- curve[curve$source == s, ]
+    below <- cv$horizon[!is.na(cv$pct_not_yet_shown) & cv$pct_not_yet_shown <= 50]
+    median_h <- if (length(below) > 0L) min(below) else NA_integer_
+    lo_below <- cv$horizon[!is.na(cv$ci_low) & cv$ci_low <= 50]
+    hi_below <- cv$horizon[!is.na(cv$ci_high) & cv$ci_high <= 50]
+    tibble::tibble(
+      source = s, median_horizon = median_h,
+      median_ci_low = if (!is.na(median_h) && length(lo_below) > 0L) min(lo_below) else NA_integer_,
+      median_ci_high = if (!is.na(median_h) && length(hi_below) > 0L) min(hi_below) else NA_integer_,
+      median_n_at_risk = if (!is.na(median_h)) cv$n_at_risk[cv$horizon == median_h] else NA_integer_
+    )
+  })
+  median_horizon <- tibble::as_tibble(dplyr::bind_rows(median_rows))
+
+  out <- list(curve = curve, median_horizon = median_horizon, n_tracked = n_tracked, reference = reference)
+  out$n_no_coverage <- tibble::tibble(
+    source = nm,
+    n_no_coverage = unname(vapply(nm, function(s) per_source[[s]]$n_no_coverage, integer(1)))
+  )
+  if (identical(reference, "exclude_self")) {
+    out$n_unanchored <- tibble::tibble(
+      source = nm,
+      n_unanchored = unname(vapply(nm, function(s) per_source[[s]]$n_unanchored, integer(1)))
+    )
+  }
+  structure(out, class = "mysteryroster_catch_up_curve")
+}
+
+#' @export
+print.mysteryroster_catch_up_curve <- function(x, ...) {
+  cat(sprintf(
+    "<mysteryroster_catch_up_curve>\n  reference: %s | %s tracked event%s across %d source%s\n",
+    x$reference, format(x$n_tracked, big.mark = ","), if (x$n_tracked == 1L) "" else "s",
+    nrow(x$median_horizon), if (nrow(x$median_horizon) == 1L) "" else "s"
+  ))
+  mh <- x$median_horizon
+  resolved <- mh[!is.na(mh$median_horizon), , drop = FALSE]
+  resolved <- resolved[order(resolved$median_horizon), , drop = FALSE]
+  if (nrow(resolved) > 0L) {
+    cat("  median years to catch up (95% CI), fastest first:\n")
+    for (i in seq_len(nrow(resolved))) {
+      r <- resolved[i, ]
+      hi <- if (is.na(r$median_ci_high)) "not estimable" else r$median_ci_high
+      cat(sprintf("    %-20s %s (%s-%s)  [n at risk at crossing = %s]\n",
+                  r$source, r$median_horizon, r$median_ci_low, hi, r$median_n_at_risk))
+    }
+  }
+  unresolved <- setdiff(mh$source, resolved$source)
+  if (length(unresolved) > 0L) {
+    cat(sprintf("  never reached 50%% catch-up: %s\n", paste(unresolved, collapse = ", ")))
+  }
+  invisible(x)
+}
+
+#' Manuscript-ready prose for an attribute_catch_up_curve() result
+#'
+#' A thin wrapper around [format_ranking_prose()] specific to
+#' [attribute_catch_up_curve()]'s own output shape: ranks sources whose catch-up curve
+#' crosses 50% within the observed panel, and -- because [format_ranking_prose()]
+#' deliberately refuses `NA` values -- writes its own sentence for any source whose curve
+#' never does, naming how much of the pooled event set still has not caught up, both
+#' immediately and at a chosen horizon.
+#'
+#' @details
+#' A source's curve crossing 50% ("resolved") and never doing so ("unresolved") are
+#' reported in two different registers for a reason: a median catch-up time is only a
+#' meaningful summary for a source that actually reaches one within the panel. Forcing
+#' every source through the same ranking sentence would either drop the unresolved ones
+#' silently (the same failure mode [attribute_lead_lag_duration()]'s median/IQR has, which
+#' [attribute_catch_up_curve()] exists to avoid) or report a fabricated "greater than X
+#' years" figure with no real upper bound. Resolved sources are ranked by
+#' [format_ranking_prose()]; unresolved ones each get a sentence giving
+#' `pct_not_yet_shown` at horizon 0 and at `unresolved_horizon` (clamped down to a source's
+#' own maximum observed horizon if that is shorter), so a reader sees exactly how much
+#' ground an unresolved source has or hasn't covered, not just that it failed to reach the
+#' 50% mark.
+#'
+#' Fewer than two resolved sources cannot be ranked ([format_ranking_prose()] requires
+#' 2+); with exactly one, its own median is reported as a plain sentence instead, and with
+#' zero, the ranking sentence is omitted entirely -- `sentence` is always well-formed,
+#' never an error, regardless of how many sources resolve.
+#'
+#' @param cu Output of [attribute_catch_up_curve()]: a list with `curve` and
+#'   `median_horizon`.
+#' @param display_label Optional named character vector mapping a source name (as it
+#'   appears in `cu`) to the label used in prose (e.g. `c(nppes = "NPPES", dac_pecos =
+#'   "the DAC/PECOS-combined enrollment record")`). A source with no entry is shown under
+#'   its own name.
+#' @param unresolved_horizon Horizon (years) at which to report the catch-up percentage
+#'   for a source whose curve never crosses 50%. Default `5`. Clamped down to a source's
+#'   own maximum observed horizon if that is shorter.
+#' @param decreasing Passed to [format_ranking_prose()] for the resolved-source ranking.
+#'   Default `FALSE` (fastest catch-up first), the natural reading for a "years to catch
+#'   up" value -- the opposite of that function's own default.
+#' @param register `"technical"` (default) produces this function's original terse
+#'   sentences ("reached 50% catch-up", "tracked arrivals"). `"clinical"` instead produces
+#'   plain-language prose with no abbreviations and no em dashes, suitable for a clinical-
+#'   journal Methods/Results section: "confirmed a change already reported by another
+#'   source" rather than "caught up", "changes" rather than "arrivals". As with
+#'   [format_ranking_prose()], the caller is still responsible for passing fully spelled-
+#'   out `display_label` values in clinical register; this parameter controls sentence
+#'   structure, not domain vocabulary.
+#' @param ci_level Display label only (e.g. "95% CI"); must match the `ci_level` actually
+#'   passed to the [attribute_catch_up_curve()] call that produced `cu`, which this
+#'   function has no way to verify and trusts the caller on. Default `0.95`, matching that
+#'   function's own default.
+#' @return A list:
+#'   \describe{
+#'     \item{`n_events`}{The total number of tracked events pooled across all sources
+#'       (`cu$n_tracked` when present).}
+#'     \item{`ranking`}{[format_ranking_prose()]'s full return for the resolved sources,
+#'       or `NULL` if fewer than 2 sources resolved.}
+#'     \item{`unresolved`}{Tibble, one row per unresolved source: `source`, `horizon`,
+#'       `pct_at_horizon_0`, `pct_at_horizon`.}
+#'     \item{`sentence`}{The complete, ready-to-paste Results text -- including, for each
+#'       resolved source, a confidence interval and the number of events still at risk
+#'       when its median was reached, whenever `cu` carries those columns (every real
+#'       [attribute_catch_up_curve()] result does).}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "CO", "NM", "TX", "TX", "TX")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "1", "2", "2", "2"), year = rep(2020:2022, 2),
+#'   state = c("CO", "NM", "NM", "TX", "GA", "GA")
+#' )
+#' cu <- attribute_catch_up_curve(list(a = a, b = b), attribute = "state")
+#' attribute_catch_up_curve_prose(cu, display_label = c(a = "Source A", b = "Source B"))$sentence
+#'
+#' attribute_catch_up_curve_prose(
+#'   cu, display_label = c(a = "the first registry", b = "the second registry"),
+#'   register = "clinical"
+#' )$sentence
+#' @seealso [attribute_catch_up_curve()]; [format_ranking_prose()], used internally for the
+#'   resolved-source ranking.
+#' @family no-gold-standard comparison
+#' @export
+attribute_catch_up_curve_prose <- function(cu, display_label = NULL, unresolved_horizon = 5L,
+                                            decreasing = FALSE, register = c("technical", "clinical"),
+                                            ci_level = 0.95) {
+  register <- match.arg(register)
+  checkmate::assert_number(ci_level, lower = 0, upper = 1)
+  checkmate::assert_list(cu, names = "unique")
+  if (!all(c("curve", "median_horizon") %in% names(cu))) {
+    stop("attribute_catch_up_curve_prose: cu must have 'curve' and 'median_horizon' elements, as returned by attribute_catch_up_curve()", call. = FALSE)
+  }
+  curve <- cu$curve
+  median_horizon <- cu$median_horizon
+  checkmate::assert_data_frame(curve, min.rows = 1)
+  checkmate::assert_data_frame(median_horizon, min.rows = 1)
+  for (col in c("source", "horizon", "n_at_risk", "pct_not_yet_shown")) {
+    if (!col %in% names(curve)) {
+      stop(sprintf("attribute_catch_up_curve_prose: cu$curve has no column '%s'", col), call. = FALSE)
+    }
+  }
+  for (col in c("source", "median_horizon")) {
+    if (!col %in% names(median_horizon)) {
+      stop(sprintf("attribute_catch_up_curve_prose: cu$median_horizon has no column '%s'", col), call. = FALSE)
+    }
+  }
+  if (!is.null(display_label)) checkmate::assert_character(display_label, names = "unique")
+  checkmate::assert_count(unresolved_horizon, positive = TRUE)
+  checkmate::assert_flag(decreasing)
+
+  label_for <- function(s) if (!is.null(display_label) && s %in% names(display_label)) display_label[[s]] else s
+
+  nm <- unique(as.character(median_horizon$source))
+  # cu$n_tracked (present on every real attribute_catch_up_curve() result) is the true,
+  # reference-mode-independent pooled total. Falling back to the largest single source's
+  # own horizon-0 risk-set size only happens to equal that total under reference = "pooled",
+  # where every source starts with an identical, unfiltered risk set; under "exclude_self",
+  # each source's own risk set is already reduced by its unanchored/uncovered exclusions, so
+  # the two are not interchangeable, and using the fallback there would understate the real
+  # number of tracked events.
+  n_events <- if (!is.null(cu$n_tracked)) {
+    cu$n_tracked
+  } else {
+    max(curve$n_at_risk[curve$horizon == 0], na.rm = TRUE)
+  }
+
+  resolved <- median_horizon[!is.na(median_horizon$median_horizon), , drop = FALSE]
+  unresolved_nm <- setdiff(nm, resolved$source)
+
+  clinical <- identical(register, "clinical")
+  value_label <- if (clinical) "median years to confirmation" else "median years to catch up"
+
+  ranking <- NULL
+  ranking_sentence <- NULL
+  if (nrow(resolved) >= 2L) {
+    ranking <- format_ranking_prose(
+      group = vapply(resolved$source, label_for, character(1)), value = resolved$median_horizon,
+      value_label = value_label, fmt = "%.0f", decreasing = decreasing, register = register
+    )
+    ranking_sentence <- ranking$sentence
+  } else if (nrow(resolved) == 1L) {
+    ranking_sentence <- if (clinical) {
+      sprintf(
+        "The estimated time for %s to confirm a change already reported by another source was %.0f years.",
+        label_for(resolved$source[1]), resolved$median_horizon[1]
+      )
+    } else {
+      sprintf(
+        "%s reached 50%% catch-up after a median of %.0f years.",
+        label_for(resolved$source[1]), resolved$median_horizon[1]
+      )
+    }
+  }
+
+  # A median_horizon's point estimate can be real but imprecise, sitting on a thin,
+  # already-censoring-reduced risk set for several consecutive horizons before actually
+  # crossing 50% (see attribute_catch_up_curve()'s own Details). Reporting it bare, with
+  # no interval, hides that from a reader who has no way to tell a well-powered median
+  # from a fragile one. This is only possible when cu was produced by a version of
+  # attribute_catch_up_curve() that returns the confidence-interval columns; older or
+  # hand-built cu objects without them simply skip this (no error).
+  has_ci <- all(c("median_ci_low", "median_ci_high", "median_n_at_risk") %in% names(median_horizon))
+  ci_sentences <- character(0)
+  if (has_ci && nrow(resolved) > 0L) {
+    ci_pct <- round(100 * ci_level)
+    # Builds the "X to Y years" clause with correct grammar in all four combinations of
+    # which bound, if either, is NA (not estimable within the observed horizons) -- a
+    # naive sprintf("%s to %s years", lo, hi) reads badly ("...not estimable ... years")
+    # whenever either bound is text rather than a number.
+    yr <- function(n) if (n == 1L) "year" else "years"
+    format_ci_years <- function(lo, hi) {
+      if (!is.na(lo) && !is.na(hi)) {
+        sprintf("%d to %d %s", lo, hi, yr(hi))
+      } else if (!is.na(lo)) {
+        if (clinical) sprintf("%d %s, with no upper bound estimable within the period observed", lo, yr(lo))
+        else sprintf("%d %s to not estimable", lo, yr(lo))
+      } else if (!is.na(hi)) {
+        if (clinical) sprintf("not estimable at the lower end, up to %d %s", hi, yr(hi))
+        else sprintf("not estimable to %d %s", hi, yr(hi))
+      } else {
+        "not estimable in either direction within the period observed"
+      }
+    }
+    ci_sentences <- vapply(seq_len(nrow(resolved)), function(i) {
+      r <- resolved[i, ]
+      ci_text <- format_ci_years(r$median_ci_low, r$median_ci_high)
+      if (clinical) {
+        sprintf(
+          "This estimate for %s was based on %d event%s still being tracked at the time the median was reached, with a %d%% confidence interval of %s.",
+          label_for(r$source), r$median_n_at_risk, if (r$median_n_at_risk == 1L) "" else "s", ci_pct, ci_text
+        )
+      } else {
+        sprintf(
+          "%s: %d%% CI %s (n at risk at crossing = %d).",
+          label_for(r$source), ci_pct, ci_text, r$median_n_at_risk
+        )
+      }
+    }, character(1))
+  }
+
+  unresolved_rows <- lapply(unresolved_nm, function(s) {
+    cv <- curve[curve$source == s, , drop = FALSE]
+    h <- min(unresolved_horizon, max(cv$horizon))
+    tibble::tibble(
+      source = s, horizon = h,
+      pct_at_horizon_0 = cv$pct_not_yet_shown[cv$horizon == 0],
+      pct_at_horizon = cv$pct_not_yet_shown[cv$horizon == h]
+    )
+  })
+  unresolved <- if (length(unresolved_rows) > 0L) {
+    tibble::as_tibble(dplyr::bind_rows(unresolved_rows))
+  } else {
+    tibble::tibble(source = character(0), horizon = integer(0),
+                   pct_at_horizon_0 = numeric(0), pct_at_horizon = numeric(0))
+  }
+
+  unresolved_sentences <- vapply(seq_len(nrow(unresolved)), function(i) {
+    r <- unresolved[i, ]
+    if (clinical) {
+      sprintf(
+        "%s did not reach confirmation for even half of the changes tracked within the period observed. At the time a change first appeared, %.1f%% had not yet been confirmed by this source; %.1f%% remained unconfirmed %d year%s later.",
+        label_for(r$source), r$pct_at_horizon_0, r$pct_at_horizon, r$horizon, if (r$horizon == 1L) "" else "s"
+      )
+    } else {
+      sprintf(
+        "%s never reached 50%% catch-up within the observed panel (%.1f%% of tracked arrivals still not reflected immediately, %.1f%% still not reflected %d year%s later).",
+        label_for(r$source), r$pct_at_horizon_0, r$pct_at_horizon, r$horizon, if (r$horizon == 1L) "" else "s"
+      )
+    }
+  }, character(1))
+
+  intro_sentence <- if (clinical) {
+    sprintf("A total of %s change%s in the tracked value %s identified across %d source%s.",
+            format(n_events, big.mark = ","), if (n_events == 1L) "" else "s",
+            if (n_events == 1L) "was" else "were",
+            length(nm), if (length(nm) == 1L) "" else "s")
+  } else {
+    sprintf("We identified %s state-arrival event%s tracked across %d source%s.",
+            format(n_events, big.mark = ","), if (n_events == 1L) "" else "s",
+            length(nm), if (length(nm) == 1L) "" else "s")
+  }
+
+  sentence <- paste(
+    c(intro_sentence, ranking_sentence, ci_sentences, unresolved_sentences),
+    collapse = " "
+  )
+
+  list(n_events = n_events, ranking = ranking, unresolved = unresolved, sentence = sentence)
 }
 
 #' Approach 2: Attribute agreement stratified by empirical spell age or career tenure
@@ -862,6 +2127,42 @@ enrollment_move_lead_lag <- function(panel, intervals,
 #'   blank line), each a single character string.
 #' @seealso `vignette("lead-lag-staleness")` for the full output on example
 #'   inputs.
+#' @examples
+#' # lead_lag_df needs exactly these four attribute rows and columns --
+#' # round numbers here stand in for a real attribute_lead_lag_matrix()/
+#' # attribute_lead_lag_duration() result; see Details for what each means.
+#' lead_lag_df <- tibble::tibble(
+#'   attribute = c("state", "city", "zip5", "street"),
+#'   n_paired_transitions = 100L, n_concordant_at_t = 80L,
+#'   a_breaks_concordance_first = 12L, b_breaks_concordance_first = 8L,
+#'   both_move_together_at_t1 = 5L, n_discordant_at_t = 20L,
+#'   b_adopts_a_at_t1_n = 10L, b_adopts_a_at_t1_pct = 50,
+#'   a_reverts_to_b_at_t1_n = 6L, a_reverts_to_b_at_t1_pct = 30,
+#'   persistent_discordant_at_t1_pct = 20, base_year = 2022L,
+#'   disc_base_n = 20L, b_adopts_a_multi_n = 12L, b_adopts_a_multi_pct = 60,
+#'   a_reverts_b_multi_n = 8L, a_reverts_b_multi_pct = 40,
+#'   cross_section_disc_n = 20L, cross_section_in_prior_b_n = 4L,
+#'   cross_section_in_prior_b_pct = 20
+#' )
+#' # freshness_df needs exactly these three spell-age strata.
+#' freshness_df <- tibble::tibble(
+#'   comparison = "DAC (2026) vs NPPES (2026)", stratification = "nppes_street_spell_age",
+#'   stratum = c("0 yrs (updated in snapshot yr)", "1-2 yrs", "11+ yrs (un-updated >=11 yrs)"),
+#'   n = c(70L, 150L, 100L), state_agree_pct = c(87.6, 91.8, 89.1),
+#'   city_agree_pct = c(51.9, 62.7, 47.7), zip5_agree_pct = c(43.4, 57.8, 36.3),
+#'   street_agree_pct = c(34.0, 43.7, 20.4)
+#' )
+#' # enrollment_df is [enrollment_move_lead_lag()]'s own output, unchanged.
+#' panel <- data.frame(npi = c("1", "1"), year = c(2023, 2024), state = c("CO", "NM"))
+#' intervals <- data.frame(
+#'   npi = c("1", "1"), state = c("NM", "CO"),
+#'   interval_start = as.Date(c("2023-05-01", "2020-01-01")),
+#'   interval_end = as.Date(c("2099-12-31", "2025-03-31"))
+#' )
+#' enrollment_df <- enrollment_move_lead_lag(panel, intervals)
+#'
+#' prose <- format_no_gold_standard_prose(lead_lag_df, freshness_df, enrollment_df)
+#' names(prose)
 #' @family no-gold-standard comparison
 #' @export
 format_no_gold_standard_prose <- function(lead_lag_df, freshness_df, enrollment_df,
@@ -1104,5 +2405,704 @@ format_no_gold_standard_prose <- function(lead_lag_df, freshness_df, enrollment_
     paragraph_2_freshness  = p2,
     paragraph_3_enrollment = p3,
     combined_text          = paste(p1, p2, p3, sep = "\n\n")
+  )
+}
+
+#' Six-category mutually exclusive longitudinal trajectory decomposition of base-year disagreements
+#'
+#' [attribute_lead_lag_duration()] reports the two directional adoption streams
+#' (`b_adopts` and `a_reverts`) separately, which are neither exhaustive nor
+#' mutually exclusive: an identifier where Source B later adopts Source A's
+#' base-year value *and* Source A later adopts Source B's base-year value is
+#' counted in both streams, while an identifier where both sources later
+#' converge on a new third value (`C != A_base` and `C != B_base`) is counted
+#' in neither. Moreover, among unresolved disagreements, some identifiers are
+#' observed all the way to the end of the panel without ever agreeing
+#' (uncensored persistent discordance), whereas others drop out of one or both
+#' sources before the end of the panel (right-censored loss to follow-up).
+#'
+#' This function partitions all `disc_base_n` base-year disagreements into six
+#' strictly mutually exclusive longitudinal trajectories whose counts sum to
+#' `disc_base_n` (`100.0%`).
+#'
+#' @details
+#' **The six mutually exclusive trajectories:**
+#' \enumerate{
+#'   \item `"b_only_adopted_a_base"` -- Source B later adopted Source A's
+#'     `base_year` value (and Source A did not adopt Source B's `base_year`
+#'     value).
+#'   \item `"a_only_adopted_b_base"` -- Source A later adopted Source B's
+#'     `base_year` value (and Source B did not adopt Source A's `base_year`
+#'     value).
+#'   \item `"bidirectional_cross_adoption"` -- Both directional adoptions
+#'     occurred in follow-up years (`B` adopted `A_base` and `A` adopted
+#'     `B_base`).
+#'   \item `"converged_new_third_value"` -- Neither source adopted the other's
+#'     `base_year` value, but both sources reported the *same* new value
+#'     (`A_t == B_t`) in at least one follow-up year `t > base_year`.
+#'   \item `"unresolved_uncensored_persistent"` -- Never converged through any
+#'     of trajectories 1--4, and both sources observed the identifier in
+#'     `max_panel_year`.
+#'   \item `"unresolved_right_censored"` -- Never converged through any of
+#'     trajectories 1--4, and one or both sources lacked an observation for the
+#'     identifier in `max_panel_year` (administrative or attrition censoring).
+#' }
+#'
+#' @param source_a,source_b Longitudinal data frames with `id`, `year`, and
+#'   `attribute` (one row per `(id, year)` each).
+#' @param attribute Single attribute column name to evaluate (e.g. `"zip5"` or
+#'   `"state"`).
+#' @param id,year Names of identifier and year columns. Defaults `"npi"`,
+#'   `"year"`.
+#' @param base_year Baseline year for disagreement. If `NULL` (default), uses
+#'   the earliest shared year that has at least one follow-up year.
+#' @param max_panel_year Terminal panel year used to distinguish uncensored
+#'   persistent discordance from right-censored loss to follow-up. If `NULL`
+#'   (default), uses `max(intersect(source_a[[year]], source_b[[year]]))`.
+#' @param source_a_label,source_b_label Human-readable source labels for the
+#'   summary table and manuscript sentence. Defaults `"Source A"`, `"Source B"`.
+#' @param conf_level Confidence level for Wilson intervals via [wilson_ci()].
+#'   Default `0.95`.
+#' @return A list with four elements:
+#'   \describe{
+#'     \item{`base_year`, `max_panel_year`, `disc_base_n`}{Scalars describing
+#'       the baseline cohort.}
+#'     \item{`trajectories`}{Tibble with one row per discordant identifier at
+#'       `base_year`: `id`, `a_base_value`, `b_base_value`, `b_adopted_a_base`,
+#'       `b_first_adopt_year`, `a_adopted_b_base`, `a_first_adopt_year`,
+#'       `converged_third_value`, `first_third_converge_year`,
+#'       `observed_at_max_year`, `last_paired_year`, `trajectory_code`, and
+#'       `trajectory_label`.}
+#'     \item{`summary`}{Tibble with the 6 mutually exclusive rows, plus a
+#'       `"resolved_total"` subtotal row (trajectories 1--4) and a `"total"`
+#'       row (`100.0%`), with `n`, `disc_base_n`, `pct`, `ci_low`, `ci_high`,
+#'       and `median_years_to_resolution`.}
+#'     \item{`prose`}{A manuscript-ready paragraph reporting the 6-way
+#'       decomposition.}
+#'   }
+#' @examples
+#' a <- data.frame(
+#'   npi = c("1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6"),
+#'   year = c(2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019),
+#'   zip5 = c("80204", "80204", "80204", "80301", "80204", "80301",
+#'            "80204", "98101", "80204", "80204", "80204")
+#' )
+#' b <- data.frame(
+#'   npi = c("1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6"),
+#'   year = c(2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019, 2026, 2019),
+#'   zip5 = c("80301", "80204", "80301", "80301", "80301", "80204",
+#'            "80301", "98101", "80301", "80301", "80301")
+#' )
+#' dec <- attribute_disagreement_trajectories(
+#'   a, b, attribute = "zip5", base_year = 2019, max_panel_year = 2026,
+#'   source_a_label = "PECOS", source_b_label = "NPPES"
+#' )
+#' dec$summary[, c("trajectory_code", "n", "pct")]
+#' @seealso [attribute_lead_lag_duration()], [attribute_lead_lag_matrix()],
+#'   [attribute_catch_up_curve()].
+#' @family no-gold-standard comparison
+#' @export
+attribute_disagreement_trajectories <- function(source_a,
+                                                source_b,
+                                                attribute,
+                                                id = "npi",
+                                                year = "year",
+                                                base_year = NULL,
+                                                max_panel_year = NULL,
+                                                source_a_label = "Source A",
+                                                source_b_label = "Source B",
+                                                conf_level = 0.95) {
+  checkmate::assert_data_frame(source_a, min.rows = 1)
+  checkmate::assert_data_frame(source_b, min.rows = 1)
+  checkmate::assert_string(attribute, min.chars = 1)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  .assert_nonblank_string(source_a_label, "attribute_disagreement_trajectories: source_a_label")
+  .assert_nonblank_string(source_b_label, "attribute_disagreement_trajectories: source_b_label")
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("attribute_disagreement_trajectories: conf_level must be strictly between 0 and 1.", call. = FALSE)
+  }
+
+  for (col in c(id, year, attribute)) {
+    if (!col %in% names(source_a)) {
+      stop(sprintf("attribute_disagreement_trajectories: source_a has no column '%s'.", col), call. = FALSE)
+    }
+    if (!col %in% names(source_b)) {
+      stop(sprintf("attribute_disagreement_trajectories: source_b has no column '%s'.", col), call. = FALSE)
+    }
+  }
+
+  clean_df <- function(df, label) {
+    res <- tibble::tibble(id = trimws(as.character(df[[id]])))
+    if (any(is.na(res$id) | !nzchar(res$id))) {
+      stop(sprintf("attribute_disagreement_trajectories: %s has missing or empty id values.", label), call. = FALSE)
+    }
+    res$year <- .parse_whole_integer(df[[year]], sprintf("attribute_disagreement_trajectories: %s year", label), allow_na = FALSE)
+    .assert_unique_keys(res, c("id", "year"), sprintf("attribute_disagreement_trajectories: %s", label))
+    v <- toupper(trimws(as.character(df[[attribute]])))
+    res$value <- ifelse(is.na(v) | !nzchar(v), NA_character_, v)
+    res[!is.na(res$value), , drop = FALSE]
+  }
+
+  da <- clean_df(source_a, "source_a")
+  db <- clean_df(source_b, "source_b")
+
+  shared_years <- sort(intersect(unique(da$year), unique(db$year)))
+  if (length(shared_years) == 0L) {
+    stop("attribute_disagreement_trajectories: source_a and source_b share no years.", call. = FALSE)
+  }
+  if (is.null(base_year)) {
+    cand <- shared_years[shared_years < max(shared_years)]
+    base_year <- if (length(cand)) min(cand) else min(shared_years)
+  }
+  base_year <- as.integer(base_year)
+
+  if (is.null(max_panel_year)) {
+    max_panel_year <- max(shared_years)
+  }
+  max_panel_year <- as.integer(max_panel_year)
+
+  a_base <- da[da$year == base_year, c("id", "value"), drop = FALSE]
+  names(a_base)[2] <- "a_base_value"
+  b_base <- db[db$year == base_year, c("id", "value"), drop = FALSE]
+  names(b_base)[2] <- "b_base_value"
+
+  base_joined <- merge(a_base, b_base, by = "id")
+  d_base <- base_joined[base_joined$a_base_value != base_joined$b_base_value, , drop = FALSE]
+  d_base <- d_base[order(d_base$id), , drop = FALSE]
+  disc_base_n <- nrow(d_base)
+
+  codes <- c(
+    "b_only_adopted_a_base",
+    "a_only_adopted_b_base",
+    "bidirectional_cross_adoption",
+    "converged_new_third_value",
+    "unresolved_uncensored_persistent",
+    "unresolved_right_censored"
+  )
+  labels <- c(
+    sprintf("1. %s Only Adopted %s %d Value", source_b_label, source_a_label, base_year),
+    sprintf("2. %s Only Adopted %s %d Value", source_a_label, source_b_label, base_year),
+    sprintf("3. Bidirectional Cross-Adoption (Both Adopted Other's %d Value)", base_year),
+    sprintf("4. Converged on New Third Value (Neither %d Value)", base_year),
+    sprintf("5. Unresolved Persistent Discordance (Observed Through %d)", max_panel_year),
+    sprintf("6. Unresolved Right-Censored (Lost to Paired Follow-Up Before %d)", max_panel_year)
+  )
+
+  if (disc_base_n == 0L) {
+    empty_traj <- tibble::tibble(
+      id = character(0),
+      a_base_value = character(0),
+      b_base_value = character(0),
+      b_adopted_a_base = logical(0),
+      b_first_adopt_year = integer(0),
+      a_adopted_b_base = logical(0),
+      a_first_adopt_year = integer(0),
+      converged_third_value = logical(0),
+      first_third_converge_year = integer(0),
+      observed_at_max_year = logical(0),
+      last_paired_year = integer(0),
+      trajectory_code = character(0),
+      trajectory_label = character(0)
+    )
+    sum_tbl <- tibble::tibble(
+      trajectory_code = c(codes, "resolved_total", "total"),
+      trajectory_label = c(labels, "Subtotal: Any Longitudinal Resolution (Trajectories 1-4)", "Total Base-Year Disagreements"),
+      n = 0L,
+      disc_base_n = 0L,
+      pct = NA_real_,
+      ci_low = NA_real_,
+      ci_high = NA_real_,
+      median_years_to_resolution = NA_real_
+    )
+    return(list(
+      base_year = base_year,
+      max_panel_year = max_panel_year,
+      disc_base_n = 0L,
+      trajectories = empty_traj,
+      summary = sum_tbl,
+      prose = sprintf("No identifiers disagreed between %s and %s in %d.", source_a_label, source_b_label, base_year)
+    ))
+  }
+
+  # Future B adoptions of A_base
+  b_fut <- merge(d_base[, c("id", "a_base_value")], db[db$year > base_year, , drop = FALSE], by = "id")
+  b_hit <- b_fut[b_fut$value == b_fut$a_base_value, , drop = FALSE]
+  b_first <- if (nrow(b_hit) > 0L) tapply(b_hit$year, b_hit$id, min) else integer(0)
+
+  # Future A adoptions of B_base
+  a_fut <- merge(d_base[, c("id", "b_base_value")], da[da$year > base_year, , drop = FALSE], by = "id")
+  a_hit <- a_fut[a_fut$value == a_fut$b_base_value, , drop = FALSE]
+  a_first <- if (nrow(a_hit) > 0L) tapply(a_hit$year, a_hit$id, min) else integer(0)
+
+  # Paired follow-up rows (year >= base_year)
+  paired_all <- merge(
+    da[da$id %in% d_base$id & da$year >= base_year, c("id", "year", "value"), drop = FALSE],
+    db[db$id %in% d_base$id & db$year >= base_year, c("id", "year", "value"), drop = FALSE],
+    by = c("id", "year"), suffixes = c("_a", "_b")
+  )
+  last_paired <- tapply(paired_all$year, paired_all$id, max)
+
+  # Paired follow-up rows after base_year where A_t == B_t != A_base and != B_base
+  paired_fut <- merge(paired_all[paired_all$year > base_year, , drop = FALSE], d_base, by = "id")
+  third_hit <- paired_fut[
+    paired_fut$value_a == paired_fut$value_b &
+      paired_fut$value_a != paired_fut$a_base_value &
+      paired_fut$value_a != paired_fut$b_base_value, , drop = FALSE
+  ]
+  third_first <- if (nrow(third_hit) > 0L) tapply(third_hit$year, third_hit$id, min) else integer(0)
+
+  ids_max_a <- unique(da$id[da$year == max_panel_year])
+  ids_max_b <- unique(db$id[db$year == max_panel_year])
+  ids_max_both <- intersect(ids_max_a, ids_max_b)
+
+  d_base$b_first_adopt_year <- as.integer(unname(b_first[d_base$id]))
+  d_base$b_adopted_a_base <- !is.na(d_base$b_first_adopt_year)
+  d_base$a_first_adopt_year <- as.integer(unname(a_first[d_base$id]))
+  d_base$a_adopted_b_base <- !is.na(d_base$a_first_adopt_year)
+  d_base$first_third_converge_year <- as.integer(unname(third_first[d_base$id]))
+  d_base$converged_third_value <- !is.na(d_base$first_third_converge_year)
+  d_base$observed_at_max_year <- d_base$id %in% ids_max_both
+  d_base$last_paired_year <- as.integer(unname(last_paired[d_base$id]))
+
+  d_base$trajectory_code <- dplyr::case_when(
+    d_base$b_adopted_a_base & !d_base$a_adopted_b_base ~ codes[1],
+    !d_base$b_adopted_a_base & d_base$a_adopted_b_base ~ codes[2],
+    d_base$b_adopted_a_base & d_base$a_adopted_b_base ~ codes[3],
+    !d_base$b_adopted_a_base & !d_base$a_adopted_b_base & d_base$converged_third_value ~ codes[4],
+    d_base$observed_at_max_year ~ codes[5],
+    TRUE ~ codes[6]
+  )
+  code_to_label <- stats::setNames(labels, codes)
+  d_base$trajectory_label <- unname(code_to_label[d_base$trajectory_code])
+
+  d_base$years_to_resolution <- dplyr::case_when(
+    d_base$trajectory_code == codes[1] ~ as.numeric(d_base$b_first_adopt_year - base_year),
+    d_base$trajectory_code == codes[2] ~ as.numeric(d_base$a_first_adopt_year - base_year),
+    d_base$trajectory_code == codes[3] ~ as.numeric(pmin(d_base$b_first_adopt_year, d_base$a_first_adopt_year) - base_year),
+    d_base$trajectory_code == codes[4] ~ as.numeric(d_base$first_third_converge_year - base_year),
+    TRUE ~ NA_real_
+  )
+
+  make_row <- function(c_code, c_label, mask) {
+    n_k <- sum(mask)
+    ci <- wilson_ci(n_k, disc_base_n, conf_level = conf_level, as_percent = TRUE)
+    yrs <- d_base$years_to_resolution[mask]
+    yrs <- yrs[!is.na(yrs)]
+    med_yr <- if (length(yrs) > 0L) round(stats::median(yrs), 1) else NA_real_
+    tibble::tibble(
+      trajectory_code = c_code,
+      trajectory_label = c_label,
+      n = as.integer(n_k),
+      disc_base_n = as.integer(disc_base_n),
+      pct = round(100 * n_k / disc_base_n, 2),
+      ci_low = round(ci$ci_low, 2),
+      ci_high = round(ci$ci_high, 2),
+      median_years_to_resolution = med_yr
+    )
+  }
+
+  row_list <- lapply(seq_along(codes), function(i) {
+    make_row(codes[i], labels[i], d_base$trajectory_code == codes[i])
+  })
+  resolved_mask <- d_base$trajectory_code %in% codes[1:4]
+  sum_tbl <- dplyr::bind_rows(
+    row_list,
+    make_row("resolved_total", "Subtotal: Any Longitudinal Resolution (Trajectories 1-4)", resolved_mask),
+    tibble::tibble(
+      trajectory_code = "total",
+      trajectory_label = "Total Base-Year Disagreements",
+      n = as.integer(disc_base_n),
+      disc_base_n = as.integer(disc_base_n),
+      pct = 100.0,
+      ci_low = 100.0,
+      ci_high = 100.0,
+      median_years_to_resolution = NA_real_
+    )
+  )
+
+  get_n <- function(cd) sum_tbl$n[sum_tbl$trajectory_code == cd][1]
+  get_p <- function(cd) sum_tbl$pct[sum_tbl$trajectory_code == cd][1]
+  fmt_c <- function(x) format(x, big.mark = ",", scientific = FALSE, trim = TRUE)
+
+  prose <- sprintf(
+    paste0(
+      "Among %s identifiers where %s and %s disagreed on %s in %d, a mutually exclusive longitudinal trajectory ",
+      "decomposition through %d showed that %s (%.1f%%) resolved during follow-up: %s (%.1f%%) via %s adopting ",
+      "%s's %d value alone, %s (%.1f%%) via %s adopting %s's %d value alone, %s (%.1f%%) via bidirectional ",
+      "cross-adoption, and %s (%.1f%%) via convergence on a new third value. The remaining %s (%.1f%%) ",
+      "never converged during the observation window, comprising %s (%.1f%%) with uncensored persistent ",
+      "discordance observed through %d and %s (%.1f%%) right-censored prior to %d."
+    ),
+    fmt_c(disc_base_n), source_a_label, source_b_label, attribute, base_year,
+    max_panel_year,
+    fmt_c(get_n("resolved_total")), get_p("resolved_total"),
+    fmt_c(get_n(codes[1])), get_p(codes[1]), source_b_label, source_a_label, base_year,
+    fmt_c(get_n(codes[2])), get_p(codes[2]), source_a_label, source_b_label, base_year,
+    fmt_c(get_n(codes[3])), get_p(codes[3]),
+    fmt_c(get_n(codes[4])), get_p(codes[4]),
+    fmt_c(get_n(codes[5]) + get_n(codes[6])), round(100 - get_p("resolved_total"), 1),
+    fmt_c(get_n(codes[5])), get_p(codes[5]), max_panel_year,
+    fmt_c(get_n(codes[6])), get_p(codes[6]), max_panel_year
+  )
+
+  list(
+    base_year = base_year,
+    max_panel_year = max_panel_year,
+    disc_base_n = as.integer(disc_base_n),
+    trajectories = tibble::as_tibble(d_base),
+    summary = tibble::as_tibble(sum_tbl),
+    prose = prose
+  )
+}
+
+.us_state_contiguity_pairs <- function() {
+  # Canonical land/bridge border adjacency pairs for US states + DC
+  adj <- list(
+    AL = c("FL", "GA", "MS", "TN"),
+    AZ = c("CA", "CO", "NM", "NV", "UT"),
+    AR = c("LA", "MO", "MS", "OK", "TN", "TX"),
+    CA = c("AZ", "NV", "OR"),
+    CO = c("AZ", "KS", "NE", "NM", "OK", "UT", "WY"),
+    CT = c("MA", "NY", "RI"),
+    DE = c("MD", "NJ", "PA"),
+    DC = c("MD", "VA"),
+    FL = c("AL", "GA"),
+    GA = c("AL", "FL", "NC", "SC", "TN"),
+    ID = c("MT", "NV", "OR", "UT", "WA", "WY"),
+    IL = c("IA", "IN", "KY", "MO", "WI"),
+    IN = c("IL", "KY", "MI", "OH"),
+    IA = c("IL", "MN", "MO", "NE", "SD", "WI"),
+    KS = c("CO", "MO", "NE", "OK"),
+    KY = c("IL", "IN", "MO", "OH", "TN", "VA", "WV"),
+    LA = c("AR", "MS", "TX"),
+    ME = c("NH"),
+    MD = c("DC", "DE", "PA", "VA", "WV"),
+    MA = c("CT", "NH", "NY", "RI", "VT"),
+    MI = c("IN", "MN", "OH", "WI"),
+    MN = c("IA", "MI", "ND", "SD", "WI"),
+    MS = c("AL", "AR", "LA", "TN"),
+    MO = c("AR", "IA", "IL", "KS", "KY", "NE", "OK", "TN"),
+    MT = c("ID", "ND", "SD", "WY"),
+    NE = c("CO", "IA", "KS", "MO", "SD", "WY"),
+    NV = c("AZ", "CA", "ID", "OR", "UT"),
+    NH = c("MA", "ME", "VT"),
+    NJ = c("DE", "NY", "PA"),
+    NM = c("AZ", "CO", "OK", "TX", "UT"),
+    NY = c("CT", "MA", "NJ", "PA", "RI", "VT"),
+    NC = c("GA", "SC", "TN", "VA"),
+    ND = c("MN", "MT", "SD"),
+    OH = c("IN", "KY", "MI", "PA", "WV"),
+    OK = c("AR", "CO", "KS", "MO", "NM", "TX"),
+    OR = c("CA", "ID", "NV", "WA"),
+    PA = c("DE", "MD", "NJ", "NY", "OH", "WV"),
+    RI = c("CT", "MA", "NY"),
+    SC = c("GA", "NC"),
+    SD = c("IA", "MN", "MT", "ND", "NE", "WY"),
+    TN = c("AL", "AR", "GA", "KY", "MO", "MS", "NC", "VA"),
+    TX = c("AR", "LA", "NM", "OK"),
+    UT = c("AZ", "CO", "ID", "NM", "NV", "WY"),
+    VT = c("MA", "NH", "NY"),
+    VA = c("DC", "KY", "MD", "NC", "TN", "WV"),
+    WA = c("ID", "OR"),
+    WV = c("KY", "MD", "OH", "PA", "VA"),
+    WI = c("IA", "IL", "MI", "MN"),
+    WY = c("CO", "ID", "MT", "NE", "SD", "UT")
+  )
+  pairs <- unlist(lapply(names(adj), function(st) paste(st, adj[[st]], sep = "->")), use.names = FALSE)
+  unique(pairs)
+}
+
+#' Markov transition matrix and multi-state mover/stayer practice typology
+#'
+#' Standard longitudinal churn analyses ([attribute_churn_rate()] and
+#' [enrollment_move_lead_lag()]) treat every year-to-year state change as a
+#' permanent relocation. In practice, clinicians living near state borders or
+#' working in multi-state health systems or locum tenens roles exhibit distinct
+#' longitudinal mobility regimes: some never change states (`Strict Stayer`),
+#' some maintain concurrent enrollment in adjacent states while keeping a single
+#' primary directory state (`Concurrent Multi-State Stayer`), some make a single
+#' permanent move (`One-Time Permanent Mover`), some oscillate back and forth
+#' between two states (`Alternating / Return Commuter`, e.g. `A -> B -> A`), and
+#' some practice across three or more states (`Multi-State Serial Mover / Traveler`).
+#'
+#' This function classifies every clinician's longitudinal trajectory across an
+#' $M$-year primary directory panel (plus optional multi-valued concurrent
+#' enrollment records such as `T-MSIS` or `PECOS`) into those five mutually
+#' exclusive mobility regimes, flags whether state transitions occur across
+#' **contiguous US border states** (e.g. `KS <-> MO`, `NY <-> NJ`, `OR <-> WA`),
+#' and estimates both the **3-state behavioral Markov transition matrix**
+#' (`stay`, `move_new_state`, `return_prior_state`) and the **state-to-state
+#' Markov transition matrix**.
+#'
+#' @param panel Longitudinal primary directory data frame (one row per
+#'   `(id, year)`) containing `id`, `year`, and `state_col`.
+#' @param concurrent_source Optional data frame of multi-state enrollment or
+#'   practice records (such as `T-MSIS` or `PECOS`, where an `(id, year)` may
+#'   have multiple states), containing `id`, optional `year`, and `state_col`.
+#' @param id,year,state_col Column names for identifier, year, and 2-letter
+#'   postal state. Defaults `"npi"`, `"year"`, `"state"`.
+#' @param conf_level Confidence level for Wilson intervals via [wilson_ci()].
+#'   Default `0.95`.
+#' @return A list with four tibbles:
+#'   \describe{
+#'     \item{`clinicians`}{One row per unique `id` observed in $\ge 2$ panel
+#'       years, with `n_years_observed`, `n_unique_states`, `n_transitions`,
+#'       `ever_returned_to_prior_state`, `any_contiguous_border_move`,
+#'       `concurrent_multistate`, `state_sequence`, and mutually exclusive
+#'       `mobility_regime`.}
+#'     \item{`regime_summary`}{Mutually exclusive 5-regime summary table (plus a
+#'       `"Total"` row summing to `100.0%`) with `n`, `n_clinicians`, `pct`,
+#'       `ci_low`, `ci_high`, and `pct_contiguous_border`.}
+#'     \item{`behavioral_markov`}{Transition probabilities between consecutive
+#'       annual steps (`stay_same_state`, `move_to_new_state`,
+#'       `return_to_prior_state`, plus breakdown of moves into
+#'       `contiguous_border_move` vs `non_contiguous_move`).}
+#'     \item{`state_transition_matrix`}{Pairwise state-to-state transition counts
+#'       and empirical Markov transition probabilities $P(S_{t+1} = j \mid S_t = i)$,
+#'       with `is_same_state` and `is_contiguous_border`.}
+#'   }
+#' @examples
+#' panel <- data.frame(
+#'   npi = c(rep("1", 4), rep("2", 4), rep("3", 4), rep("4", 4), rep("5", 4)),
+#'   year = rep(2021:2024, 5),
+#'   state = c(
+#'     "CO", "CO", "CO", "CO", # 1: Strict Stayer
+#'     "KS", "KS", "KS", "KS", # 2: Concurrent Multi-State Stayer (via concurrent_source)
+#'     "CO", "CO", "WY", "WY", # 3: One-Time Permanent Mover
+#'     "NY", "NJ", "NY", "NJ", # 4: Alternating / Return Commuter
+#'     "CO", "WY", "UT", "AZ"  # 5: Multi-State Serial Mover
+#'   )
+#' )
+#' conc <- data.frame(npi = c("2", "2"), year = c(2022, 2022), state = c("KS", "MO"))
+#' ms <- attribute_mover_stayer_transition_matrix(panel, concurrent_source = conc)
+#' ms$regime_summary[, c("mobility_regime", "n", "pct")]
+#' ms$behavioral_markov
+#' @seealso [attribute_churn_rate()], [enrollment_move_lead_lag()].
+#' @family no-gold-standard comparison
+#' @export
+attribute_mover_stayer_transition_matrix <- function(panel,
+                                                     concurrent_source = NULL,
+                                                     id = "npi",
+                                                     year = "year",
+                                                     state_col = "state",
+                                                     conf_level = 0.95) {
+  checkmate::assert_data_frame(panel, min.rows = 2)
+  checkmate::assert_string(id, min.chars = 1)
+  checkmate::assert_string(year, min.chars = 1)
+  checkmate::assert_string(state_col, min.chars = 1)
+  checkmate::assert_number(conf_level, lower = 0, upper = 1)
+  if (conf_level <= 0 || conf_level >= 1) {
+    stop("attribute_mover_stayer_transition_matrix: conf_level must be strictly between 0 and 1.", call. = FALSE)
+  }
+
+  for (col in c(id, year, state_col)) {
+    if (!col %in% names(panel)) {
+      stop(sprintf("attribute_mover_stayer_transition_matrix: panel is missing column '%s'.", col), call. = FALSE)
+    }
+  }
+
+  df <- tibble::tibble(
+    id = trimws(as.character(panel[[id]])),
+    year = .parse_whole_integer(panel[[year]], "attribute_mover_stayer_transition_matrix: panel year", allow_na = FALSE),
+    state = toupper(trimws(as.character(panel[[state_col]])))
+  )
+  df <- df[!is.na(df$id) & nzchar(df$id) & !is.na(df$state) & nzchar(df$state), , drop = FALSE]
+  .assert_unique_keys(df, c("id", "year"), "attribute_mover_stayer_transition_matrix: panel")
+  df <- df[order(df$id, df$year), , drop = FALSE]
+
+  # Identify clinicians with concurrent multi-state enrollment
+  conc_multi_ids <- character(0)
+  if (!is.null(concurrent_source)) {
+    checkmate::assert_data_frame(concurrent_source)
+    for (col in c(id, state_col)) {
+      if (!col %in% names(concurrent_source)) {
+        stop(sprintf("attribute_mover_stayer_transition_matrix: concurrent_source is missing column '%s'.", col), call. = FALSE)
+      }
+    }
+    c_id <- trimws(as.character(concurrent_source[[id]]))
+    c_st <- toupper(trimws(as.character(concurrent_source[[state_col]]))
+    )
+    c_yr <- if (year %in% names(concurrent_source)) as.character(concurrent_source[[year]]) else rep("ALL", nrow(concurrent_source))
+    keep_c <- !is.na(c_id) & nzchar(c_id) & !is.na(c_st) & nzchar(c_st)
+    c_df <- unique(data.frame(id = c_id[keep_c], year = c_yr[keep_c], state = c_st[keep_c], stringsAsFactors = FALSE))
+    # Also combine with primary panel state for that id
+    p_for_c <- unique(data.frame(id = df$id, year = if (year %in% names(concurrent_source)) as.character(df$year) else "ALL", state = df$state, stringsAsFactors = FALSE))
+    comb_c <- unique(rbind(c_df, p_for_c[p_for_c$id %in% c_df$id, , drop = FALSE]))
+    st_per_id_yr <- tapply(comb_c$state, paste(comb_c$id, comb_c$year, sep = "\r"), function(x) length(unique(x)))
+    multi_keys <- names(st_per_id_yr)[st_per_id_yr >= 2L]
+    conc_multi_ids <- unique(sub("\r.*$", "", multi_keys))
+  }
+
+  contig_set <- .us_state_contiguity_pairs()
+
+  by_id <- split(df, df$id, drop = TRUE)
+  by_id <- by_id[vapply(by_id, nrow, integer(1)) >= 2L]
+  if (length(by_id) == 0L) {
+    stop("attribute_mover_stayer_transition_matrix: no clinicians observed in >= 2 years.", call. = FALSE)
+  }
+
+  regime_levels <- c(
+    "1. Strict Single-State Stayer",
+    "2. Concurrent Multi-State Stayer (1 Primary State, >=2 Concurrent States)",
+    "3. One-Time Permanent Mover (A -> B)",
+    "4. Alternating / Return Commuter (A -> B -> A)",
+    "5. Multi-State Serial Mover / Traveler (>=3 Primary States)"
+  )
+
+  step_from <- character(0)
+  step_to <- character(0)
+  step_type <- character(0)
+  step_contig <- logical(0)
+
+  clin_rows <- lapply(by_id, function(g) {
+    st_vec <- g$state
+    n_yrs <- length(st_vec)
+    u_st <- unique(st_vec)
+    n_u <- length(u_st)
+
+    from_s <- st_vec[-n_yrs]
+    to_s <- st_vec[-1L]
+    moved <- from_s != to_s
+    n_trans <- sum(moved)
+
+    # Track whether any transition returned to a state already visited prior to the current spell
+    ever_return <- FALSE
+    s_types <- character(n_yrs - 1L)
+    seen_states <- st_vec[1]
+    for (t_idx in seq_len(n_yrs - 1L)) {
+      cur_s <- st_vec[t_idx]
+      nxt_s <- st_vec[t_idx + 1L]
+      if (nxt_s == cur_s) {
+        s_types[t_idx] <- "stay_same_state"
+      } else if (nxt_s %in% seen_states) {
+        s_types[t_idx] <- "return_to_prior_state"
+        ever_return <- TRUE
+      } else {
+        s_types[t_idx] <- "move_to_new_state"
+      }
+      seen_states <- unique(c(seen_states, nxt_s))
+    }
+
+    pair_codes <- paste(from_s, to_s, sep = "->")
+    is_contig <- moved & (pair_codes %in% contig_set)
+    any_contig <- any(is_contig)
+
+    step_from <<- c(step_from, from_s)
+    step_to <<- c(step_to, to_s)
+    step_type <<- c(step_type, s_types)
+    step_contig <<- c(step_contig, is_contig)
+
+    is_conc <- g$id[1] %in% conc_multi_ids
+
+    reg <- dplyr::case_when(
+      n_u == 1L & !is_conc ~ regime_levels[1],
+      n_u == 1L & is_conc ~ regime_levels[2],
+      n_u == 2L & n_trans == 1L & !ever_return ~ regime_levels[3],
+      n_u == 2L & (n_trans >= 2L | ever_return) ~ regime_levels[4],
+      TRUE ~ regime_levels[5]
+    )
+
+    # Compress consecutive run-length sequence e.g. CO -> WY -> CO
+    rle_st <- rle(st_vec)$values
+    seq_str <- paste(rle_st, collapse = "->")
+
+    tibble::tibble(
+      id = g$id[1],
+      n_years_observed = as.integer(n_yrs),
+      n_unique_states = as.integer(n_u),
+      n_transitions = as.integer(n_trans),
+      ever_returned_to_prior_state = ever_return,
+      any_contiguous_border_move = any_contig,
+      concurrent_multistate = is_conc,
+      state_sequence = seq_str,
+      mobility_regime = factor(reg, levels = regime_levels, ordered = TRUE)
+    )
+  })
+
+  clin_df <- dplyr::bind_rows(clin_rows)
+  n_tot_c <- nrow(clin_df)
+
+  reg_rows <- lapply(regime_levels, function(rl) {
+    sub_c <- clin_df[clin_df$mobility_regime == rl, , drop = FALSE]
+    n_k <- nrow(sub_c)
+    ci <- wilson_ci(n_k, n_tot_c, conf_level = conf_level, as_percent = TRUE)
+    pct_cb <- if (n_k > 0L) round(100 * mean(sub_c$any_contiguous_border_move), 1) else NA_real_
+    tibble::tibble(
+      mobility_regime = rl,
+      n = as.integer(n_k),
+      n_clinicians = as.integer(n_tot_c),
+      pct = round(100 * n_k / n_tot_c, 2),
+      ci_low = round(ci$ci_low, 2),
+      ci_high = round(ci$ci_high, 2),
+      pct_with_contiguous_border_move = pct_cb
+    )
+  })
+  regime_summary <- dplyr::bind_rows(
+    reg_rows,
+    tibble::tibble(
+      mobility_regime = "Total",
+      n = as.integer(n_tot_c),
+      n_clinicians = as.integer(n_tot_c),
+      pct = 100.0,
+      ci_low = 100.0,
+      ci_high = 100.0,
+      pct_with_contiguous_border_move = round(100 * mean(clin_df$any_contiguous_border_move), 1)
+    )
+  )
+
+  n_steps <- length(step_type)
+  n_moves <- sum(step_type != "stay_same_state")
+  behav_tbl <- tibble::tibble(
+    transition_type = c(
+      "stay_same_state",
+      "move_to_new_state",
+      "return_to_prior_state",
+      "any_move_contiguous_border",
+      "any_move_non_contiguous"
+    ),
+    n_transitions = as.integer(c(
+      sum(step_type == "stay_same_state"),
+      sum(step_type == "move_to_new_state"),
+      sum(step_type == "return_to_prior_state"),
+      sum(step_contig),
+      sum((step_type != "stay_same_state") & !step_contig)
+    )),
+    n_total_steps = as.integer(n_steps),
+    pct_of_all_steps = round(100 * c(
+      sum(step_type == "stay_same_state"),
+      sum(step_type == "move_to_new_state"),
+      sum(step_type == "return_to_prior_state"),
+      sum(step_contig),
+      sum((step_type != "stay_same_state") & !step_contig)
+    ) / n_steps, 2),
+    pct_of_moves = if (n_moves > 0L) round(100 * c(
+      NA_real_,
+      sum(step_type == "move_to_new_state") / n_moves,
+      sum(step_type == "return_to_prior_state") / n_moves,
+      sum(step_contig) / n_moves,
+      sum((step_type != "stay_same_state") & !step_contig) / n_moves
+    ), 2) else rep(NA_real_, 5L)
+  )
+
+  # State-to-state Markov transition matrix
+  pair_df <- data.frame(from_state = step_from, to_state = step_to, stringsAsFactors = FALSE)
+  pair_counts <- as.data.frame(table(pair_df$from_state, pair_df$to_state), stringsAsFactors = FALSE)
+  names(pair_counts) <- c("from_state", "to_state", "n_transitions")
+  pair_counts <- pair_counts[pair_counts$n_transitions > 0L, , drop = FALSE]
+  origin_totals <- tapply(pair_counts$n_transitions, pair_counts$from_state, sum)
+  pair_counts$n_origin_steps <- as.integer(unname(origin_totals[pair_counts$from_state]))
+  pair_counts$transition_prob <- round(pair_counts$n_transitions / pair_counts$n_origin_steps, 4)
+  pair_counts$is_same_state <- pair_counts$from_state == pair_counts$to_state
+  pair_counts$is_contiguous_border <- !pair_counts$is_same_state &
+    (paste(pair_counts$from_state, pair_counts$to_state, sep = "->") %in% contig_set)
+  pair_counts <- pair_counts[order(pair_counts$from_state, -pair_counts$n_transitions, pair_counts$to_state), , drop = FALSE]
+
+  list(
+    clinicians = tibble::as_tibble(clin_df),
+    regime_summary = tibble::as_tibble(regime_summary),
+    behavioral_markov = tibble::as_tibble(behav_tbl),
+    state_transition_matrix = tibble::as_tibble(pair_counts)
   )
 }

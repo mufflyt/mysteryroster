@@ -4,25 +4,40 @@
 [![R-CMD-check](https://github.com/mufflyt/mysteryroster/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/mufflyt/mysteryroster/actions/workflows/R-CMD-check.yaml)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![R ≥ 4.5.2](https://img.shields.io/badge/R-%E2%89%A54.5.2-276DC3?logo=r&logoColor=white)](https://cran.r-project.org/)
+[![R ≥ 4.5.0](https://img.shields.io/badge/R-%E2%89%A54.5.0-276DC3?logo=r&logoColor=white)](https://cran.r-project.org/)
 [![ORCID](https://img.shields.io/badge/ORCID-0000--0002--2044--1693-A6CE39?logo=orcid&logoColor=white)](https://orcid.org/0000-0002-2044-1693)
 <!-- badges: end -->
 
 Registry overlap strata and listing-validity analysis for mystery-caller
-audits of physician directories.
+audits of physician directories -- plus a second, independent toolkit for
+comparing sources that disagree when neither one is a gold standard.
 
-## The question
+## Two questions, two independent toolkits
 
-National physician directories (NPPES, certifying boards, professional
-societies) count different physicians and are rarely checked against reality.
-A registry-validity study cross-links them, calls a stratified sample of listed
-practices, and asks one thing of each physician-location listing: is the named
-physician still practising the indexed specialty at the listed address?
+**Is a physician listing valid?** National physician directories (NPPES,
+certifying boards, professional societies) count different physicians and
+are rarely checked against reality. A registry-validity study cross-links
+them, calls a stratified sample of listed practices, and asks one thing of
+each physician-location listing: is the named physician still practising the
+indexed specialty at the listed address?
 
 `mysteryroster` is the specialty-agnostic core of that study. It was carved out
 of the ENT registry-validity study (Falk et al.) so the OB/GYN subspecialty
 study, and any later one, runs the same steps with its own registries and its
 own disposition codebook.
+
+**When two or more sources disagree on an attribute and neither is a gold
+standard, which one is leading and which is lagging, and when is it safe to
+fuse them into one predicted value?** This is the other roughly 33 functions
+in the package (about two-thirds of it by function count) -- single
+cross-section agreement, longitudinal lead-lag and catch-up-curve approaches,
+N-way consensus and corroboration, truth fusion with explicit abstention, and
+an HHS-OIG-style directory audit protocol (completeness, consistency, and
+independently verified accuracy, kept as three separate populations).
+It shares no functions with the listing-validity workflow above and does not
+require it. Skip to [Beyond membership: does a shared attribute
+agree?](#beyond-membership-does-a-shared-attribute-agree) if this is why
+you're here, or see `?mysteryroster` for the full map.
 
 ## Installation
 
@@ -52,10 +67,20 @@ remotes::install_github("mufflyt/mysteryroster")
   to converge toward, whether exactly one source is a lone dissenter,
   agreement stratified by any covariate, and Wilson confidence
   intervals on any of the above.
+- `vignette("source-comparison-midwifery")` -- one simulated, calibrated
+  panel run through every comparison dimension this toolkit offers at
+  once (timing, agreement, staleness, volatility, coverage, convergence,
+  independence, weight), to show what each genuinely adds over the others.
 - `vignette("truth-fusion")` -- the one function in this package that
   *does* predict a value rather than only making a relative claim:
   majority-vote inference with explicit abstention on ties or weak
   majorities, and the evidence schema it expects.
+- `vignette("recent-audit-workflows")` -- an HHS-OIG-style directory audit,
+  end to end: field dictionary and source lineage, coverage/completeness/
+  consistency/accuracy as four separate populations, the four-way
+  field-presence split, enrollment-to-location linkage without asserting
+  clinical presence, a frozen per-claim verification questionnaire
+  reconciled against nonresponse, and the resulting prose.
 
 ## How the pieces fit
 
@@ -112,12 +137,18 @@ table(calls$listing_status)    # confirmed_valid / confirmed_invalid / unresolve
 # 5. Design-weighted estimates, bounds, and a survey-weighted model.
 design <- listing_validity_design(calls)
 validity_estimates(design, by = "stratum")
-validity_sensitivity_bounds(calls)
+validity_sensitivity_bounds(design, denominator = "all_sampled")
 validity_model(design, ~ stratum + rural)
 
 # 6. The flow diagram's numbers, closure-checked.
 listing_flow_counts(calls, by = "stratum")
 ```
+
+The default estimate is the share of all sampled listings confirmed valid.
+Use `definitive_only = TRUE` for accuracy among definitive determinations.
+Proportion intervals use the survey design; boundary or undefined intervals
+are reported as `NA` with a `ci_status` rather than a zero-width interval.
+`ci_method = "mean"` retains the previous clipped normal method explicitly.
 
 ## Beyond membership: does a shared attribute agree?
 
@@ -270,12 +301,46 @@ Design rules, below). `attribute_truth_fusion()` is the one exception:
 it predicts a value, with an explicit score, and an explicit option to
 abstain rather than guess. See `vignette("truth-fusion")`.
 
+<img src="man/figures/truth-discovery-abstention-vs-reliability.png" width="100%"
+     alt="Diagram contrasting abstention (a per-entity-year decision: clear
+     agreement predicts a state, a tie or unresolved conflict abstains, and a
+     same-source internal conflict -- for example DAC and PECOS sharing
+     lineage -- abstains or excludes that source) against source reliability
+     (a per-source property learned across many records by how often it
+     matches the model's inferred truth, illustrated as three sources with
+     high, moderate, and low agreement rates). The diagram's closing warning:
+     reliability is not the same as verified truth -- dependent sources can
+     agree with each other and still be wrong together." />
+
+Abstention is a per-entity-year decision (does *this* record have enough
+clean evidence to predict a state); reliability is a per-source property
+learned across *many* records (how often does this source's evidence end up
+matching the fused value). The two are easy to conflate -- a highly
+"reliable" source is not a verified-correct one, and two dependent sources
+(like DAC and PECOS; see `attribute_claims_collapse_lineage()` above) can
+agree with each other and still both be wrong.
+
 ```r
 claims <- attribute_claims_validate(long_format_claims)  # entity_id/attribute/source_id/claimed_value/reference_year
+
+# Optional: if two or more source_ids share an upstream feed (a classic
+# case: a combined registry re-published under two different names), they
+# are not independent evidence. Collapse them to one vote first -- agree
+# -> one vote; disagree -> no vote; one present -> passed through -- rather
+# than let attribute_truth_fusion() count them twice.
+claims <- attribute_claims_collapse_lineage(claims, lineage_groups = list(
+  combined_registry = c("feed_a", "feed_b")
+))
+
 fusion_result <- attribute_truth_fusion(claims, method = "majority", abstain_threshold = 0.6)
 fusion_result$predictions        # predicted_value, model_score, abstained, abstention_reason
 fusion_result$candidate_scores   # every candidate value's vote share, ranked
 attribute_truth_backends()       # which methods/backends are actually available right now
+
+# A manuscript-ready sentence (count, %, Wilson CI) straight from the fit --
+# compare_to another attribute_truth_fusion() result for a two-proportion
+# test (p-value included) between, say, a baseline and an expanded claims table.
+attribute_truth_fusion_prose(fusion_result, result_label = "this fit")$combined_text
 ```
 
 `method = "majority"` is entirely in R, with no dependency beyond this
@@ -299,7 +364,24 @@ confident fit from either is not evidence of accuracy; see
 `vignette("truth-fusion-truthdiscovery")` for concrete, verified
 demonstrations of exactly how that confidence can be wrong (including
 when two sources share an upstream feed, and a real convergence failure
-at this package's own default settings).
+at this package's own default settings), and
+`vignette("truth-fusion-case-study-midwifery")` for all three methods
+run together, on both real (no-ground-truth) data and a constructed
+example where weighted inference provably beats majority vote --
+and `vignette("truth-fusion-evidence-ledger-cross-check")` for the
+follow-up question that case study's own findings raised: is a
+backend's low agreement with majority vote a property of the method,
+or of how thin the underlying evidence ledger is, independently
+re-checked against a second, separately-built analysis of the same
+real panel. CI
+actually installs and exercises both optional backends on every push
+(`R-CMD-check-crowd-kit`, `R-CMD-check-truthdiscovery`, each in its own
+Python environment -- the two packages' dependencies conflict in one),
+not just the R-only path, so a regression in either fails CI instead of
+silently skipping. A held-out benchmark against real, verified physician
+locations is specified but not yet run; see `docs/validation-protocol.md`
+for why and `docs/saboteur-test-matrix.md` for the adversarial testing
+behind all of the above.
 
 Votes are counted per *source*, not per row, so a source that submits
 the same value twice only counts once. Whether a source with two
@@ -324,15 +406,20 @@ available before it is actually implemented.
 | Restrict to the frame registry; define strata | `frame_strata()` |
 | Stratified sample with preserved sampling probabilities | `stratified_listing_sample()` |
 | Design weights for a call log sampled elsewhere (N / n from a population table) | `listing_weights()` |
-| Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `listing_status_levels()` |
+| Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `obgyn_disposition_map()`, `listing_status_levels()` |
 | Design-weighted validity, overall and by stratum; complete-case estimate; location-valid or workforce-valid outcome | `listing_validity_design()`, `validity_estimates()` |
-| Extreme-case bounds for unresolved listings | `validity_sensitivity_bounds()` |
+| Weighted bounds with explicit attempted or all-sampled denominators | `validity_sensitivity_bounds()` |
 | Survey-weighted logistic regression | `validity_model()` |
 | Study-flow counts | `listing_flow_counts()` |
 | Cascade stages with both denominators (of attempted, of prior stage), weighted or not | `validation_cascade()` |
 | Pairwise cross-source agreement on a shared attribute, no gold standard, freshness-tuned by each source's own date | `attribute_agreement()`, `attribute_agreement_summary()`, `record_age_years()`, `record_age_band()`, `classify_record_staleness()` |
 | Empirical staleness (consecutive-year spell age) from a multi-year panel alone | `attribute_spell_age()` |
+| How often one source's own value changes year to year, independent of whether it's right | `attribute_churn_rate()` |
+| Which source actually has data for more entity-years, against a defined universe | `attribute_coverage()` |
 | Longitudinal lead-lag: which source moves first, adopts, or reverts, with an optional cross-sectional back-check | `attribute_lead_lag_matrix()` |
+| How many years until one source adopts the other's disputed value -- median/IQR/mean/CI, in a manuscript sentence | `attribute_lead_lag_duration()` |
+| Catch-up curves across 2+ sources at once, as a proper right-censored Kaplan-Meier survival estimate (never silently drops an identifier that hasn't caught up yet), with a circularity-robust reference mode, shared-lineage grouping, and a confidence interval around the median | `attribute_catch_up_curve()` |
+| Manuscript-ready prose for an `attribute_catch_up_curve()` result, ranking sources that resolve and writing an honest sentence for ones that don't, in a terse technical register or a plain-language clinical one | `attribute_catch_up_curve_prose()` |
 | Agreement stratified by empirical spell age / career tenure | `attribute_agreement_by_spell_age()` |
 | Administrative enrollment arrival/departure timing around a panel move | `enrollment_move_lead_lag()` |
 | Manuscript-ready paragraphs from the three lead-lag approaches above | `format_no_gold_standard_prose()` |
@@ -343,19 +430,27 @@ available before it is actually implemented.
 | Agreement stratified by any covariate, not just spell age | `attribute_agreement_by_covariate()` |
 | Wilson confidence interval on an agreement/concordance rate | `wilson_ci()`, `attribute_agreement_add_ci()` |
 | Validate the long-format multi-source claim schema | `attribute_claims_validate()` |
+| Collapse a declared group of same-lineage sources (e.g. two feeds from one upstream record) to a single vote before fusion, instead of double-counting them as independent | `attribute_claims_collapse_lineage()` |
 | Predict a value by majority vote, or an optional Dawid-Skene-family or TruthFinder-family model, with explicit abstention on ties/weak majorities | `attribute_truth_fusion()` |
 | Which truth-fusion methods/backends are actually available right now | `attribute_truth_backends()` |
+| Manuscript-ready sentence (count, %, Wilson CI) for one proportion, or two compared via a two-proportion chi-squared test (statistic, df, p-value, and a CI for the difference) | `format_proportion_comparison_prose()` |
+| Manuscript-ready sentence ranking 2+ groups by any numeric value (coverage, lead rate, odd-one-out rate, reliability...), with ties flagged rather than hidden behind a false strict order, in a terse technical register or a plain-language clinical one | `format_ranking_prose()` |
+| Same, pulled directly from one or two `attribute_truth_fusion()` results, plus a full source-reliability ranking sentence | `attribute_truth_fusion_prose()` |
 
 ## Design rules
 
-- **One listing is the unit.** Nothing here aggregates to the physician; do
-  that before sampling with your own one-listing-per-NPI rule.
+- **Define the sampling unit first.** The listing-validity workflow analyzes
+  sampled listings. `attribute_verification_status()` maps claim answers to
+  explicit physician/source/field targets while retaining sampling metadata.
+  Analyze each source/field target separately to avoid counting repeated
+  targets as independent sampled physicians.
 - **Presence is never inferred.** A reached office, a non-missing new-patient
   answer, or board certification does not make a listing valid; only the
   disposition categories in the map do.
 - **Unresolved is explicit.** It is reported as its own category, and the
   bounds table shows what the estimate would be if every unresolved listing
-  were valid, or invalid.
+  were valid, or invalid. Bounds use attempted listings by default;
+  `denominator = "all_sampled"` includes not-attempted listings as unknown.
 - **Counts must partition.** Every count-producing function asserts that its
   categories sum to the input, and registry totals must close on their zones.
 - **Codebook drift stops the run.** A disposition string outside the map is an

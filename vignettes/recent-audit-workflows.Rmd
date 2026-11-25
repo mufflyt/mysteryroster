@@ -1,0 +1,681 @@
+---
+title: "Auditing Provider Records Across Sources and Years"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Auditing Provider Records Across Sources and Years}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+A directory audit asks whether a source contains the physician, whether a
+field is populated, whether reported values agree across sources, and whether
+independent evidence confirms those values. Each question has its own
+denominator. This vignette runs all 19 public functions and both print methods
+added in the 72-hour window ending November 8, 2026, at 7:26 p.m. Mountain Time.
+All examples are synthetic. Source names illustrate the workflow. Field
+availability and lineage in a real study come from its dated extracts and
+documentation.
+
+## Audit a snapshot
+
+Start with a physician-year frame, an index of records actually delivered, and
+metadata declaring the completeness of each extract. The dictionary separates
+practice and mailing fields and records shared source lineage. Review
+requirements and normalization rules before interpreting a field as usable.
+
+```{r audit-frame}
+frame <- tibble::tibble(npi = base::as.character(1:6), year = 2024L)
+registry <- base::c("nppes", "pecos", "dac")
+record_index <- dplyr::bind_rows(
+  dplyr::mutate(frame, source = "nppes"),
+  dplyr::mutate(frame[1:5, ], source = "pecos"),
+  dplyr::mutate(frame, source = "dac")
+)
+manifest <- tibble::tibble(
+  year = 2024L, source = registry, extract_complete = TRUE
+)
+study_populations <- mysteryroster::attribute_analysis_populations(
+  frame, record_index, manifest, pair = base::c("nppes", "pecos"),
+  accuracy_sample = frame[1:5, ]
+)
+dictionary <- mysteryroster::attribute_field_dictionary(
+  tibble::tibble(
+    attribute = "practice_zip5", definition = "ZIP of a practice site",
+    location_role = "practice", normalizer = "zip5"
+  ),
+  sources = registry,
+  lineage_groups = base::list(medicare_enrollment = base::c("pecos", "dac"))
+)
+dictionary[, base::c("source", "attribute", "lineage", "requirement")]
+dplyr::count(study_populations$coverage, source, record_status)
+```
+
+The synthetic DAC extract lacks the ZIP column. The NPPES record for physician
+4 has an explicit blank ZIP. PECOS has a record for that physician but no ZIP
+assertion. Keep these three cases separate from an absent physician record.
+
+```{r presence-and-agreement}
+source_fields <- tibble::tibble(
+  year = 2024L, source = registry, attribute = "practice_zip5",
+  field_available = base::c(TRUE, TRUE, FALSE)
+)
+nppes_primary_zip <- dplyr::mutate(
+  frame,
+  practice_zip5 = base::c("80204", "80045", "80218", NA, "80521", "80903")
+)
+nppes_zip <- dplyr::bind_rows(
+  nppes_primary_zip,
+  tibble::tibble(npi = "1", year = 2024L, practice_zip5 = "80045")
+)
+pecos_zip <- tibble::tibble(
+  npi = base::c("1", "2", "3", "5"), year = 2024L,
+  practice_zip5 = base::c("80204", "80045", "80204", "80521")
+)
+claims <- dplyr::bind_rows(
+  nppes = nppes_zip, pecos = pecos_zip, .id = "source"
+) |>
+  dplyr::rename(value = practice_zip5) |>
+  dplyr::mutate(attribute = "practice_zip5")
+
+presence <- mysteryroster::attribute_record_presence(
+  study_populations$coverage, dictionary, source_fields, claims
+)
+dplyr::count(presence, source, completeness_eligible, field_status)
+
+agreement <- mysteryroster::attribute_set_agreement(
+  base::list(nppes = nppes_zip, pecos = pecos_zip),
+  attribute = "practice_zip5"
+)
+agreement[, base::c("id", "any_shared", "same_set")]
+agreement_summary <- mysteryroster::attribute_set_agreement_summary(agreement)
+agreement_summary
+```
+
+Physician 1 shares one ZIP between sources but has a second ZIP in NPPES. That
+counts as an any-shared match and a complete-set disagreement. Agreement
+requires usable values from both sources and describes what the sources report.
+
+## Link enrollment to practice sites
+
+An individual enrollment and a reassignment to a group can each lead to sites.
+The group has two sites in this example. Physician 3's enrollment has no
+matching location record. Keep the link path and inspect unmatched enrollments
+before interpreting the site list. Administrative linkage alone leaves
+clinical presence unverified.
+
+```{r enrollment-linkage}
+individual <- tibble::tibble(
+  npi = base::c("1", "3"), year = 2024L,
+  enrollment_id = base::c("individual_a", "individual_unmatched")
+)
+reassignment <- tibble::tibble(
+  npi = "1", year = 2024L, enrollment_id = "group_a"
+)
+locations <- tibble::tibble(
+  year = 2024L,
+  enrollment_id = base::c("individual_a", "group_a", "group_a"),
+  location_id = base::c("direct_site", "group_site_1", "group_site_2"),
+  practice_zip5 = base::c("80204", "80204", "80045")
+)
+linkage <- mysteryroster::attribute_enrollment_locations(
+  individual, reassignment, locations
+)
+linkage$links[, base::c("id", "linkage_path", "location_id")]
+linkage$unmatched_enrollments
+```
+
+## Freeze the questions and account for nonresponse
+
+The questionnaire creates one question per distinct assertion. Store that
+table before fieldwork and record answers by question ID. Here, telephone
+verification confirms both listed ZIPs for physician 1 and finds an error
+for physician 2. Physician 3 has an unsuccessful contact attempt, physician 4
+has a missing ZIP, and physician 5 is never called.
+
+```{r verification}
+mysteryroster::attribute_verification_codebook()
+
+sample <- dplyr::mutate(
+  frame[1:5, ], stratum = "overlap",
+  weight = base::c(1, 3, 2, 4, 6),
+  eligibility_status = base::c(
+    "eligible", "eligible", "eligible", "eligible", "unknown"
+  )
+)
+frozen <- mysteryroster::attribute_verification_questionnaire(
+  sample, dplyr::filter(claims, source == "nppes")
+)
+answered <- dplyr::filter(frozen, id %in% base::c("1", "2"))
+answers <- tibble::tibble(
+  question_id = answered$question_id,
+  answer = base::ifelse(answered$id == "1", "correct", "never_correct"),
+  verified_at = base::as.Date("2024-11-15"),
+  respondent_role = "office_staff", verification_method = "telephone"
+)
+contacts <- tibble::tibble(
+  npi = base::c("1", "2", "3"), year = 2024L,
+  contacted_at = base::as.Date("2024-11-15"),
+  channel = "telephone",
+  outcome = base::c("reached", "reached", "no_answer")
+)
+audit <- mysteryroster::attribute_nonresponse_audit(
+  sample, frozen, answers, contacts
+)
+audit$providers[, base::c("id", "n_attempts", "response_status")]
+audit$response_rates
+```
+
+Specify the independent methods allowed by the study protocol. The adapter
+returns one row per sampled physician-year and target, including explicit
+exclusions. Its eligible rows carry the original sampling weights. Include
+every source and attribute pair represented in the audit when defining
+targets, then analyze each pair separately.
+
+```{r weighted-validity}
+classified <- mysteryroster::attribute_verification_status(
+  audit, tibble::tibble(source = "nppes", attribute = "practice_zip5"),
+  independent_methods = "telephone"
+)
+classified$fields[, base::c(
+  "id", "weight", "listing_status", "exclusion_reason"
+)]
+design <- mysteryroster::listing_validity_design(classified$validity)
+mysteryroster::validity_estimates(design, definitive_only = TRUE)
+mysteryroster::validity_sensitivity_bounds(
+  design, denominator = "all_sampled"
+)
+```
+
+The definitive estimate uses listings with a confirmed outcome. The bounds
+include attempted and unattempted eligible listings and assign unknown
+outcomes to the two extremes. A missing ZIP is excluded from accuracy for
+listed values and still contributes to the completeness analysis above.
+
+## Write the audit paragraph
+
+Pass the underlying tables to the prose function. This paragraph describes
+coverage, completeness, agreement, linkage, and response. Report the weighted
+verification estimates alongside it as a separate result.
+
+```{r audit-prose, results="asis"}
+paragraph <- mysteryroster::attribute_oig_audit_prose(
+  presence, agreement_summary, year = 2024L,
+  source_a = "nppes", source_b = "pecos", attribute = "practice_zip5",
+  attribute_label = "practice ZIP codes",
+  linkage = linkage$links, nonresponse = audit
+)
+base::cat(paragraph, "\n")
+```
+
+### Render a self-contained OIG HTML audit report
+
+Pass the same audit tables (along with optional weighted validity estimates,
+sensitivity bounds, or longitudinal update-lag duration output) to
+`attribute_oig_audit_html()` to assemble a standalone HTML5 document containing
+an inline SVG study-frame and denominator flow diagram, visual stacked bar
+charts, OIG Tables 1--4 and Appendix A, and the manuscript-ready audit
+paragraph. Supply `file` to write the report directly to disk.
+
+```{r audit-html}
+html_path <- base::tempfile(fileext = ".html")
+html_report <- mysteryroster::attribute_oig_audit_html(
+  presence, agreement_summary, year = 2024L,
+  source_a = "nppes", source_b = "pecos", attribute = "practice_zip5",
+  attribute_label = "practice ZIP codes",
+  linkage = linkage$links, nonresponse = audit,
+  validity_estimate = mysteryroster::validity_estimates(
+    design, definitive_only = TRUE
+  ),
+  validity_bounds = mysteryroster::validity_sensitivity_bounds(
+    design, denominator = "all_sampled"
+  ),
+  file = html_path
+)
+base::c(
+  file_exists = base::file.exists(html_path),
+  n_chars = base::nchar(html_report),
+  has_svg = base::grepl("<svg", html_report, fixed = TRUE)
+)
+```
+
+## Add federal evidence to the snapshot
+
+These extracts add different kinds of evidence. Keep their row grain,
+identifier role, and address provenance in the audit.
+
+| Extract | What to retain | How to use it |
+|:--|:--|:--|
+| [NPPES Practice Location Reference File][nppes-pl] | Individual NPI, snapshot year, supplemental practice address | Count supplemental location observations and keep them in the NPPES address lineage. |
+| [CMS Open Payments][op] | Covered recipient NPI, program year, recipient business ZIP | Payment-recipient observation and a reported business address |
+| [HHS/DOGE Medicaid Provider Spending by HCPCS][doge] | Billing NPI, servicing NPI, HCPCS, claim month | Claims observations by NPI role. The release has no address field. |
+| [Medicare Physician & Other Practitioners by Provider and Service][medicare] | Rendering NPI, service year, HCPCS, place-of-service category, provider ZIP | Fee-for-service Part B activity. The ZIP comes from NPPES and describes the provider address. |
+
+[nppes-pl]: https://download.cms.gov/nppes/NPI_Files.html
+[op]: https://openpaymentsdata.cms.gov/datasets/download
+[doge]: https://opendata.hhs.gov/datasets/medicaid-provider-spending/
+[medicare]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-physician-other-practitioners/medicare-physician-other-practitioners-by-provider-and-service//data
+
+The [Open Payments dictionary][op-dd] describes `Recipient_Zip_Code` as a
+recipient's primary practice or business ZIP. The
+[Medicare Provider and Service dictionary][medicare-dd] defines
+`Rndrng_Prvdr_Zip5` using NPPES and separately defines the place-of-service
+category. Treat an NPPES and Medicare provider ZIP match as one address
+lineage. A facility category alone does not locate the site of care.
+
+[op-dd]: https://www.cms.gov/files/document/open-payments-methodology-data-dictionary-document-january-2026.pdf
+[medicare-dd]: https://data.cms.gov/sites/default/files/2025-03/bbb1e50e-5ba8-42ed-b072-18368b6f37f9/MUP_PHY_RY25_20250312_DD_PRV_SVC_508.pdf
+
+These synthetic extracts use study-normalized names and ZIP5 values. In a
+real import, keep the release vintage alongside the program or service
+period and preserve identifiers and ZIPs as character strings. HHS describes
+the Medicaid file as a suppressed aggregation, so absence from the public
+file leaves activity unknown. A billing organization outside the physician
+frame stays outside the frame. A billing NPI alone does not identify the
+clinician who performed a service.
+
+```{r federal-extracts}
+nppes_pl <- tibble::tibble(
+  npi = base::c("1", "3", "3", "900"), year = 2024L,
+  practice_zip5 = base::c("80045", "80204", "80204", "80218")
+) |>
+  dplyr::semi_join(frame, by = base::c("npi", "year")) |>
+  dplyr::distinct()
+payments <- tibble::tibble(
+  npi = base::c("1", "1", "5"), year = 2024L,
+  recipient_business_zip5 = base::c("80204", "80204", "80521")
+)
+medicaid <- tibble::tibble(
+  billing_npi = base::c("900", "900", "2"),
+  servicing_npi = base::c("3", "3", NA_character_),
+  claim_month = base::c("2024-01", "2024-02", "2024-02"),
+  hcpcs = "99213"
+)
+medicare <- tibble::tibble(
+  npi = base::c("1", "1", "3"), year = 2024L, hcpcs = "99213",
+  place_of_service = base::c("F", "O", "O"),
+  nppes_provider_zip5 = base::c("80204", "80204", "80218")
+)
+
+```
+
+```{r federal-roles}
+known_month <- !base::is.na(medicaid$claim_month)
+valid_month <- base::grepl(
+  "^[0-9]{4}-(0[1-9]|1[0-2])$", medicaid$claim_month
+)
+if (base::any(known_month & !valid_month)) {
+  base::stop("claim_month must use YYYY-MM with month 01 through 12.",
+             call. = FALSE)
+}
+
+medicaid_roles <- dplyr::bind_rows(
+  billing = dplyr::transmute(medicaid, npi = billing_npi, claim_month),
+  servicing = dplyr::transmute(medicaid, npi = servicing_npi, claim_month),
+  .id = "npi_role"
+) |>
+  dplyr::transmute(
+    npi, year = base::as.integer(base::substr(claim_month, 1, 4)),
+    npi_role
+  ) |>
+  dplyr::semi_join(frame, by = base::c("npi", "year")) |>
+  dplyr::distinct()
+medicaid_roles
+```
+
+Collapse rows to one physician-year per source for coverage. Repeated
+payments or service codes do not multiply physicians. The Medicaid role
+table above still distinguishes how the physician was observed. The payment
+and claims extracts use conservative non-observation statuses. PL coverage
+counts physicians with at least one supplemental location row.
+Declare source-years independently of observed records so an extract
+with zero matched physicians remains in the coverage table. A missing
+public payment or claim leaves practice location unknown. Medicaid rows
+with missing months do not establish dated activity. A supplied month must
+be a valid YYYY-MM value before it can enter the annual coverage table.
+
+```{r federal-coverage}
+federal_index <- dplyr::bind_rows(
+  nppes_pl = dplyr::select(nppes_pl, npi, year),
+  open_payments = dplyr::select(payments, npi, year),
+  medicaid_spending = dplyr::select(medicaid_roles, npi, year),
+  medicare_provider_service = dplyr::select(medicare, npi, year),
+  .id = "source"
+) |>
+  dplyr::distinct()
+federal_manifest <- tibble::tibble(
+  year = 2024L,
+  source = base::c(
+    "open_payments", "medicaid_spending", "medicare_provider_service",
+    "nppes_pl"
+  ),
+  extract_complete = base::c(FALSE, FALSE, FALSE, TRUE)
+)
+expanded_manifest <- dplyr::bind_rows(manifest, federal_manifest)
+expanded_populations <- mysteryroster::attribute_analysis_populations(
+  frame, dplyr::bind_rows(record_index, federal_index), expanded_manifest,
+  pair = base::c("nppes", "pecos")
+)
+dplyr::count(expanded_populations$coverage, source, record_status)
+```
+
+Audit the two address columns under their own field definitions. Medicaid
+contributes to observed-record coverage and has no eligible denominator for
+either ZIP field. The Medicare ZIP's lineage applies to the address, while
+the Medicare rendering record remains a separate utilization observation.
+
+```{r federal-field-presence}
+federal_fields <- tibble::tibble(
+  attribute = base::c("recipient_business_zip5", "nppes_provider_zip5"),
+  definition = base::c("Recipient business ZIP", "NPPES provider ZIP"),
+  location_role = base::c("recipient_business", "registry_provider"),
+  normalizer = "zip5"
+)
+expanded_dictionary <- mysteryroster::attribute_field_dictionary(
+  dplyr::bind_rows(
+    dplyr::distinct(dictionary, attribute, definition, location_role,
+                    normalizer),
+    federal_fields
+  ),
+  sources = expanded_manifest$source,
+  lineage_groups = base::list(
+    medicare_enrollment = base::c("pecos", "dac"),
+    nppes_address = base::c(
+      "nppes", "nppes_pl", "medicare_provider_service"
+    )
+  )
+)
+federal_availability <- dplyr::filter(
+  expanded_dictionary, attribute %in% federal_fields$attribute
+) |>
+  dplyr::transmute(
+    year = 2024L, source, attribute,
+    field_available =
+      (source == "open_payments" & attribute == "recipient_business_zip5") |
+      (source == "medicare_provider_service" &
+         attribute == "nppes_provider_zip5")
+  )
+expanded_availability <- dplyr::bind_rows(
+  source_fields,
+  dplyr::mutate(federal_manifest, attribute = "practice_zip5",
+                field_available = source == "nppes_pl") |>
+    dplyr::select(-extract_complete),
+  federal_availability
+)
+expanded_claims <- dplyr::bind_rows(
+  claims,
+  dplyr::transmute(nppes_pl, npi, year, source = "nppes_pl",
+                   attribute = "practice_zip5", value = practice_zip5),
+  dplyr::transmute(payments, npi, year, source = "open_payments",
+                   attribute = "recipient_business_zip5",
+                   value = recipient_business_zip5),
+  dplyr::transmute(medicare, npi, year, source = "medicare_provider_service",
+                   attribute = "nppes_provider_zip5",
+                   value = nppes_provider_zip5)
+) |>
+  dplyr::distinct()
+expanded_presence <- mysteryroster::attribute_record_presence(
+  expanded_populations$coverage, expanded_dictionary,
+  expanded_availability, expanded_claims
+)
+expanded_presence |>
+  dplyr::filter(source %in% federal_manifest$source, record_present) |>
+  dplyr::count(source, attribute, completeness_eligible, field_status)
+```
+
+### Compare primary and supplemental NPPES locations
+
+The [CMS PL file][nppes-pl] reports non-primary practice locations.
+Pair it with the main NPPES file from the same dated release. The example
+assigns a year from that release and joins PL rows to the individual
+physician frame. A missing PL row means no supplemental location was
+observed in that extract. A reported site is a candidate for independent
+verification.
+
+For a paired comparison, start with physician-years that have usable ZIPs
+in both the primary NPPES file and PECOS. Keep that denominator fixed
+when adding supplemental sites. Count how many primary disagreements
+become matches to any reported NPPES site. The same method can be used
+for DAC when its comparable practice field is available.
+
+```{r nppes-pl-agreement}
+nppes_with_pl <- dplyr::bind_rows(nppes_primary_zip, nppes_pl) |>
+  dplyr::distinct()
+primary_comparison <- mysteryroster::attribute_set_agreement(
+  base::list(nppes = nppes_primary_zip, pecos = pecos_zip),
+  attribute = "practice_zip5"
+)
+expanded_comparison <- mysteryroster::attribute_set_agreement(
+  base::list(nppes = nppes_with_pl, pecos = pecos_zip),
+  attribute = "practice_zip5"
+)
+pl_comparison <- dplyr::left_join(
+  dplyr::transmute(primary_comparison, id, year,
+                   primary_match = any_shared),
+  dplyr::transmute(expanded_comparison, id, year,
+                   any_site_match = any_shared),
+  by = base::c("id", "year")
+)
+pl_comparison |>
+  dplyr::summarise(
+    n_compared = dplyr::n(),
+    n_primary_disagreements = base::sum(!primary_match),
+    n_recovered = base::sum(!primary_match & any_site_match),
+    pct_recovered = base::ifelse(
+      n_primary_disagreements > 0L,
+      100 * n_recovered / n_primary_disagreements, NA_real_
+    )
+  )
+```
+
+In the toy data, physician 3's PECOS ZIP matches a supplemental NPPES site.
+A ZIP match establishes geographic agreement at the ZIP level. A site
+audit should compare normalized street addresses and independently verify
+the exact listing being audited.
+
+### CMS resources for Medicare Part B and Part D
+
+| Resource | Use in a physician audit |
+|:--|:--|
+| [Part B: Physician & Other Practitioners by Provider and Service][medicare] | Use the rendering NPI and service year to observe published Original Medicare fee-for-service Part B activity. Keep HCPCS and facility or non-facility category for service-level analyses. |
+| [Part D: Prescribers by Provider][part-d-provider] | Use the prescriber NPI and year for a provider-level observation of prescriptions dispensed under Part D, including refills. |
+| [Part D: Prescribers by Provider and Drug][part-d-drug] | Use when the drug matters. Collapse drug rows to one prescriber-year before counting physician coverage. |
+
+The Part B provider ZIP and the Part D by-provider address both come from
+NPPES. Treat those address fields as one lineage alongside NPPES. The
+service and dispensing records are distinct activity observations. Part D
+prescriber geography does not identify the dispensing pharmacy or locate
+the clinical encounter. Keep the two program populations separate when
+interpreting missing records because eligibility, utilization, and public
+release rules differ.
+
+[Part B data dictionary][medicare-dd] ·
+[Part D by-provider data dictionary][part-d-dd]
+
+[part-d-provider]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-part-d-prescribers/medicare-part-d-prescribers-by-provider
+[part-d-drug]: https://data.cms.gov/provider-summary-by-type-of-service/medicare-part-d-prescribers/medicare-part-d-prescribers-by-provider-and-drug/api-docs
+[part-d-dd]: https://data.cms.gov/sites/default/files/2025-04/MUP_DPR_RY25_20250401_DD_PRV_508.pdf
+
+### Map the CMS columns to the audit
+
+For physician-year coverage, use **Part B by Provider and Service** and
+**Part D by Provider**. The latter already summarizes prescriptions by
+prescriber. Use the drug-level Part D file when the analysis needs drug
+identity. The table below uses the [Part B][medicare-dd] and
+[Part D by-provider][part-d-dd] dictionaries. Check the headers for the
+specific release you import.
+
+| Audit field | Part B by Provider and Service | Part D by Provider | How to use it |
+|:--|:--|:--|:--|
+| Physician identifier | `Rndrng_NPI` | `Prscrbr_NPI` | Read as character. Match to the physician frame by NPI and year. |
+| Individual or organization | `Rndrng_Prvdr_Ent_Cd` | `Prscrbr_Ent_Cd` | Keep `I` for individual clinicians. The study frame defines which individuals are physicians in scope. |
+| Activity year | Year of the selected annual CMS file | Year of the selected annual CMS file | Assign the activity year from the selected release and retain the download vintage separately. |
+| Activity detail | `HCPCS_Cd`, `Place_Of_Srvc` | Provider-level summary | Part B has separate HCPCS and facility/non-facility rows. A place-of-service category does not identify the facility address. |
+| Activity count | `Tot_Srvcs` | `Tot_Clms` | Keep these separate. The first counts services at the Part B row grain. The second counts dispensed claims including refills. |
+| Beneficiary count | `Tot_Benes` | `Tot_Benes` | Interpret at the published grain. The same person may contribute to several Part B rows. Part D beneficiary counts can be suppressed. |
+| Street | `Rndrng_Prvdr_St1`, `Rndrng_Prvdr_St2` | `Prscrbr_St1`, `Prscrbr_St2` | NPPES provider address, with shared provenance. |
+| City | `Rndrng_Prvdr_City` | `Prscrbr_City` | NPPES provider city. |
+| State | `Rndrng_Prvdr_State_Abrvtn` or `Rndrng_Prvdr_State_Abvtn` in CMS documentation | `Prscrbr_State_Abrvtn` | Check the Part B download header before mapping the state field. |
+| ZIP5 | `Rndrng_Prvdr_Zip5` | `Prscrbr_Zip5` | Read as character to retain leading zeros. Track under the NPPES address lineage. |
+
+The [earlier Part B dictionary][medicare-dd-earlier] and the linked Part B
+dictionary spell the state variable differently. In an import, verify the
+header against the file you actually downloaded. For coverage, count a
+physician once per source and activity year. The public release can omit
+low-volume records, so keep absent physician-years as unobserved.
+
+[medicare-dd-earlier]: https://data.cms.gov/sites/default/files/2020-09/Medicare%20Physician%20%26%20Other%20Practitioners%20-%20by%20Provider%20and%20Service-Data-Dictionary.pdf
+
+This example uses synthetic rows with CMS column names. It produces a
+Medicare activity index and a separate address ledger. The Part D example
+is a companion to the seven-source audit above.
+
+```{r medicare-dictionary-mapping}
+part_b_csv <- tibble::tibble(
+  Rndrng_NPI = base::c("1", "1", "3"),
+  Rndrng_Prvdr_Ent_Cd = "I",
+  HCPCS_Cd = base::c("99213", "99214", "99213"),
+  Place_Of_Srvc = base::c("F", "O", "O"),
+  Tot_Srvcs = base::c(18L, 26L, 15L),
+  Rndrng_Prvdr_City = "Denver", Rndrng_Prvdr_Zip5 = "80204"
+)
+part_d_csv <- tibble::tibble(
+  Prscrbr_NPI = base::c("2", "3"),
+  Prscrbr_Ent_Cd = "I", Tot_Clms = base::c(32L, 19L),
+  Prscrbr_City = base::c("Aurora", "Denver"),
+  Prscrbr_Zip5 = base::c("80045", "80204")
+)
+part_b_rows <- part_b_csv |>
+  dplyr::filter(Rndrng_Prvdr_Ent_Cd == "I") |>
+  dplyr::transmute(
+    npi = Rndrng_NPI, year = 2024L, hcpcs = HCPCS_Cd,
+    place_of_service = Place_Of_Srvc, services = Tot_Srvcs,
+    city = Rndrng_Prvdr_City, zip5 = Rndrng_Prvdr_Zip5
+  )
+part_d_rows <- part_d_csv |>
+  dplyr::filter(Prscrbr_Ent_Cd == "I") |>
+  dplyr::transmute(
+    npi = Prscrbr_NPI, year = 2024L, dispensed_claims = Tot_Clms,
+    city = Prscrbr_City, zip5 = Prscrbr_Zip5
+  )
+
+medicare_address_ledger <- dplyr::bind_rows(
+  medicare_part_b = dplyr::select(part_b_rows, npi, year, city, zip5),
+  medicare_part_d = dplyr::select(part_d_rows, npi, year, city, zip5),
+  .id = "source"
+) |>
+  dplyr::semi_join(frame, by = base::c("npi", "year")) |>
+  dplyr::mutate(address_lineage = "nppes_address") |>
+  dplyr::distinct()
+
+medicare_activity_index <- medicare_address_ledger |>
+  dplyr::distinct(npi, year, source)
+
+medicare_activity_index
+medicare_address_ledger
+```
+
+## Follow the same attribute across years
+
+Use a separate panel with one practice-state value per physician-year and
+source. Coverage counts populated values against an explicit universe.
+Churn counts changes between consecutive observed years. A registry can
+have high coverage and high churn, and churn can reflect actual moves.
+
+```{r annual-panel}
+nppes_state <- tibble::tibble(
+  npi = base::c("1", "1", "1", "1", "2", "2", "2"),
+  year = base::c(2020:2023, 2020:2022),
+  state = base::c("CO", "CO", "CO", "CO", "NM", "NM", "TX")
+)
+pecos_state <- tibble::tibble(
+  npi = nppes_state$npi, year = nppes_state$year,
+  state = base::c("NM", "NM", "CO", "CO", "NM", "TX", "TX")
+)
+panels <- base::list(nppes = nppes_state, pecos = pecos_state)
+universe <- dplyr::distinct(
+  dplyr::bind_rows(nppes_state, pecos_state), npi, year
+)
+coverage <- mysteryroster::attribute_coverage(
+  panels, attribute = "state", universe = universe
+)
+coverage$by_year
+churn <- mysteryroster::attribute_churn_rate(
+  pecos_state, attribute = "state"
+)
+churn$overall
+mysteryroster::format_ranking_prose(
+  group = coverage$overall$source, value = coverage$overall$pct,
+  n = coverage$overall$n_total, value_label = "coverage", suffix = "%"
+)$sentence
+```
+
+The lead-lag duration starts with physicians whose two sources disagree in a
+specified base year. The catch-up curve instead follows the first appearances
+of physician-value pairs over the whole panel. Its pooled reference starts
+when any source first reports a value. A source still under observation can
+contribute a censored event when it has yet to show that value. Use an external
+reference with `reference = "exclude_self"` when self-confirmation would answer
+the wrong study question, and declare shared lineage where applicable.
+
+```{r timing}
+duration <- mysteryroster::attribute_lead_lag_duration(
+  nppes_state, pecos_state, attribute = "state",
+  base_year = base::min(universe$year),
+  source_a_label = "NPPES", source_b_label = "PECOS"
+)
+base::print(duration)
+duration$b_adopts[base::c("median", "p25", "p75", "mean", "sd")]
+
+catch_up <- mysteryroster::attribute_catch_up_curve(
+  panels, attribute = "state", reference = "pooled"
+)
+base::print(catch_up)
+catch_up$median_horizon
+mysteryroster::attribute_catch_up_curve_prose(
+  catch_up, display_label = base::c(nppes = "NPPES", pecos = "PECOS")
+)$sentence
+```
+
+The two print calls exercise the new methods for
+`mysteryroster_lead_lag_duration` and `mysteryroster_catch_up_curve`.
+A missing catch-up median means the curve did not reach the 50% threshold
+within the observed horizon. Timing patterns can help prioritize records
+for verification.
+
+## Report proportions and consensus predictions
+
+Use the proportion helper for an ordinary two-sample comparison when the
+groups are independent. The example below uses two separate synthetic
+samples. For the same physicians measured twice, use a paired analysis.
+For survey samples, use the design-based workflow above.
+
+```{r proportions}
+comparison <- mysteryroster::format_proportion_comparison_prose(
+  n_a = 45, n_total_a = 100, n_b = 63, n_total_b = 100,
+  label_a = "sample A", label_b = "sample B", unit_label = "records",
+  condition_label = "had a populated practice ZIP"
+)
+comparison$combined_text
+```
+
+The truth-fusion prose helper summarizes a consensus fit, including
+abstention. Treat its predictions as candidates for follow-up. Independent
+verification can establish whether the predicted values are correct.
+
+```{r consensus}
+fusion_claims <- tibble::tibble(
+  entity_id = base::c("1", "1", "2", "2"), attribute = "state",
+  source_id = base::c("nppes", "pecos", "nppes", "pecos"),
+  claimed_value = base::c("CO", "CO", "NY", "NJ"), reference_year = 2024L
+)
+consensus <- mysteryroster::attribute_truth_fusion(
+  fusion_claims, method = "majority"
+)
+mysteryroster::attribute_truth_fusion_prose(
+  consensus, result_label = "the synthetic practice-state fit"
+)$combined_text
+```

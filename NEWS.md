@@ -1,5 +1,597 @@
 # mysteryroster (development version)
 
+* Fixed a `DESCRIPTION` WARNING and a top-level-files NOTE that `R CMD check`
+  has been raising on every CI run without failing it -- the workflow's
+  `error-on: '"error"'` only fails on ERROR, so neither was ever surfaced.
+  `Depends: R (>= 4.5.2)` named a non-zero patchlevel with no feature in the
+  codebase that actually requires it (confirmed via `git log -S` on the
+  commit that bumped it from `4.1.0`: it just matched whatever R was
+  installed that day); relaxed to `R (>= 4.5.0)` in `DESCRIPTION` and the
+  README badge. The tracked top-level `docs/` directory (project research
+  notes -- ablation findings, the evidence-ledger design/results, the
+  saboteur test matrix, the validation protocol) was missing from
+  `.Rbuildignore`, unlike `doc`/`Meta`; added `^docs$` alongside them.
+  `R CMD check` is clean (0 errors, 0 warnings, 0 notes) after both fixes.
+* Added `vignette("source-comparison-midwifery")` and
+  `vignette("truth-fusion-evidence-ledger-cross-check")` to the README -- two of the
+  package's 12 vignettes that existed with no pointer to them anywhere in the README,
+  found by cross-checking every `vignettes/*.Rmd` file against every `vignette("...")`
+  mention in `README.md` directly rather than trusting either list by itself.
+* Updated `DESCRIPTION`'s `Description:` field, the CRAN-facing summary shown by
+  `library(help = "mysteryroster")` and package search listings -- stale since before this
+  session: it covered only the original listing-validity workflow and single-cross-section/
+  lead-lag comparisons, with zero mention of N-way consensus/corroboration, truth fusion, or
+  the entire OIG-style directory audit sub-workflow (all of which already existed, or had
+  just landed, by the time this was caught).
+* Added `@examples` to the two exported functions that had none: `attribute_verification_status()`
+  and `format_no_gold_standard_prose()`. The first is a full worked chain from
+  `attribute_verification_questionnaire()` through `attribute_nonresponse_audit()` to
+  `attribute_verification_status()`, showing all three listing-status outcomes (confirmed valid,
+  confirmed invalid, and unresolved because a definitive answer came through a verification method
+  the study protocol doesn't accept as independent evidence). The second reuses
+  `enrollment_move_lead_lag()`'s own minimal example for its `enrollment_df` argument rather than
+  inventing a new one, plus small hand-built `lead_lag_df`/`freshness_df` inputs satisfying the
+  exact attribute rows and freshness strata the function requires; both were verified to actually
+  execute (via `tools::Rd2ex()`), not just parse.
+* Updated `?mysteryroster` (the package-level help page) and the top of `README.md`: the
+  OIG-style directory-audit sub-workflow (`attribute_field_dictionary()` through
+  `attribute_oig_audit_prose()`, 10 functions) and `attribute_verification_status()` (the
+  bridge from a verification questionnaire into `validity_estimates()`/
+  `validity_sensitivity_bounds()`) had landed with no mention in either -- a reader typing
+  `?mysteryroster` or skimming the README's function count got no signal either existed.
+  Also fixed two documentation-generation issues found while regenerating: a broken Rd
+  cross-reference in `validity_estimates()`'s docs (`[0, 1]` read as a markdown link target)
+  and a hand-written `attribute_verification_status.Rd` that roxygen2 had never generated
+  (now regenerated from its source's existing roxygen comments, content unchanged).
+* Corrected OIG-style reporting to count records actually present in each
+  source and use available-field completeness denominators. Unavailable
+  fields are described explicitly; inconsistent flags, duplicate keys,
+  impossible counts, and unsupported comparison populations are rejected.
+* Added weighted sensitivity bounds for data frames and survey designs,
+  with explicit attempted-only or all-sampled denominators. Default survey
+  proportion intervals now use the beta method; boundary, empty, and
+  undefined intervals carry a diagnostic rather than false precision.
+  The legacy clipped normal method remains selectable.
+* Added `attribute_verification_status()` to map frozen claim answers to
+  explicit physician/source/field targets. Independent verification methods
+  must be declared. Sampling metadata, exclusions, unresolved reasons, and
+  contributing answers remain available for audit and downstream analysis.
+* Hardened record-presence and analysis-population validation after key
+  normalization, with logical flag and status reconciliation. Updated the
+  listing-validity vignette to distinguish all-sampled estimates from
+  accuracy conditional on definitive determinations.
+
+* Added `attribute_set_agreement_summary()` and `attribute_oig_audit_prose()`. The first is
+  the set-based sibling `attribute_set_agreement()` was always missing relative to
+  `attribute_agreement()`/`attribute_agreement_summary()`: per-source-pair-and-year
+  `n_compared`/`n_any_shared`/`pct_any_shared`/`n_same_set`/`pct_same_set`, with `pct_*` as
+  proportions in `[0, 1]` matching the existing convention. The second composes manuscript
+  prose directly from this package's own OIG-style audit functions
+  (`attribute_record_presence()`, `attribute_set_agreement_summary()`, optionally
+  `attribute_enrollment_locations()` and `attribute_nonresponse_audit()`) -- the same role
+  `format_no_gold_standard_prose()` and `attribute_truth_fusion_prose()` play for the
+  package's other analyses. It deliberately omits a verified-accuracy sentence (no
+  equivalent to `mr_verified_accuracy()` was ever ported -- see the note on
+  `attribute_nonresponse_audit()` above) and a format-validity sentence (the field
+  dictionary's `normalizer` is metadata, not executable code, so there is nothing to check
+  a populated value against). Verified end-to-end by running every new function in this
+  staged integration in sequence on one consistent synthetic study and confirming the
+  resulting paragraph reads correctly.
+* Added `attribute_nonresponse_audit()`, the seventh and final piece of the staged
+  OIG-style audit integration. Reconciles a frozen questionnaire against whatever answers
+  and contact attempts actually came back, classifying every sampled identifier-year into
+  one of five exhaustive response statuses (`complete_response`/`partial_response`/
+  `refused`/`contacted_no_response`/`not_attempted`) and reporting a weighted response rate
+  with a denominator that keeps unknown-eligibility cases rather than silently dropping
+  them. Refusal and unreachable nonresponse are kept apart (different nonresponse
+  mechanisms), and neither counts as an incorrect answer. Fixes three real validation gaps
+  confirmed, via direct execution of the source material's own 80-test adversarial suite,
+  to be accepted by the original standalone script: a future `verified_at` date, a
+  duplicate assertion filed under two different `question_id`s, and an inconsistent
+  `value_missing` flag are all now hard errors rather than silently accepted.
+  This completes the integration of the OIG-style physician-directory audit methodology
+  (originally drafted, unexecuted, by a parallel ChatGPT session) into mysteryroster proper:
+  `attribute_set_agreement()`, `attribute_field_dictionary()`,
+  `attribute_analysis_populations()`, `attribute_record_presence()`,
+  `attribute_enrollment_locations()`, `attribute_verification_codebook()`,
+  `attribute_verification_questionnaire()`, and `attribute_nonresponse_audit()` -- each
+  rebuilt with `checkmate` validation, full roxygen docs, and hand-traced `testthat`
+  coverage rather than ported as-is, with every genuinely new idea kept and every piece
+  that duplicated existing, more rigorous package capability (`mr_verified_accuracy()`'s
+  weighted bounds, which `validity_estimates()`/`validity_sensitivity_bounds()` already
+  covered better) deliberately left out.
+* Added `attribute_verification_codebook()` and `attribute_verification_questionnaire()`,
+  the sixth piece of the staged OIG-style audit integration. The codebook maps all six
+  OIG-style per-claim response categories (`correct`/`partially_incorrect`/
+  `formerly_correct`/`never_correct`/`unable_to_verify`/`not_applicable`) to four coarser
+  accuracy buckets -- richer than `listing_status_levels()`'s four whole-listing statuses,
+  since it distinguishes *why* a claim is wrong, not just whether it is. The questionnaire
+  generator freezes one verification question per distinct sampled assertion -- one
+  question per distinct value when an attribute is legitimately multi-valued, and an
+  explicit question for a missing value rather than skipping it or treating it as
+  automatically wrong. Every sampled identifier-year must get at least one question, or
+  the call errors rather than silently having nothing to verify.
+* Added `attribute_enrollment_locations()`, the fifth piece of the staged OIG-style audit
+  integration. Links both direct individual enrollment edges and group-reassignment edges
+  to practice locations by `(year, enrollment_id)`, keeping every physician-location pair
+  as its own traceable row even when several physicians share one group enrollment with
+  several locations. `clinical_presence_verified` is always `NA` on every row, with no code
+  path that ever sets it otherwise -- group linkage is an administrative association, never
+  evidence the physician was actually seen at that location, and this function does not
+  blur that line.
+* Added `attribute_record_presence()`, the fourth piece of the staged OIG-style audit
+  integration. `attribute_analysis_populations()`'s `coverage` only says whether a record is
+  present; this keeps apart the three different reasons a field's value could still be
+  missing (the whole record isn't there, the record is there but the field was never part of
+  that source's extract, or the field was in the extract but every row of it was blank) plus
+  a fourth, distinguishable `"populated"` outcome, at the identifier/year/source/attribute
+  grain. Field availability must be stated explicitly in `source_fields` for every
+  combination `coverage` x `dictionary` implies -- never inferred as `FALSE` from an absent
+  row -- and a claim that contradicts the record/field status governing it is a hard error,
+  not a silent preference for one input over the other.
+* Added `attribute_analysis_populations()`, the third piece of the staged OIG-style audit
+  integration. Builds four distinct populations from one population frame, a record index,
+  and snapshot manifest metadata, so a later comparison always states which denominator it
+  used instead of conflating them: `coverage`/`completeness` (is a record present at all,
+  with a source's own `extract_complete` flag deciding whether a missing record means
+  `"absent_from_declared_extract"` or the weaker `"not_observed_in_incomplete_extract"`),
+  `consistency` (present in *both* of a named source pair -- the only population where a
+  field-value comparison is even possible), and `accuracy_eligible`/`accuracy_sample` (the
+  pairwise-overlap sampling frame for independent verification, and an optional
+  caller-supplied sample that must stay inside it). `id`/`year` column names are
+  parameterized like `attribute_agreement()`'s, not hardcoded to `npi`.
+* Added `attribute_field_dictionary()`, the second piece of the staged OIG-style audit
+  integration (see `attribute_set_agreement()` below). Cross-joins a caller-supplied field
+  catalog (`attribute`/`definition`/`location_role`/`normalizer`) over a vector of source
+  labels, tagging every row `requirement = "unreviewed"` until an analyst checks a dated
+  source specification, and assigning `lineage` from a `lineage_groups` argument that
+  reuses `attribute_claims_collapse_lineage()`'s exact shape (a source named in no group is
+  its own lineage family). Deliberately does not ship a hardcoded NPPES/PECOS/DAC field
+  list the way the source material did -- nothing else in this package assumes a specific
+  registry, so the field catalog is caller-supplied, shown only as a worked example.
+* Added `attribute_set_agreement()`, a set-based sibling to `attribute_agreement()` for
+  attributes where a source can legitimately report more than one value for the same
+  identifier-year -- for example a physician with two practice locations from the same
+  registry in the same year. `attribute_agreement()` merges on `(id, year)` alone, so a
+  source with 2+ rows for one identifier-year silently produces an uncontrolled cartesian
+  product rather than a comparison; `attribute_set_agreement()` instead compares the full
+  *set* of values each source reports, returning both `any_shared` (OIG's own looser
+  directory-audit standard -- the two sources overlap on at least one value) and
+  `same_set` (a stricter extension -- the sets are exactly equal) rather than picking one
+  standard silently. First piece of a staged integration of OIG-style physician-directory
+  audit methodology into the package; population separation, record-presence tracking,
+  enrollment-to-location linkage, and a per-claim verification questionnaire with
+  structured nonresponse are follow-on pieces, not yet landed.
+* Rewrote `?mysteryroster` (the package-level help page) and the top of `README.md`:
+  both previously described only the original listing-validity protocol (~16 functions),
+  leaving the entire no-gold-standard comparison and truth-fusion side of the package
+  (~30 functions, roughly two-thirds of it by count, and this session's entire focus)
+  completely unmentioned. A reader typing `?mysteryroster` or skimming the README's
+  opening got no signal that capability existed at all. `?mysteryroster` now orients to
+  both workflows explicitly, with the second broken into its four natural sub-workflows
+  (single cross-section, longitudinal pairwise, N-way consensus, truth fusion) and links
+  to every relevant vignette; the README's opening does the same, with a skip-link into
+  the body section where the second workflow is actually covered (which was already
+  thorough, ~230 lines -- the gap was specifically in the first-five-seconds framing, not
+  the content). Every function referenced in the new package doc verified against the
+  actual exported-function list before publishing, to avoid broken cross-references.
+* `attribute_catch_up_curve()` and `attribute_lead_lag_duration()` now return a classed
+  result (`mysteryroster_catch_up_curve`, `mysteryroster_lead_lag_duration`) with its own
+  `print()` method, matching the existing convention `attribute_truth_fusion()` already
+  had. Typing a catch-up-curve result at the console previously dumped seven raw list
+  elements, several of them multi-row tibbles; a duration result dumped every field of two
+  deeply nested nested summary lists, one value per line, 40+ lines for what reads as two
+  sentences. Both now print a compact summary (median years to catch up with its
+  confidence interval and risk-set size, ranked fastest-first, for `attribute_catch_up_
+  curve()`; the two adoption/reversion sentences for `attribute_lead_lag_duration()`) while
+  every list element (`$curve`, `$median_horizon`, `$b_adopts`, etc.) remains fully
+  accessible exactly as before -- the class only changes what happens when the object is
+  printed, not what `$` access returns.
+* Added `attribute_lead_lag_duration()` to `vignette("lead-lag-staleness")` as a new
+  "Approach 4," immediately before the catch-up-curve section it precedes conceptually.
+  Like `attribute_catch_up_curve()` before it, this function had no narrative
+  documentation at all despite being exported and referenced by name in that other
+  function's own docs. The new section uses a dedicated 3-identifier example (not the
+  minimal 1-identifier one in the function's own `@examples`) specifically chosen to make
+  its real limitation visible in the rendered output: `disc_base_n` is 3, but `b_adopts$n`
+  is 2, with the median computed from `years = c(1, 3)` alone -- the identifier that never
+  resolves is not in that vector, and nothing in the sentence marks its absence. This is
+  exactly the gap `attribute_catch_up_curve()`'s censoring-aware estimate exists to close,
+  which the vignette can now show side by side instead of asserting in prose.
+* Added a confidence interval to `attribute_catch_up_curve()`'s `median_horizon`:
+  `median_ci_low`/`median_ci_high` (the Brookmeyer-Crowley interval, via the log-log
+  transform of Greenwood's formula, the same method `survival::survfit()` uses by
+  default) and `median_n_at_risk` (the risk-set size at the horizon where the point
+  estimate crosses 50%). `curve` itself also gains a pointwise `ci_low`/`ci_high` at
+  every horizon. Found while demonstrating `attribute_catch_up_curve_prose()`'s new
+  clinical register on real data: the Medicaid enrollment file's reported median of 16
+  years sits on a risk set of just 49 events, hovering within one point of the 50%
+  threshold from horizon 13 through 15 before a single additional event tips it to 16 --
+  a one-case difference that would have reported 13 instead. The number was not wrong,
+  but reporting it bare, with no interval, hid how little it should be trusted; the
+  correct interval is (12, not estimable). Verified both against an independent hand
+  calculation and against `survival::survfit()` fed the equivalent left-truncated,
+  right-censored individual-level data, matching to the decimal at every horizon tested
+  and for the median and its interval. `attribute_catch_up_curve_prose()` now reports
+  this alongside each resolved source's median in both registers, rather than a bare
+  point estimate.
+* Added `register = c("technical", "clinical")` to `format_ranking_prose()` and
+  `attribute_catch_up_curve_prose()`. `"clinical"` produces plain-language narrative
+  sentences with no abbreviations and no em dashes ("Among the 2 groups compared, the
+  lowest median years to confirmation was observed for..." instead of "Ranked by median
+  years to catch up, lowest to highest: ..."), intended for a clinical-journal Methods/
+  Results section rather than a technical report. As with the existing `display_label`
+  parameter, the caller supplies audience-appropriate group names (e.g. "the national
+  provider directory" rather than "nppes"); `register` controls sentence structure, not
+  domain vocabulary the package has no way to know. `table`/`highest`/`lowest`/`ties` are
+  unaffected by `register`, only `sentence` changes. Default remains `"technical"`,
+  preserving all prior behavior exactly.
+* Fixed a real bug surfaced while building the above: `attribute_catch_up_curve_prose()`'s
+  `n_events` was computed as the largest single source's own `n_at_risk` at `horizon = 0`,
+  which only equals the true pooled total under `reference = "pooled"`. Under
+  `reference = "exclude_self"`, each source's own risk set is already reduced by its
+  unanchored and uncovered exclusions, so that maximum understates the real count (seen on
+  real data: 2,245 reported instead of the true 3,029). Fixed to use `attribute_catch_up_
+  curve()`'s own `n_tracked` field directly.
+* Added `lineage_groups` to `attribute_catch_up_curve()`'s `reference = "exclude_self"`
+  mode (same convention as `attribute_claims_collapse_lineage()`'s own `lineage_groups`):
+  two sources derived from the same underlying file cannot independently confirm each
+  other's events just because their file names differ. Excluding "self" now excludes a
+  source's whole named lineage group. On the real midwifery data, grouping the facility-
+  affiliation extract with the DAC/PECOS source it is literally derived from (both come
+  from the same underlying CMS Doctors & Clinicians file) raised facility affiliation's
+  unconfirmed-event count from 18 to 1,533 of 3,029 (51%) -- its apparent independent
+  confirmation had been almost entirely circular. Medians were unaffected (the events that
+  remain genuinely anchored resolve at the same speed), but confidence in which events are
+  anchored at all drops sharply once shared provenance is accounted for.
+  Also added a synthetic regression test for a clinician with two separate round trips
+  through the same two values (CO -> TX -> CO -> TX): confirms, explicitly rather than by
+  inference, that only 2 distinct events are tracked (not the 3 genuine transitions that
+  occurred) -- the documented "repeated arrival" collapse limitation, now with a test
+  naming the exact scenario rather than only a simpler one-value case.
+* Fixed a third real validity problem in `attribute_catch_up_curve()`, found while
+  investigating why Open Payments' `exclude_self` median catch-up (13 years) was still
+  implausibly high after the censoring-window and circularity fixes below: a source's own
+  observation *window* (when the source as a whole was operating) says nothing about
+  whether a *given identifier* ever appears in it at all. An identifier a source has zero
+  records for, in any year, cannot show any value for it -- this is structural
+  non-coverage, not "watched and still pending" -- yet it was being kept in that source's
+  risk set for the source's entire operating window regardless, dragging the curve down
+  for a reason with nothing to do with update speed. On the real data this was the
+  dominant effect, far larger than the window fix: facility affiliation never observes 69%
+  of its tracked identifiers at all (2,104 of 3,029), Open Payments 44% (1,322), T-MSIS 22%
+  (653). Fixed: such identifiers are now excluded from a source's risk set entirely
+  (reported via the new `n_no_coverage`, the same way `n_unanchored` already reported
+  circularity exclusions). Effect on the real data: Open Payments' median fell further,
+  10 -> 4 years (`pooled`) and 13 -> 5 years (`exclude_self`); T-MSIS and facility
+  affiliation, which previously never crossed 50% catch-up at all, now resolve at medians
+  of 13 and 5 years respectively once the identifiers they structurally cannot observe
+  stop being counted against them. One new regression test; all prior tests for this
+  function still pass unchanged.
+* Fixed two real validity problems in `attribute_catch_up_curve()`, found by running it
+  against a real five-source midwifery comparison rather than only hand-built test
+  fixtures:
+  (1) Censoring used the *panel-wide* latest/earliest year for every source, conflating
+  "this source was watched and hadn't shown the value yet" (real loss to follow-up) with
+  "this source's own data collection hadn't started or had already ended" (structural
+  non-coverage). On the real data this inflated a sparse source's apparent median
+  catch-up time with years it was never able to observe anything in at all -- concretely,
+  Open Payments' reported median dropped from a non-sensical 16 years to 10 once censoring
+  used that source's own 2015-2025 observation window instead of the full panel's
+  2007-2026 span. Fixed: a source's risk set now enters (is left-truncated) at that
+  source's own earliest observed year and is censored at its own latest, never a different
+  source's.
+  (2) An event's reference time was pooled across every source's own detected arrivals,
+  so the source that happened to detect an event earliest got credited with "catching up"
+  to it immediately -- not because it is actually fast, but because it supplied the
+  timestamp it is being measured against. On the real data this was severe: 66-85% of the
+  events a source resolved at `horizon = 0` were ones that source itself had helped define.
+  Added `reference = "exclude_self"` (alongside the existing `"pooled"` default): scores
+  each source only against events *other* sources independently detected, dropping (and
+  reporting via the new `n_unanchored`) any event no other source confirms. Running both
+  modes on the real data: NPPES's median rose from 0 to 1 year and DAC/PECOS's from 0 to 2
+  once self-detected events no longer counted in their own favor; nearly half of
+  DAC/PECOS's tracked arrivals (1,485 of 3,029) turned out to have no independent
+  confirmation from any other source at all.
+  Separately checked and found negligible in the real data (0 of several thousand
+  multi-value identifiers across all five sources): a value an identifier returns to a
+  second time still collapses into its first-ever arrival, a known, documented limitation
+  left as-is since fixing it would not have changed any real number. Six new regression
+  tests cover both fixes with hand-traced examples; all 22 pre-existing tests for this
+  function still pass unchanged.
+* Added `attribute_catch_up_curve_prose()`: manuscript-ready prose for an
+  `attribute_catch_up_curve()` result, ranking sources whose curve crosses 50% via
+  `format_ranking_prose()` and writing a separate, honest sentence (percent still not
+  reflected, immediately and at a chosen horizon) for any source whose curve never does,
+  rather than forcing every source through the same ranking or fabricating an unbounded
+  catch-up time.
+* Added `attribute_catch_up_curve()`: a proper right-censored Kaplan-Meier
+  survival estimate of how long each source takes to show a value another
+  source already has, across 2+ sources at once. Ported and generalized
+  from a `tyler.muffly`/Devin-AI co-authored exploratory analysis
+  (`vignette("lead-lag-staleness")`'s "How many years ahead or behind?"
+  section, commit `5892254` on branch
+  `devin/1793847201-lead-lag-years-ahead`) into a tested, documented,
+  reusable function. Fixes a real limitation `attribute_lead_lag_duration()`
+  has: its median/IQR is computed only over identifiers that *eventually*
+  resolve within the observed panel, so one that never catches up simply
+  disappears from the summary, understating how long a slow source
+  actually takes. `attribute_catch_up_curve()` instead treats an
+  unresolved identifier as correctly "at risk" for as long as its own
+  follow-up window lasts, then censors it out once that window closes --
+  never silently dropped, never miscounted as "never". `median_horizon`
+  is `NA`, not a fabricated number, when a source's curve never crosses
+  50% within the observed horizon. Composes with `format_ranking_prose()`
+  to rank sources by median catch-up time. Verified against two
+  hand-traced Kaplan-Meier calculations, including a dedicated censoring
+  test confirming an event near the panel's end correctly drops out of
+  the risk set rather than permanently dragging a source's curve down.
+* Fixed a real bug in `attribute_catch_up_curve()`: whether a source had
+  "shown" a tracked value was decided using the same strict consecutive-year
+  rule used to *detect* arrivals in the first place. That rule is right for
+  discovering genuine arrivals, but wrong for deciding whether another
+  source has caught up -- it silently discarded a real match whenever that
+  source's own prior record for the identifier was more than one year
+  earlier, which is the normal case for any source sampled less often than
+  annually (enrollment- or claims-derived data with multi-year gaps between
+  records). Found by running the function against real, full midwifery
+  cohort data across five genuinely heterogeneous sources (NPPES,
+  DAC/PECOS, T-MSIS, Open Payments, CCN facility affiliation): three of the
+  five appeared to "never catch up" at ~95-99.5% unresolved, which turned
+  out to be the bug discarding 80-95% of each source's real matches, not a
+  finding about those sources. A source is now credited as soon as *any* of
+  its own records carries the matching value at or after the event's
+  pooled start year, regardless of the gap to its prior record; a match
+  that occurred only *before* the event started still correctly does not
+  count, and is retained in the risk set (not silently dropped) rather than
+  miscounted as resolved. Two new regression tests cover both corrected
+  behaviors.
+* Ran 20 more adversarial saboteurs (Part E of `docs/saboteur-test-matrix.md`)
+  against the prose generators, covering different attack vectors than Part
+  D plus `attribute_churn_rate()`/`attribute_coverage()` (built this
+  session, not previously saboteur-tested). Found and fixed three real
+  bugs, each now a permanent `[red-team]` regression test: (1)
+  `format_ranking_prose()` ranked and printed a literal `Inf` if handed one
+  (e.g. from an upstream division-by-zero) -- `value` now requires
+  `finite = TRUE`; (2) `fmt = "%s"` let a value's full floating-point
+  precision leak into a sentence uncontrolled -- `fmt` is now restricted to
+  floating-point-safe sprintf conversions (`f`/`e`/`E`/`g`/`G`/`a`/`A`;
+  `%d`-family is deliberately excluded too, since R's `sprintf()` requires
+  those to receive a true integer and errors cryptically on a fractional
+  `value`); (3) `attribute_truth_fusion_prose()` compared two fits'
+  abstention rates with no disclosure when `result` and `compare_to` used
+  *different* fusion methods (whose abstention criteria aren't the same
+  quantity) -- the comparison sentence now names both methods whenever they
+  differ. While fixing (2), a fourth, self-referential bug was caught in
+  the fix's own error message: passing several separate string literals to
+  one `sprintf()` call doesn't concatenate them, silently producing a
+  garbled message -- fixed with `paste0()` before the single substitution,
+  in the same pass, not shipped. Seventeen of the twenty saboteurs were
+  already correctly defended, including the numeric-looking-group-name
+  ranking order (driven by value, never a string sort) and the
+  zero-overlap-universe coverage case (a real, honest 0% with a wide CI,
+  not a bug).
+* Added `format_ranking_prose()`, the N-way counterpart to
+  `format_proportion_comparison_prose()`'s one-or-two-group case: given a
+  value per named group (coverage, lead rate, odd-one-out rate, learned
+  reliability -- anything), returns a ranked table and a manuscript sentence,
+  with same-displayed-value ties explicitly flagged rather than presented as
+  a false strict order. `attribute_truth_fusion_prose()`'s reliability
+  ranking now uses it internally instead of duplicating the same logic.
+  Added `vignette("source-comparison-midwifery")`, which runs all eight
+  no-gold-standard comparison dimensions this package now supports --
+  timing, agreement (pooled and covariate-stratified), staleness, churn,
+  coverage, convergence, independence, and weight -- end to end on one
+  simulated, midwifery-calibrated panel, demonstrating every prose
+  generator together rather than one function at a time.
+* Ran 20 new adversarial saboteurs (Part D of
+  `docs/saboteur-test-matrix.md`) against `format_proportion_comparison_prose()`,
+  `format_ranking_prose()`, `attribute_lead_lag_duration()`, and
+  `attribute_truth_fusion_prose()` for grammatical and statistical
+  correctness -- not just unit-tested in isolation, each one actually run
+  against the real functions before any fix. Found and fixed five real
+  bugs, each now a permanent `[red-team]` regression test: (1) `n` counts
+  in a ranking sentence could render with stray padding (`"n =     0"`)
+  from `format()`'s default width-alignment; (2) a degenerate two-proportion
+  test (e.g. 0/1 vs. 0/1) correctly marked its p-value "not computable" but
+  still rendered a nonsensical `"95% CI -0.0 to -0.0%"` from the same
+  untrustworthy fit; (3) `conf_level = 1` propagated a literal `NaN` into
+  rendered sentence text via `wilson_ci()`'s own `qnorm(1) = Inf` -- fixed
+  at the root in `wilson_ci()` itself (an existing, widely-used function),
+  so every caller is protected, not just the new prose functions;
+  (4) a whitespace-only label (`"   "`) passed `checkmate::assert_string(x,
+  min.chars = 1)` and produced a visibly broken sentence ("In   , 10
+  of..."); (5) a source with indeterminate reliability (e.g. isolated in a
+  disconnected graph component) used to vanish from a reliability ranking
+  with no trace, rather than being disclosed as excluded.
+* Added `attribute_churn_rate()` and `attribute_coverage()`: two more
+  dimensions for comparing sources, distinct from timing and agreement.
+  `attribute_churn_rate()` measures how often a single source's own value
+  changes year to year, independent of whether the change is "right" --
+  overall, by transition year, and by identifier (with a 0/1/2/3+
+  change-count distribution, so a source whose churn is driven by a
+  handful of volatile identifiers is distinguishable from one that churns
+  evenly). Its `overall$n_changed`/`overall$n_transitions` feed directly
+  into `format_proportion_comparison_prose()` for a two-source comparison
+  with a p-value -- no separate wrapper needed. `attribute_coverage()`
+  measures which source actually has a non-missing value for more
+  entity-years, against an explicit (or, with a documented caveat,
+  inferred) universe -- ranked across any number of sources at once, with
+  a by-year breakdown. Both follow this package's existing conventions
+  (Wilson CIs throughout, "presence is never inferred" -- a missing value
+  is never counted as coverage, named-list-of-sources shape matching
+  `attribute_consensus_tier()`/`attribute_source_corroboration()`).
+* Added `attribute_lead_lag_duration()`: extends
+  `attribute_lead_lag_matrix()`'s multi-year convergence tracking (which only
+  answers *whether* a source eventually adopts the other's disputed value)
+  with *how long* that takes -- the earliest later year each identifier's
+  adoption/reversion first occurs, summarized as n/median/IQR/mean/SD/CI per
+  direction, plus a manuscript sentence for each (`"NPPES adopted CMS DAC's
+  2020 value after a median of 2.0 years (IQR 1.0-3.0; mean 2.1, 95% CI
+  1.7-2.5 years)"`). Deliberately reports years, not months: this package's
+  longitudinal sources are annual snapshots, so years is the finest unit the
+  data can honestly support -- a month-level lag between two sources that
+  both carry real calendar dates (not just annual snapshots) is a different,
+  separate kind of comparison, out of scope here and documented as such.
+* Reworked `format_proportion_comparison_prose()`'s sentences (and
+  `attribute_truth_fusion_prose()`'s, which builds on it) to be clearer and
+  more complete, per explicit feedback on the first version below. Two
+  changes: (1) `quantity_label` (one free-text phrase) is replaced by
+  `unit_label` (a plural noun, e.g. `"entity-years"`) and `condition_label`
+  (a verb phrase, e.g. `"were abstained"`), because a single label read as a
+  sentence fragment whenever it was phrased as a noun rather than a
+  predicate -- the old `"this cohort: 204 of 1,806 NPI-years with any
+  external corroboration (11.3%...)"` had no verb; splitting the two always
+  produces a complete sentence (`"In this cohort, 204 of 1,806 NPI-years had
+  any external corroboration (11.3%...)."`). (2) The comparison sentence now
+  reports the difference in percentage points with its own 95% CI (signed
+  consistently, from the same `prop.test()` call, at no extra computation
+  cost) and the full chi-squared statistic with degrees of freedom and total
+  N (`"chi-squared(1, N = 7,112) = 3.89, p = 0.049"`), not just a bare
+  p-value -- the standard form a manuscript expects. Caught a real bug while
+  rewriting the template (one extra, unused `%s` placeholder caused
+  `sprintf()` to error on every two-group call) before it shipped.
+  `attribute_truth_fusion_prose()`'s reliability sentence now lists the full
+  ranking of every source, not just the highest and lowest. This is a
+  breaking change to `format_proportion_comparison_prose()`'s signature
+  (`quantity_label` no longer exists); the function was added in the
+  previous entry below and has no outside callers yet.
+* Added `format_proportion_comparison_prose()` and
+  `attribute_truth_fusion_prose()`: manuscript-ready sentences (count, %,
+  Wilson CI, and -- for two proportions -- a two-proportion test with a
+  p-value) generated directly from the numbers, instead of hand-writing
+  `sprintf()`/`prop.test()` the way every case-study doc in this package so
+  far has. `format_proportion_comparison_prose()` works on any count/total
+  pair (abstention rate, corroboration rate, agreement rate, anything);
+  `attribute_truth_fusion_prose()` is a thin wrapper that pulls the
+  abstention count and, when present, a reliability-ranking sentence
+  directly from one or two `attribute_truth_fusion()` results. Verified
+  against this package's own already-published numbers before shipping:
+  reproduces `docs/midwifery-ablation-findings.md`'s 204/1,806 (11.3%, CI
+  9.9-12.8%) and `docs/midwifery-evidence-ledger-results.md`'s 691 vs. 759
+  of 3,556 comparison exactly.
+* Added `man/figures/truth-discovery-abstention-vs-reliability.png` -- a
+  conceptual diagram contrasting abstention (a per-entity-year decision)
+  with source reliability (a per-source property learned across many
+  records), including the warning that dependent sources can agree with
+  each other and still be wrong together -- to README.md's "Predicting a
+  value: truth fusion" section.
+* Added two base-R figures to `vignette("truth-fusion-evidence-ledger-cross-check")`:
+  a grouped bar chart of majority-vote abstention by transition year (baseline vs.
+  +T-MSIS), visually showing the asymmetry between the 2018 and 2024 spike years, and
+  a grouped bar chart of each weighted method's learned reliability for all four
+  sources, visually showing T-MSIS has no cross-method consensus (lowest-ranked under
+  the two Dawid-Skene variants, mid-pack and barely distinguished under
+  average_log/truthfinder). Same base-R/no-ggplot2-dependency convention as this
+  package's other vignettes' figures.
+* Added `vignette("truth-fusion-evidence-ledger-cross-check")`, packaging the
+  evidence-ledger expansion work (`docs/midwifery-evidence-ledger-design.md`,
+  `docs/midwifery-evidence-ledger-results.md`) as a proper case-study
+  vignette: a runnable demonstration of `attribute_claims_collapse_lineage()`,
+  a small invented illustration (verified against an actual run, not just
+  described) of how adding a fourth source can resolve some majority ties
+  and create others at once, and the real cohort's aggregate findings --
+  T-MSIS agreeing with NPPES only ~50% of the time, majority abstention
+  rising on net while `dawid_skene`'s cross-method agreement nearly triples,
+  and the independent cross-check against a separately-built full-panel
+  analysis (NPPES-removal) landing on the same conclusion about which of two
+  migration spikes is NPPES-dependent. No person-level or NPI-level data
+  appears in the vignette; only the invented illustration and the already-
+  published aggregate numbers.
+* The weighted methods flagged as unrun in the bullet below (dawid_skene,
+  one_coin_dawid_skene, sums, average_log, investment, pooled_investment,
+  truthfinder) were subsequently run by the `~/midwifery` session against
+  the same expanded claims table (crowd_kit/truthdiscovery still aren't
+  configured in this R session) and verified here directly from its output
+  files, not taken on report. A sanity check reproduced both the 691 and
+  759 majority baselines exactly from a from-scratch read of the handed-off
+  file. All 7 weighted methods abstain 0% of the time. T-MSIS's learned
+  reliability has no cross-method consensus: lowest-ranked of the 4 sources
+  by dawid_skene (0.551) and one_coin_dawid_skene (0.693), mid-pack by
+  average_log and truthfinder -- the same contradictory-reliability-ranking
+  finding the original 3-source ablation established, now extended to a 4th
+  source rather than resolved by adding one. Adding the 4th source also
+  nearly triples dawid_skene/truthfinder's agreement on majority's ties
+  (6.6% -> 19.1%) and drops dawid_skene's trust-NPPES share by about 18
+  points, a more encouraging signal than the majority-only result alone
+  suggested -- full detail in `docs/midwifery-evidence-ledger-results.md`
+  §4.
+* Added `docs/midwifery-evidence-ledger-results.md`: Steps 2-4 of the
+  evidence-ledger expansion plan, actually run against real data (all
+  aggregate counts, no person-level values) rather than left as a design
+  spec. The exact frozen 1,806-case/3,556-NPI-year cohort was independently
+  re-derived from `~/midwifery`'s own extraction scripts and verified to
+  match the published ablation numbers (small drift noted and explained:
+  the auxiliary DAC/PECOS/Open-Payments source files have been updated
+  since the original computation). Real T-MSIS Medicaid enrollment claims
+  were added (1,339 usable, 515 NPI-years gaining evidence that had none
+  before) and found to agree with NPPES only ~50% of the time -- direct
+  empirical support for not treating enrollment as a practice address.
+  Adding T-MSIS *increases* majority-vote abstention on net (691 -> 759 of
+  3,556), asymmetrically by transition: abstention roughly doubles for the
+  2017-18 spike and decreases for 2023-24, corroborating -- via a completely
+  independent method -- the `~/midwifery` session's own finding (from
+  removing NPPES out of its full 219,536-entity-year panel) that the 2017-18
+  spike is substantially NPPES-dependent while 2023-24 is not. Facility
+  affiliations turned out to add zero claims to this specific cohort (its
+  6 transitions never touch 2026, the source's only dated year) -- a
+  year-range mismatch, not the uselessness the rescinded constraint 3
+  originally assumed. Weighted methods (dawid_skene, truthfinder, etc.)
+  remain unrun against the expanded table: crowd_kit/truthdiscovery aren't
+  configured in this R session.
+* Added `attribute_claims_collapse_lineage()`, generalizing the
+  `dac_pecos_combined` merge rule from `docs/midwifery-ablation-findings.md`
+  (agree -> one vote; disagree -> no vote; one present -> use it) from one
+  hardcoded pair to any declared group of same-lineage `source_id`s, so a
+  future lineage-sharing source doesn't need the rule re-implemented ad hoc.
+  Added alongside `docs/midwifery-evidence-ledger-design.md`, a design spec
+  and source-by-source verdict table (grounded in an audit of
+  `~/midwifery`'s existing extraction infrastructure) for expanding the
+  midwifery evidence ledger beyond the original three sources -- CMS
+  T-MSIS Medicaid enrollment segments are the one clearly new,
+  independently-lineaged, properly-dated candidate found; hospital facility
+  affiliations are addable only under a separate attribute, never as a
+  practice-address vote. No real data has been loaded under this yet: that
+  requires reading `~/midwifery`'s artifacts directly, on hold while a
+  separate, live, in-progress build in that repository is running.
+* The hospital-facility-affiliation exclusion above (constraint 3) was
+  rescinded by the user immediately after: a CCN is a real physical
+  facility with a real state, so `docs/midwifery-evidence-ledger-design.md`
+  now calls for loading it directly as `practice_state` evidence (dated to
+  its one snapshot year, never extrapolated), the same single-snapshot
+  treatment already given to Healthgrades/Doximity/state boards. The
+  `~/midwifery` build reached the identical call independently and is
+  wiring the same source in as its 5th truth-fusion source.
+* Strengthened `vignette("truth-fusion-case-study-midwifery")` with a
+  second real example (NPPES, a combined DAC/PECOS source, and CMS Open
+  Payments -- public transparency data by design, so real NPIs are shown,
+  not placeholders) drawn from an unrelated `midwifery` project prototype
+  (`diagnose_truth_discovery_migration_states.R`) that independently
+  wrote its own one-coin Dawid-Skene EM to solve the same problem this
+  package already implements, for a cohort of 1,806 NPI-years where
+  NPPES itself reported a state change. A first pass through this
+  example overclaimed what it showed; corrected after actually reading
+  the cohort-construction code (full account in the new
+  `docs/midwifery-ablation-findings.md`): these are NPPES-anchored
+  apparent relocations, not independently-established moves, and the
+  `confirmed` flag used as "external validation" turned out to be built
+  entirely from NPPES's own adjacent years -- not independent of the
+  source being validated. The corrected, more rigorous finding that
+  replaced it: `dawid_skene` and `truthfinder`, fit on identical real
+  claims, resolve the same 695 majority-tied NPI-years but agree on the
+  resolved value only 6.6% of the time, and `dawid_skene`'s resolutions
+  turn out to be 97.6% attributable to simply trusting NPPES over one
+  disagreeing source (confirmed by removing NPPES and refitting: only
+  7.2% of its resolutions survive, versus 92.5% surviving removal of
+  DAC/PECOS instead). `truthdiscovery`'s other four methods each learn a
+  different reliability ranking for the same three sources, not
+  clustering by backend family. DAC and PECOS, despite a documented
+  shared upstream dependency, still disagree 26.6% of the time both are
+  observed -- the one finding from this example that held up unchanged --
+  the same "shared upstream feed" phenomenon as the Crowd-Kit vignette's
+  copied-source example, independently handled in unrelated real code by
+  excluding disagreements rather than picking one, arriving at this
+  package's own `on_source_conflict = "single_value"` policy.
 * Added `docs/validation-protocol.md`, a design specification for a
   held-out benchmark comparing `attribute_truth_fusion()`'s methods
   against real, verified physician-location data: two separate schemas
@@ -229,6 +821,13 @@
   shows a move before each other source, and catch-up curves of the share of
   moves each source has not yet shown. The heatmap is also on the README. The
   code is in the vignette; no functions were added.
+* Added `vignette("oig-style-source-audit")`: an OIG OEI-07-09-00440-style completeness
+  and consistency audit across six simulated nurse-midwife location sources, using
+  `attribute_field_dictionary()`, `attribute_record_presence()`, `attribute_set_agreement()`,
+  `wilson_ci()`, `attribute_odd_one_out()` and `attribute_oig_audit_prose()`. Keeps absent,
+  blank and malformed fields out of disagreement, flags shared lineage per pair, and reports
+  the d/2 error floor a disagreement implies. Simulated data only, with no person-level
+  records.
 
 # mysteryroster 0.3.0
 

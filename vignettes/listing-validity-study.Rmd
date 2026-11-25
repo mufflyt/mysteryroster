@@ -128,6 +128,15 @@ behavior instead).
 
 ## Design-weighted estimates
 
+By default, `validity_estimates()` reports the share of all sampled listings
+confirmed valid. Unresolved and not-attempted listings remain in that denominator;
+this is not an estimate that assumes those listings are truly invalid. Use
+`definitive_only = TRUE` for accuracy conditional on a definitive determination.
+The default beta proportion interval uses the survey design. At exact zero or
+one, or when the interval cannot be estimated, the estimate is retained and
+interval bounds are `NA`; `ci_status` explains why. `ci_method = "mean"` requests
+the legacy clipped normal interval explicitly.
+
 `listing_validity_design()` wraps `survey::svydesign()` with the
 `stratum`/`weight` columns already on `calls`:
 
@@ -135,6 +144,7 @@ behavior instead).
 design <- listing_validity_design(calls)
 validity_estimates(design)
 validity_estimates(design, by = "stratum")
+validity_estimates(design, definitive_only = TRUE)
 ```
 
 A different outcome than the disposition-derived status -- for
@@ -152,18 +162,29 @@ Two listings above are `unresolved` -- not reached, or reached with no
 clean disposition. `validity_sensitivity_bounds()` reports what the
 estimate would be if every one of them were valid, and separately if
 every one of them were invalid, alongside the observed,
-complete-case-only number -- and asserts the three are correctly
-ordered before returning anything:
+complete-case-only number. The default data-frame call is unweighted and
+excludes not-attempted listings. Passing the survey design uses its sampling
+weights; `denominator = "all_sampled"` retains not-attempted listings as unknown.
+These bounds describe uncertainty about missing outcomes, not confidence
+intervals. If every outcome is unresolved, the definitive estimate is undefined
+while the bounds can still extend from 0.0% to 100.0%:
 
 ```{r bounds}
 validity_sensitivity_bounds(calls)
+
+# Population-weighted bounds among attempted listings:
+validity_sensitivity_bounds(design)
+
+# Include not-attempted listings in the uncertainty bounds:
+validity_sensitivity_bounds(design, denominator = "all_sampled")
 ```
 
 ## A survey-weighted model
 
 `validity_model()` fits the definitive listings only (unresolved and
 not-attempted are excluded, the same complete-case estimand as
-`validity_estimates()`'s default) and returns odds ratios, not log-odds:
+`validity_estimates(design, definitive_only = TRUE)`) and returns odds ratios,
+not log-odds:
 
 ```{r model}
 validity_model(design, ~ stratum + rural)
