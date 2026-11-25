@@ -18,6 +18,12 @@
   values stop the call by default so a codebook drift cannot silently become
   a missing value, with `unrecognised = "na"` as the explicit escape hatch.
 
+* Added `deduplicate_roster()`, a registry-roster deduplicator with an
+  NPI-aware conservative key, caller-supplied quality scores, deterministic
+  best-row selection, explicit removed rows, and conflict-group export for
+  cases where duplicate keys carry incompatible attribute values (for example
+  two different subspecialties). The helper returns the audit trail as data
+  rather than writing it away invisibly.
 * Fixed a `DESCRIPTION` WARNING and a top-level-files NOTE that `R CMD check`
   has been raising on every CI run without failing it -- the workflow's
   `error-on: '"error"'` only fails on ERROR, so neither was ever surfaced.
