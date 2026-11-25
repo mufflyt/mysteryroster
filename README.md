@@ -397,6 +397,7 @@ available before it is actually implemented.
 | Stratified sample with preserved sampling probabilities | `stratified_listing_sample()` |
 | Design weights for a call log sampled elsewhere (N / n from a population table) | `listing_weights()` |
 | Dispositions to confirmed valid, confirmed invalid, unresolved, not attempted | `classify_listing_status()`, `ent_disposition_map()`, `obgyn_disposition_map()`, `listing_status_levels()` |
+| yes/no/1/0 REDCap flags to logical `reached`/`phone_valid` columns | `coerce_logical_flag()` |
 | Design-weighted validity, overall and by stratum; complete-case estimate; location-valid or workforce-valid outcome | `listing_validity_design()`, `validity_estimates()` |
 | Weighted bounds with explicit attempted or all-sampled denominators | `validity_sensitivity_bounds()` |
 | Survey-weighted logistic regression | `validity_model()` |
@@ -469,6 +470,12 @@ obgyn_map <- list(
   not_specified = "No, reason not given")
 classify_listing_status(call_log, map = obgyn_map)
 ```
+
+`phone_valid` is optional. An `NA` in it means the number's validity is
+unknown -- usually a field not yet transcribed, which is not evidence against
+the listing -- and is treated as a valid number; `phone_valid_na` decides
+whether that happens with a warning (the default), silently (`"valid"`), or
+not at all (`"error"`).
 
 ## Related packages
 

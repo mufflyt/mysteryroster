@@ -58,3 +58,37 @@ test_that("the draft OB/GYN map has the same four disjoint categories and classi
                c("confirmed_valid", "confirmed_invalid", "confirmed_invalid", "unresolved", "not_attempted"))
   expect_equal(out$physician_active[2:3], c("confirmed_yes", "confirmed_no"))
 })
+
+test_that("a missing phone_valid warns by default, is silent on request and stops when strict", {
+  d <- data.frame(disposition = NA_character_, reached = c(TRUE, NA),
+                  phone_valid = c(NA, TRUE))
+  expect_warning(out <- classify_listing_status(d, phone_valid = "phone_valid"),
+                 "1 phone_valid value.* NA")
+  expect_equal(as.character(out$listing_status), c("unresolved", "not_attempted"))
+  expect_no_warning(classify_listing_status(d, phone_valid = "phone_valid",
+                                            phone_valid_na = "valid"))
+  expect_error(classify_listing_status(d, phone_valid = "phone_valid",
+                                       phone_valid_na = "error"),
+               "1 phone_valid value.* NA")
+})
+
+test_that("missing phone_valid never fabricates an invalid listing", {
+  d <- data.frame(disposition = NA_character_, reached = FALSE, phone_valid = NA)
+  suppressWarnings(out <- classify_listing_status(d, phone_valid = "phone_valid"))
+  expect_equal(as.character(out$listing_status), "unresolved")
+  expect_true(is.na(out$invalid_reason))
+})
+
+test_that("coerce_logical_flag normalises the REDCap encodings and passes logicals through", {
+  expect_equal(coerce_logical_flag(c("Yes", "NO", " true ", "f", "T", "N", "1", "0", "", NA)),
+               c(TRUE, FALSE, TRUE, FALSE, TRUE, FALSE, TRUE, FALSE, NA, NA))
+  expect_equal(coerce_logical_flag(c(1, 0, NA)), c(TRUE, FALSE, NA))
+  expect_equal(coerce_logical_flag(c(TRUE, FALSE, NA)), c(TRUE, FALSE, NA))
+  expect_equal(coerce_logical_flag(factor(c("yes", "no"))), c(TRUE, FALSE))
+})
+
+test_that("coerce_logical_flag fails closed on unrecognised values unless excused", {
+  expect_error(coerce_logical_flag(c("yes", "maybe")), "unrecognised value.*maybe")
+  expect_equal(coerce_logical_flag(c("yes", "maybe"), unrecognised = "na"), c(TRUE, NA))
+  expect_error(coerce_logical_flag(list(TRUE)), "logical, numeric, character or factor")
+})

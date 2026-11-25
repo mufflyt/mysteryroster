@@ -1,4 +1,22 @@
-# mysteryroster (development version)
+# mysteryroster 0.4.0
+
+* `classify_listing_status()` no longer coerces `NA` phone-validity values to
+  "valid" invisibly. A missing `phone_valid` means the validity of the number
+  is unknown (usually a field not yet transcribed, which is not evidence
+  against the listing), and the new `phone_valid_na` argument decides how that
+  is handled: `"warn"` (the default) keeps the treat-as-valid behaviour but
+  warns once with the count of affected rows, so the assumption is never
+  silent; `"valid"` reproduces the pre-0.4.0 silent behaviour exactly;
+  `"error"` stops, forcing every missing value to be resolved or explicitly
+  excused. Output statuses and reasons are unchanged for fully-populated
+  columns.
+* New exported `coerce_logical_flag()`: normalises the yes/no/Y/N/true/false/
+  t/f/1/0 encodings (case-insensitive, whitespace-trimmed) that REDCap exports
+  and hand-entered call logs actually arrive in, replacing the hand-rolled
+  per-study parsers every REDCap-backed audit was writing. Logical input
+  passes through unchanged; empty strings count as missing; unrecognised
+  values stop the call by default so a codebook drift cannot silently become
+  a missing value, with `unrecognised = "na"` as the explicit escape hatch.
 
 * Fixed a `DESCRIPTION` WARNING and a top-level-files NOTE that `R CMD check`
   has been raising on every CI run without failing it -- the workflow's
