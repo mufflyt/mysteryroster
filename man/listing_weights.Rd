@@ -10,9 +10,14 @@ listing_weights(df, pop_N, stratum = "stratum")
 \item{df}{Sampled listings, one row per listing.}
 
 \item{pop_N}{Named integer vector: population size per stratum, for
-example the four-zone table from \code{\link[=overlap_zone_counts]{overlap_zone_counts()}}.}
+example the four-zone table from \code{\link[=overlap_zone_counts]{overlap_zone_counts()}}. Strata in
+\code{pop_N} that nobody sampled are ignored: the population table may
+describe more zones than the sample covers.}
 
-\item{stratum}{Name of the stratum column. Default \code{"stratum"}.}
+\item{stratum}{Name of the stratum column. Default \code{"stratum"}. Every row
+must have one: a missing stratum means the stratum mapping failed
+upstream, and the row cannot be weighted, so the call stops rather than
+letting it vanish from weighted analyses with an \code{NA} weight.}
 }
 \value{
 \code{df} as a tibble with the four design columns added; attribute

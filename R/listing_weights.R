@@ -9,8 +9,13 @@
 #'
 #' @param df Sampled listings, one row per listing.
 #' @param pop_N Named integer vector: population size per stratum, for
-#'   example the four-zone table from [overlap_zone_counts()].
-#' @param stratum Name of the stratum column. Default `"stratum"`.
+#'   example the four-zone table from [overlap_zone_counts()]. Strata in
+#'   `pop_N` that nobody sampled are ignored: the population table may
+#'   describe more zones than the sample covers.
+#' @param stratum Name of the stratum column. Default `"stratum"`. Every row
+#'   must have one: a missing stratum means the stratum mapping failed
+#'   upstream, and the row cannot be weighted, so the call stops rather than
+#'   letting it vanish from weighted analyses with an `NA` weight.
 #' @return `df` as a tibble with the four design columns added; attribute
 #'   `allocation` holds the per-stratum table.
 #' @examples
@@ -22,6 +27,13 @@ listing_weights <- function(df, pop_N, stratum = "stratum") {
   checkmate::assert_integerish(pop_N, lower = 1, names = "unique", min.len = 1, any.missing = FALSE)
   if (!stratum %in% names(df)) stop(sprintf("listing_weights: no column '%s'", stratum), call. = FALSE)
   strata <- as.character(df[[stratum]])
+  n_missing <- sum(is.na(strata))
+  if (n_missing) {
+    stop(sprintf(paste0(
+      "listing_weights: %d row(s) have a missing stratum and cannot be weighted; ",
+      "fix the stratum mapping upstream rather than letting them vanish from ",
+      "weighted analyses"), n_missing), call. = FALSE)
+  }
   n <- table(strata)
   missing <- setdiff(names(n), names(pop_N))
   if (length(missing)) {
