@@ -10,7 +10,8 @@ classify_listing_status(
   reached = "reached",
   phone_valid = NULL,
   map = ent_disposition_map(),
-  unmapped = c("error", "unresolved")
+  unmapped = c("error", "unresolved"),
+  phone_valid_na = c("warn", "valid", "error")
 )
 }
 \arguments{
@@ -20,14 +21,25 @@ first).}
 \item{disposition}{Column with the disposition string.}
 
 \item{reached}{Logical column: \code{TRUE} office answered, \code{FALSE} attempted but
-not reached, \code{NA} not attempted.}
+not reached, \code{NA} not attempted. \code{\link[=coerce_logical_flag]{coerce_logical_flag()}} normalises the
+yes/no/1/0 encodings REDCap exports arrive in.}
 
 \item{phone_valid}{Optional logical column: \code{FALSE} when the listed number
-was invalid or disconnected (a confirmed-invalid listing).}
+was invalid or disconnected (a confirmed-invalid listing). An \code{NA} here
+means the validity of the number is unknown -- usually the field has not
+been transcribed yet -- and is treated as a valid number, because an
+untranscribed field is not evidence against the listing. \code{phone_valid_na}
+controls whether that happens silently, with a warning, or not at all.}
 
 \item{map}{A disposition map; see \code{\link[=ent_disposition_map]{ent_disposition_map()}}.}
 
 \item{unmapped}{\code{"error"} (default) or \code{"unresolved"}.}
+
+\item{phone_valid_na}{What to do when \code{phone_valid} is \code{NA}: \code{"warn"}
+(default) treats the missing values as valid numbers and warns once with
+the count, so the assumption is never invisible; \code{"valid"} treats them as
+valid numbers silently (the pre-0.4.0 behaviour); \code{"error"} stops, forcing
+the analyst to resolve or explicitly excuse every missing value.}
 }
 \value{
 \code{calls} with \code{physician_at_location} and \code{physician_active}
