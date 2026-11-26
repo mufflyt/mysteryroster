@@ -983,9 +983,8 @@ attribute_inconsistency_table <- function(source_a,
 #' zero was dropped (`"2101-1234"` -> `"21011"`, not `"02101"`), a 4-digit ZIP
 #' read as a float (`"2101.0"` -> `"21010"`), scientific notation
 #' (`"1.2e5"` -> `"00125"`), and a phone number typed into the ZIP column
-#' (`"3035550199"` -> `"30355"`). The first digit RUN is the ZIP part; only run
-#' lengths that are a real ZIP shape are accepted, everything else is invalid
-#' rather than truncated.
+#' (`"3035550199"` -> `"30355"`). The digit runs must match a ZIP or ZIP+4
+#' shape before the first run is used to extract the ZIP.
 #'
 #' @param trimmed Trimmed character vector.
 #' @param populated Logical vector flagging non-missing, non-blank elements.
@@ -1001,7 +1000,11 @@ attribute_inconsistency_table <- function(source_a,
   # an all-zero fraction is a float artifact of a numeric-typed column
   s <- sub("^([0-9]+)\\.0+$", "\\1", s)
   run <- rep(NA_character_, length(s))
-  has_run <- populated & !sci & grepl("[0-9]", s)
+  zip_shape <- paste0(
+    "^[^0-9]*([0-9]{3,5}|[0-9]{7,9}|",
+    "[0-9]{3,5}([[:blank:]]*-[[:blank:]]*|[[:blank:]]+)[0-9]{4})[^0-9]*$"
+  )
+  has_run <- populated & !sci & grepl(zip_shape, s)
   run[has_run] <- regmatches(s[has_run], regexpr("[0-9]+", s[has_run]))
   len <- nchar(run)
   # 3-4 digits: a 5-digit ZIP that lost its leading zero(s)
@@ -1164,9 +1167,19 @@ normalize_directory_attribute <- function(x,
     # its own short list, and folded a parenthetical maiden name or nickname
     # into the name itself.
     up <- rep(NA_character_, n)
-    up[populated] <- mysterynpi::name_key(
-      mysterynpi::strip_name_noise(mysterynpi::strip_parenthetical(trimmed[populated]))
+    names_raw <- mysterynpi::strip_parenthetical(trimmed[populated])
+    names_raw <- gsub("[/;]", ",", names_raw)
+    # Give the canonical stripper the surname spelling it recognizes when a
+    # leading comma segment is a known collision followed by a given name.
+    collisions <- mysterynpi::SURNAME_CREDENTIAL_COLLISIONS
+    leading <- toupper(trimws(sub(",.*$", "", names_raw)))
+    surname_first <- which(leading %in% names(collisions) & grepl(",", names_raw))
+    given <- sub("^[^,]*,", "", names_raw[surname_first])
+    has_given <- grepl("[[:alpha:]]", mysterynpi::strip_name_noise(given))
+    names_raw[surname_first[has_given]] <- paste0(
+      unname(collisions[leading[surname_first[has_given]]]), ",", given[has_given]
     )
+    up[populated] <- mysterynpi::name_key(mysterynpi::strip_name_noise(names_raw))
     up <- gsub("[^A-Z '\\-]", " ", up)
     up <- trimws(gsub("\\s+", " ", up))
     ok <- populated & nchar(gsub("[^A-Z]", "", up)) >= 2L

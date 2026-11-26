@@ -126,3 +126,21 @@ test_that("npi10 agrees with the canonical mysterynpi validator on every input",
     normalize_directory_attribute("123-456-7893", "npi10")$normalized_value, "1234567893"
   )
 })
+
+test_that("zip5 and scf3 reject malformed multi-part values", {
+  raw <- c("999-999-9999", "9999.9", "80204-123", "80204 12345")
+  expect_false(any(zip_norm(raw)$format_valid))
+  expect_false(any(normalize_directory_attribute(raw, "scf3")$format_valid))
+})
+
+test_that("person_name strips slash and semicolon separated credentials", {
+  expect_false(any(name_norm(c("MD/RN", "MD; RN"))$format_valid))
+  expect_identical(name_norm("Jane Smith, MD/RN")$normalized_value, "JANE SMITH")
+})
+
+test_that("person_name keeps uppercase surnames in surname-first names", {
+  expect_identical(name_norm(c("MA, YO-YO", "DO, ANH"))$normalized_value,
+                   c("MA YO-YO", "DO ANH"))
+  expect_identical(name_norm("Jane Smith, MA")$normalized_value, "JANE SMITH")
+  expect_false(name_norm("MA, RN")$format_valid)
+})
