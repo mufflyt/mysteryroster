@@ -993,7 +993,7 @@ attribute_inconsistency_table <- function(source_a,
 #' @noRd
 .zip5_candidate <- function(trimmed, populated) {
   out <- rep(NA_character_, length(trimmed))
-  s <- gsub("\\p{Pd}", "-", trimmed, perl = TRUE)
+  s <- gsub("[\u2010\u2011]", "-", trimmed)
   # scientific notation is a corrupted number, not a ZIP: there is no way to
   # know which digits were lost, so it is invalid rather than reassembled
   sci <- grepl("[0-9][eE][+-]?[0-9]", s)
@@ -1184,9 +1184,12 @@ normalize_directory_attribute <- function(x,
       length(tokens) > 0L && all(tokens %in% names(collisions))
     }, logical(1)))
     raw_tokens <- strsplit(toupper(gsub("[.]", "", names_raw[ambiguous])), "[,[:space:]]+")
+    titles <- c("DR", "PROF", "MR", "MRS", "MS", "MISS")
     credentials_only <- vapply(raw_tokens, function(tokens) {
       tokens <- tokens[nzchar(tokens)]
-      all(tokens %in% mysterynpi::NAME_NOISE) && any(!tokens %in% names(collisions))
+      titled_surname <- tokens[1L] %in% titles && tokens[2L] %in% names(collisions)
+      !titled_surname && all(tokens %in% mysterynpi::NAME_NOISE) &&
+        any(!tokens %in% names(collisions))
     }, logical(1))
     cleaned[ambiguous[credentials_only]] <- ""
     up[populated] <- cleaned

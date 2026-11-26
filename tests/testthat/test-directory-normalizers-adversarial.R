@@ -156,3 +156,13 @@ test_that("credential-only lists cannot leave behind an ambiguous surname", {
   expect_false(any(name_norm(raw)$format_valid))
   expect_identical(name_norm("Anh Do / FACOG")$normalized_value, "ANH DO")
 })
+
+test_that("zip5 and scf3 reject en-dash numeric ranges", {
+  raw <- "2020\u20132024"
+  expect_false(zip_norm(raw)$format_valid)
+  expect_false(normalize_directory_attribute(raw, "scf3")$format_valid)
+})
+
+test_that("a leading honorific preserves a surname that looks like a credential", {
+  expect_identical(name_norm(c("Dr. Do", "Dr. Ma, MD"))$normalized_value, c("DO", "MA"))
+})
