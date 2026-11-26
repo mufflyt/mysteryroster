@@ -164,6 +164,6 @@ test_that("zip5 and scf3 reject en-dash numeric ranges", {
 })
 
 test_that("a leading honorific preserves a surname that looks like a credential", {
-  raw <- c("Dr. Do", "Dr. Ma, MD", "Dr. Do MD", "Dr. Do, MD")
-  expect_identical(name_norm(raw)$normalized_value, c("DO", "MA", "DO", "DO"))
+  raw <- c("Dr. Do", "Dr. Ma, MD", "Dr. Do MD", "Dr. Do, MD", "(Locum) Dr. Do")
+  expect_identical(name_norm(raw)$normalized_value, c("DO", "MA", "DO", "DO", "DO"))
 })

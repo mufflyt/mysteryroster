@@ -1188,7 +1188,7 @@ normalize_directory_attribute <- function(x,
     first_segment <- trimws(sub(",.*$", "", bare))
     # MS is also a degree. Treat it as a title only with a lone surname in
     # the same segment. Unambiguous titles can precede space-delimited degrees.
-    titled_surname <- vapply(raw_tokens, function(tokens) {
+    titled_surname <- vapply(strsplit(first_segment, "[[:space:]]+"), function(tokens) {
       tokens[1L] %in% c("DR", "PROF", "MR", "MRS", "MISS") &&
         tokens[2L] %in% names(collisions)
     }, logical(1)) | gsub("[[:space:]]+", " ", first_segment) %in%
