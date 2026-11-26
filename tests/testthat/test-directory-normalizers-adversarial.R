@@ -144,3 +144,15 @@ test_that("person_name keeps uppercase surnames in surname-first names", {
   expect_identical(name_norm("Jane Smith, MA")$normalized_value, "JANE SMITH")
   expect_false(name_norm("MA, RN")$format_valid)
 })
+
+test_that("zip5 and scf3 accept typographic ZIP+4 separators", {
+  raw <- "80204\u20111234"
+  expect_identical(zip_norm(raw)$normalized_value, "80204")
+  expect_identical(normalize_directory_attribute(raw, "scf3")$normalized_value, "802")
+})
+
+test_that("credential-only lists cannot leave behind an ambiguous surname", {
+  raw <- c("DO MPH / FACOG", "MD / DO", "DO MA / FACOG")
+  expect_false(any(name_norm(raw)$format_valid))
+  expect_identical(name_norm("Anh Do / FACOG")$normalized_value, "ANH DO")
+})
