@@ -1185,10 +1185,14 @@ normalize_directory_attribute <- function(x,
     }, logical(1)))
     bare <- toupper(gsub("[.]", "", names_raw[ambiguous]))
     raw_tokens <- strsplit(bare, "[,[:space:]]+")
-    titles <- c("DR", "PROF", "MR", "MRS", "MS", "MISS")
     first_segment <- trimws(sub(",.*$", "", bare))
-    titled_surname <- gsub("[[:space:]]+", " ", first_segment) %in%
-      as.vector(outer(titles, names(collisions), paste))
+    # MS is also a degree. Treat it as a title only with a lone surname in
+    # the same segment. Unambiguous titles can precede space-delimited degrees.
+    titled_surname <- vapply(raw_tokens, function(tokens) {
+      tokens[1L] %in% c("DR", "PROF", "MR", "MRS", "MISS") &&
+        tokens[2L] %in% names(collisions)
+    }, logical(1)) | gsub("[[:space:]]+", " ", first_segment) %in%
+      paste("MS", names(collisions))
     credentials_only <- vapply(raw_tokens, function(tokens) {
       tokens <- tokens[nzchar(tokens)]
       all(tokens %in% mysterynpi::NAME_NOISE) &&
