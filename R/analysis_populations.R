@@ -1183,15 +1183,18 @@ normalize_directory_attribute <- function(x,
     ambiguous <- which(vapply(strsplit(cleaned, " ", fixed = TRUE), function(tokens) {
       length(tokens) > 0L && all(tokens %in% names(collisions))
     }, logical(1)))
-    raw_tokens <- strsplit(toupper(gsub("[.]", "", names_raw[ambiguous])), "[,[:space:]]+")
+    bare <- toupper(gsub("[.]", "", names_raw[ambiguous]))
+    raw_tokens <- strsplit(bare, "[,[:space:]]+")
     titles <- c("DR", "PROF", "MR", "MRS", "MS", "MISS")
+    first_segment <- trimws(sub(",.*$", "", bare))
+    titled_surname <- gsub("[[:space:]]+", " ", first_segment) %in%
+      as.vector(outer(titles, names(collisions), paste))
     credentials_only <- vapply(raw_tokens, function(tokens) {
       tokens <- tokens[nzchar(tokens)]
-      titled_surname <- tokens[1L] %in% titles && tokens[2L] %in% names(collisions)
-      !titled_surname && all(tokens %in% mysterynpi::NAME_NOISE) &&
+      all(tokens %in% mysterynpi::NAME_NOISE) &&
         any(!tokens %in% names(collisions))
     }, logical(1))
-    cleaned[ambiguous[credentials_only]] <- ""
+    cleaned[ambiguous[credentials_only & !titled_surname]] <- ""
     up[populated] <- cleaned
     up <- gsub("[^A-Z '\\-]", " ", up)
     up <- trimws(gsub("\\s+", " ", up))

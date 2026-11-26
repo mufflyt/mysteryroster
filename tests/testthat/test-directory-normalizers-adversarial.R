@@ -152,7 +152,7 @@ test_that("zip5 and scf3 accept typographic ZIP+4 separators", {
 })
 
 test_that("credential-only lists cannot leave behind an ambiguous surname", {
-  raw <- c("DO MPH / FACOG", "MD / DO", "DO MA / FACOG")
+  raw <- c("DO MPH / FACOG", "MD / DO", "DO MA / FACOG", "MS / DO MPH")
   expect_false(any(name_norm(raw)$format_valid))
   expect_identical(name_norm("Anh Do / FACOG")$normalized_value, "ANH DO")
 })
